@@ -1,37 +1,32 @@
-# Bihar Transport Portal - Transport Management System
+# Task Progress: Make Bihar Transport App Run
 
-## Project Plan
+## Plan Steps (Approved)
 
-### Phase 1: Project Setup & Structure
-- [x] Create project directory structure
-- [x] Set up backend with Node.js/Express
-- [x] Set up React frontend with Tailwind CSS
+### ✅ Step 1: Create TODO.md
+- [x] Created
 
-### Phase 2: Database
-- [x] Create MySQL database schemas
-- [x] Define table relationships
-- [x] Create seed data
+### ✅ Step 2: Install dependencies  
+- [x] Backend deps installed
+- [x] Frontend deps installed 
 
-### Phase 3: Backend API
-- [x] User authentication (signup, login, JWT)
-- [x] Vehicle management APIs
-- [x] License management APIs
-- [x] Challan management APIs
-- [x] Appointment booking APIs
-- [x] Admin management APIs
+### ✅ Step 3: Create .env for backend
+- [x] transport-system/backend/.env created (FRONTEND_URL, PORT, etc.)
 
-### Phase 4: Frontend
-- [x] Home page
-- [x] Authentication pages (Login/Signup)
-- [x] Vehicle search page
-- [x] License search page
-- [x] Challan status page
-- [x] Appointment booking page
-- [x] User dashboard
-- [x] Admin dashboard
+### ✅ Step 4a: Fix native module errors 
+- [x] Clean installs done (backend sqlite3/rollup fixed)
 
-### Phase 5: Documentation
-- [x] Installation instructions
-- [x] Environment setup
-- [x] Run instructions
+### ✅ Step 4: Backend server
+- [x] Running: localhost:3000 ✅ DB connected/seeded
+
+### ☐ Step 5: Frontend dev server
+- [ ] Starting now: cd transport-system/frontend && npm run dev (localhost:5173)
+
+### ☐ Step 6: Verify app running
+
+### ☐ Step 6: Test app
+- Backend: http://localhost:3000/api/health  
+- Frontend: http://localhost:5173 (proxies API)
+
+## Next Action
+Execute frontend dev server (Step 5)
 
