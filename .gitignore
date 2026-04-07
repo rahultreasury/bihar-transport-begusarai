@@ -1,0 +1,58 @@
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Vite/React Frontend
+dist/
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.log
+
+# Backend
+/transport-system/backend/node_modules/
+/transport-system/backend/npm-debug.log*
+
+# Database
+/transport-system/database/*.db
+/transport-system/database/*.db-shm
+/transport-system/database/*.db-wal
+/transport-system/database/*.sqlite
+
+# macOS
+.DS_Store
+.env
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Build outputs
+build/
+dist/
+.coveralls.yml
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+temp/

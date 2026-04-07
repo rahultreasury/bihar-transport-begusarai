@@ -1,0 +1,770 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Brand Colors CSS Variables */
+  --primary-blue: #1a3a6b;
+  --accent-orange: #F5A623;
+  --card-bg: rgba(255,255,255,0.1);
+  --primary-color: #f59e0b;
+  --secondary-color: #0ea5e9;
+  --dark-color: #1e3a5f;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  @apply bg-gray-50 text-gray-800;
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-amber-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-amber-600 transition-colors shadow-md;
+  }
+  
+  .btn-secondary {
+    @apply bg-sky-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-sky-600 transition-colors shadow-md;
+  }
+  
+  .btn-outline {
+    @apply border-2 border-amber-500 text-amber-500 px-6 py-3 rounded-lg font-semibold hover:bg-amber-500 hover:text-white transition-colors;
+  }
+
+  .card {
+    @apply bg-white rounded-xl shadow-card p-6 transition-shadow hover:shadow-card-hover;
+  }
+
+  .input-field {
+    @apply w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition-all;
+  }
+
+  .label {
+    @apply block text-sm font-medium text-gray-700 mb-1;
+  }
+
+  .section-title {
+    @apply text-3xl font-bold text-gray-900 mb-2;
+  }
+
+  .section-subtitle {
+    @apply text-lg text-gray-600 mb-8;
+  }
+
+  /* Government-style card */
+  .gov-card {
+    @apply bg-white rounded-xl shadow-md border border-gray-200 p-6;
+  }
+
+  /* Government-style input */
+  .gov-input {
+    @apply w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition-all;
+  }
+
+  /* Government-style button */
+  .gov-btn {
+    @apply px-6 py-3 rounded-lg font-semibold transition-all;
+  }
+
+  .gov-btn-primary {
+    @apply bg-primary-600 text-white hover:bg-primary-700;
+  }
+
+  /* Primary color utility */
+  .bg-primary-600 {
+    background-color: #f59e0b;
+  }
+
+  .hover\:bg-primary-700:hover {
+    background-color: #d97706;
+  }
+
+  .text-primary-600 {
+    color: #f59e0b;
+  }
+
+  /* Badge styles */
+  .badge-success {
+    @apply bg-green-100 text-green-800;
+  }
+
+  .badge-danger {
+    @apply bg-red-100 text-red-800;
+  }
+
+  .badge-warning {
+    @apply bg-yellow-100 text-yellow-800;
+  }
+
+  .badge-info {
+    @apply bg-blue-100 text-blue-800;
+  }
+}
+
+/* Custom animations */
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes fadeInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-40px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(40px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes waveMove {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.05);
+    opacity: 0.8;
+  }
+}
+
+@keyframes float {
+  0% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+  100% {
+    transform: translateY(0px);
+  }
+}
+
+.animate-slide-up {
+  animation: slideUp 0.5s ease-out forwards;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+.animate-fade-in-down {
+  animation: fadeInDown 0.4s ease-out forwards;
+}
+
+.animate-slide-in-left {
+  animation: slideInLeft 0.6s ease-out forwards;
+}
+
+.animate-slide-in-right {
+  animation: slideInRight 0.8s ease-out forwards;
+}
+
+.animate-wave {
+  animation: waveMove 6s ease-in-out infinite alternate;
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+/* Navbar hover underline effect */
+.nav-link {
+  position: relative;
+}
+
+.nav-link::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  height: 2px;
+  background-color: #F5A623;
+  transition: width 0.3s ease;
+}
+
+.nav-link:hover::after {
+  width: 100%;
+}
+
+/* Button hover scale effect */
+.btn-hover-scale {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.btn-hover-scale:hover {
+  transform: scale(1.04);
+}
+
+/* Card hover effects */
+.card-hover {
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.card-hover:hover {
+  transform: translateY(-6px);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.15);
+}
+
+/* Glassmorphism card */
+.glass-card {
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+/* Entrance animations for cards */
+@keyframes cardEntrance {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.card-entrance {
+  opacity: 0;
+  animation: cardEntrance 0.5s ease-out forwards;
+}
+
+.card-entrance:nth-child(1) { animation-delay: 0.1s; }
+.card-entrance:nth-child(2) { animation-delay: 0.2s; }
+.card-entrance:nth-child(3) { animation-delay: 0.3s; }
+.card-entrance:nth-child(4) { animation-delay: 0.4s; }
+
+/* WhatsApp button pulse */
+@keyframes whatsappPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(37, 211, 102, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 15px rgba(37, 211, 102, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(37, 211, 102, 0);
+  }
+}
+
+.whatsapp-pulse {
+  animation: whatsappPulse 2s infinite;
+}
+
+/* Hero background pattern */
+.hero-pattern {
+  background-image: 
+    radial-gradient(circle at 20% 80%, rgba(255,255,255,0.05) 0%, transparent 50%),
+    radial-gradient(circle at 80% 20%, rgba(255,255,255,0.05) 0%, transparent 50%),
+    linear-gradient(45deg, transparent 48%, rgba(255,255,255,0.03) 49%, rgba(255,255,255,0.03) 51%, transparent 52%);
+  background-size: 100% 100%, 100% 100%, 30px 30px;
+}
+
+/* Staggered animation delays */
+.delay-100 { animation-delay: 100ms; }
+.delay-200 { animation-delay: 200ms; }
+.delay-300 { animation-delay: 300ms; }
+.delay-400 { animation-delay: 400ms; }
+.delay-500 { animation-delay: 500ms; }
+
+/* Hero gradient background */
+.hero-gradient {
+  background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%);
+}
+
+/* Status badges */
+.badge {
+  @apply px-3 py-1 rounded-full text-sm font-medium;
+}
+
+.badge-pending {
+  @apply bg-yellow-100 text-yellow-800;
+}
+
+.badge-confirmed {
+  @apply bg-blue-100 text-blue-800;
+}
+
+.badge-in-transit {
+  @apply bg-purple-100 text-purple-800;
+}
+
+.badge-delivered {
+  @apply bg-green-100 text-green-800;
+}
+
+.badge-cancelled {
+  @apply bg-red-100 text-red-800;
+}
+
+/* ============================================
+   FLOATING WHATSAPP BUTTON STYLES
+   ============================================ */
+.whatsapp-float {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 9999;
+  animation: whatsapp-pulse 2s infinite;
+}
+
+.whatsapp-float:hover {
+  transform: scale(1.1);
+}
+
+@keyframes whatsapp-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(37, 211, 102, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 15px rgba(37, 211, 102, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(37, 211, 102, 0);
+  }
+}
+
+/* ============================================
+   NAVBAR LOGO STYLES
+   ============================================ */
+.logo-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.site-logo {
+  height: 42px;
+  width: auto;
+  object-fit: contain;
+}
+
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.brand-title {
+  font-weight: 700;
+  font-size: 18px;
+  color: white;
+}
+
+.brand-location {
+  font-size: 12px;
+  color: #f59e0b;
+  display: block;
+}
+
+/* Responsive for mobile */
+@media (max-width: 640px) {
+  .logo-wrapper {
+    gap: 8px;
+  }
+  
+  .site-logo {
+    height: 36px;
+  }
+  
+  .brand-title {
+    font-size: 14px;
+  }
+  
+  .brand-location {
+    font-size: 10px;
+  }
+}
+
+/* ============================================
+   MOBILE RESPONSIVE STYLES (max-width: 768px)
+   ============================================ */
+
+@media (max-width: 768px) {
+  /* WhatsApp button sizing on mobile */
+  .fixed.bottom-6.right-6 {
+    bottom: 15px !important;
+    right: 15px !important;
+  }
+  
+  .fixed.bottom-6.right-6 a {
+    width: 56px !important;
+    height: 56px !important;
+  }
+  
+  .fixed.bottom-6.right-6 svg {
+    width: 28px !important;
+    height: 28px !important;
+  }
+  
+  /* Hero Section - Reduced height and padding */
+  .hero-gradient .max-w-7xl {
+    padding-top: 40px !important;
+    padding-bottom: 40px !important;
+  }
+  
+  .hero-gradient h1 {
+    font-size: 1.75rem !important;
+    line-height: 1.3 !important;
+    margin-bottom: 1rem !important;
+  }
+  
+  .hero-gradient p {
+    font-size: 1rem !important;
+    margin-bottom: 1.5rem !important;
+  }
+
+  /* Hero Buttons - Better spacing and touch targets */
+  .hero-gradient .flex.flex-col {
+    gap: 12px !important;
+  }
+  
+  .hero-gradient .flex.flex-col a,
+  .hero-gradient .flex.flex-col button {
+    padding: 14px 24px !important;
+    font-size: 1rem !important;
+    min-height: 48px !important;
+    touch-action: manipulation !important;
+  }
+
+  /* Quick Booking Form Card */
+  .bg-white.rounded-2xl.p-6.md\:p-8 {
+    padding: 1.25rem !important;
+    margin: 0 0.5rem !important;
+  }
+  
+  .bg-white.rounded-2xl.p-6.md\:p-8 h2 {
+    font-size: 1.25rem !important;
+  }
+
+  /* Price Calculator Section */
+  .bg-gradient-to-br.from-blue-50.to-indigo-50 {
+    padding: 2rem 0.75rem !important;
+  }
+  
+  .bg-gradient-to-br.from-blue-50.to-indigo-50 .bg-white.rounded-2xl {
+    padding: 1.25rem !important;
+  }
+
+  /* Stats Section - 2x2 grid on mobile */
+  .py-10 .grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 1rem !important;
+  }
+  
+  .py-10 .text-3xl.md\:text-4xl {
+    font-size: 1.5rem !important;
+  }
+  
+  .py-10 .text-sm.md\:text-base {
+    font-size: 0.75rem !important;
+  }
+
+  /* Section padding - Reduced */
+  .py-16.md\:py-20, .py-12.md\:py-16 {
+    padding-top: 2rem !important;
+    padding-bottom: 2rem !important;
+  }
+
+  /* Section titles */
+  .text-2xl.md\:text-3xl {
+    font-size: 1.5rem !important;
+  }
+  
+  .text-gray-600 {
+    font-size: 0.875rem !important;
+  }
+
+  /* Cards - Single column layout */
+  .grid-cols-1.md\:grid-cols-2.lg\:grid-cols-4,
+  .grid-cols-1.md\:grid-cols-2,
+  .grid-cols-1.lg\:grid-cols-2,
+  .grid-cols-1.sm\:grid-cols-2.lg\:grid-cols-4 {
+    grid-template-columns: 1fr !important;
+    gap: 1rem !important;
+  }
+  
+  /* All cards on mobile */
+  .card {
+    padding: 1rem !important;
+    margin-bottom: 0.5rem !important;
+  }
+
+  /* Vehicle type cards */
+  .text-5xl, .text-6xl {
+    font-size: 2.5rem !important;
+  }
+  
+  .text-lg, .text-xl {
+    font-size: 1rem !important;
+  }
+
+  /* Trust section icons */
+  .w-14.h-14, .w-16.h-16 {
+    width: 3rem !important;
+    height: 3rem !important;
+  }
+
+  /* Testimonials */
+  .bg-gradient-to-br.from-amber-50.to-yellow-50 .grid-cols-1.md\:grid-cols-3 {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Service areas grid */
+  .grid-cols-2.md\:grid-cols-3.lg\:grid-cols-6 {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  /* CTA Section */
+  .bg-btb-dark h2 {
+    font-size: 1.5rem !important;
+  }
+  
+  .bg-btb-dark p {
+    font-size: 1rem !important;
+  }
+  
+  .bg-btb-dark .flex.flex-col.sm\:flex-row {
+    flex-direction: column !important;
+    gap: 0.75rem !important;
+  }
+
+  /* Navbar mobile improvements */
+  .nav-menu-item {
+    padding: 14px 16px !important;
+    min-height: 48px !important;
+    display: block !important;
+    width: 100% !important;
+    text-align: left !important;
+  }
+
+  /* Form inputs - Larger touch target */
+  input, select, textarea {
+    padding: 12px !important;
+    font-size: 16px !important; /* Prevents iOS zoom */
+  }
+
+  /* Buttons - Minimum touch target */
+  .btn-primary,
+  .btn-secondary,
+  .btn-outline {
+    padding: 14px 20px !important;
+    min-height: 48px !important;
+  }
+
+  /* Table responsive */
+  .overflow-x-auto {
+    font-size: 0.875rem !important;
+  }
+  
+  .overflow-x-auto th,
+  .overflow-x-auto td {
+    padding: 8px 4px !important;
+  }
+
+  /* Footer */
+  .py-8 .grid {
+    grid-template-columns: 1fr !important;
+    text-align: center !important;
+  }
+
+  /* Gap utilities */
+  .gap-8 {
+    gap: 1.5rem !important;
+  }
+  
+  .gap-4 {
+    gap: 0.75rem !important;
+  }
+  
+  .gap-12 {
+    gap: 1.5rem !important;
+  }
+
+  /* Page padding */
+  .px-4 {
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+  }
+
+  /* Badges - Larger touch target */
+  .badge {
+    padding: 6px 12px !important;
+    font-size: 0.75rem !important;
+  }
+
+  /* Image icons */
+  .w-10.h-10 {
+    width: 2rem !important;
+    height: 2rem !important;
+  }
+  
+  /* Live vehicle availability */
+  .flex.flex-wrap.justify-center.gap-4.md\:gap-8 {
+    gap: 0.5rem !important;
+  }
+  
+  .bg-gray-50.px-4.py-2.rounded-full {
+    padding: 0.5rem 1rem !important;
+    font-size: 0.75rem !important;
+  }
+
+  /* Price result section */
+  .grid.grid-cols-2.gap-4.text-center {
+    grid-template-columns: 1fr !important;
+    gap: 1rem !important;
+  }
+
+  /* Map iframe */
+  iframe {
+    height: 250px !important;
+  }
+
+  /* Call now button */
+  a[href^="tel:"] {
+    min-height: 48px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+}
+
+/* Extra small devices */
+@media (max-width: 480px) {
+  .hero-gradient h1 {
+    font-size: 1.5rem !important;
+  }
+  
+  .section-title {
+    font-size: 1.25rem !important;
+  }
+  
+  .py-20 {
+    padding-top: 2rem !important;
+    padding-bottom: 2rem !important;
+  }
+  
+  .text-6xl {
+    font-size: 2.5rem !important;
+  }
+}
+
+/* Touch device optimizations */
+@media (hover: none) and (pointer: coarse) {
+  /* Larger touch targets for touch devices */
+  a, button {
+    min-height: 44px !important;
+  }
+  
+  /* Remove hover effects on touch */
+  .hover\:scale-110:hover {
+    transform: none !important;
+  }
+}
+
+/* Extra small devices */
+@media (max-width: 480px) {
+  .hero-gradient h1 {
+    font-size: 1.5rem !important;
+  }
+  
+  .text-2xl.md\:text-3xl, .text-3xl.md\:text-4xl {
+    font-size: 1.25rem !important;
+  }
+  
+  .py-16.md\:py-20, .py-12.md\:py-16 {
+    padding-top: 1.5rem !important;
+    padding-bottom: 1.5rem !important;
+  }
+  
+  .text-5xl, .text-6xl {
+    font-size: 2rem !important;
+  }
+
+  /* Smaller quick booking form */
+  .bg-white.rounded-2xl.p-6.md\:p-8 {
+    padding: 1rem !important;
+  }
+  
+  .bg-white.rounded-2xl.p-6.md\:p-8 h2 {
+    font-size: 1.1rem !important;
+  }
+
+  /* Price calculator mobile */
+  .grid.grid-cols-1.md\:grid-cols-3 {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Trust section single column */
+  .grid-cols-1.sm\:grid-cols-2.lg\:grid-cols-4 {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Live vehicle availability smaller */
+  .bg-gray-50.px-4.py-2.rounded-full {
+    padding: 0.4rem 0.75rem !important;
+    font-size: 0.65rem !important;
+  }
+
+  /* CTA buttons */
+  .bg-btb-dark .px-10.py-5 {
+    padding: 0.75rem 1.25rem !important;
+    font-size: 0.9rem !important;
+  }
+}
+
