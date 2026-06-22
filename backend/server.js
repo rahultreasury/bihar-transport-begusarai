@@ -5,6 +5,10 @@ const path = require('path');
 const dotenv = require('dotenv');
 
 dotenv.config();
+const mapsRoutes = require('./routes/maps');
+app.use(cors());
+app.use(express.json());
+app.use('/api', mapsRoutes);
 
 const app = express();
 const PORT = process.env.PORT || 5000;
