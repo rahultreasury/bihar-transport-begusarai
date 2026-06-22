@@ -1,5 +1,18 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { LoadScript, Autocomplete } from '@react-google-maps/api';
+
+
+
+
+
+
+
+
+
+
+
+
 
 // SVG Icons for vehicles
 const TruckIcon = () => (
@@ -112,7 +125,38 @@ const biharCities = [
 // WhatsApp number
 const WHATSAPP_NUMBER = '8210931799';
 
+const pickupAutocompleteOptions = {
+  componentRestrictions: { country: 'in' },
+  types: ['geocode'],
+};
+
+function PickupAutocompleteInput({ value, onChange }) {
+  return (
+    <input
+      type="text"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder="Enter pickup location"
+      className="w-full px-2 py-2 md:py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition-all bg-white text-gray-700 text-sm"
+    />
+  );
+}
+
+function DropAutocompleteInput({ value, onChange }) {
+  return (
+    <input
+      type="text"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder="Enter drop location"
+      className="w-full px-2 py-2 md:py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition-all bg-white text-gray-700 text-sm"
+    />
+  );
+}
+
 function Home() {
+
+
   const navigate = useNavigate();
   
   // Quick Booking Form State
@@ -126,12 +170,29 @@ function Home() {
   const [priceCalc, setPriceCalc] = useState({
     pickup: '',
     drop: '',
+    pickupPlaceId: '',
+    dropPlaceId: '',
+    pickupLat: null,
+    pickupLng: null,
+    pickupFormattedAddress: '',
+    dropLat: null,
+    dropLng: null,
+    dropFormattedAddress: '',
     vehicleType: 'truck'
   });
+
+  const pickupAutocompleteRef = useRef(null);
+  const dropAutocompleteRef = useRef(null);
+
+
   const [calcDistance, setCalcDistance] = useState(0);
+  const [calcDuration, setCalcDuration] = useState('');
   const [calcPrice, setCalcPrice] = useState(0);
+  const [calcWarning, setCalcWarning] = useState('');
+
   const [isCalculating, setIsCalculating] = useState(false);
   const [showPriceResult, setShowPriceResult] = useState(false);
+
 
   // Selected vehicle state
   const [selectedVehicle, setSelectedVehicle] = useState(null);
@@ -218,19 +279,59 @@ function Home() {
     navigate(`/book-transport?${params.toString()}`);
   };
 
-  const handleCheckPrice = () => {
-    if (priceCalc.pickup && priceCalc.drop) {
-      setIsCalculating(true);
-      setShowPriceResult(false);
-      
-      setTimeout(() => {
-        const dist = getDistance(priceCalc.pickup, priceCalc.drop);
-        const price = dist * getVehiclePrice(priceCalc.vehicleType);
-        setCalcDistance(dist);
-        setCalcPrice(price);
-        setIsCalculating(false);
-        setShowPriceResult(true);
-      }, 800);
+  const handleCheckPrice = async () => {
+    if (
+      !priceCalc.pickupLat ||
+      !priceCalc.pickupLng ||
+      !priceCalc.dropLat ||
+      !priceCalc.dropLng
+    ) {
+      return;
+    }
+
+    setIsCalculating(true);
+    setShowPriceResult(false);
+    setCalcWarning('');
+
+    try {
+    const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/calculate-price`, {
+
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          pickup: {
+            address: priceCalc.pickupFormattedAddress || priceCalc.pickup,
+            lat: priceCalc.pickupLat,
+            lng: priceCalc.pickupLng,
+          },
+          drop: {
+            address: priceCalc.dropFormattedAddress || priceCalc.drop,
+            lat: priceCalc.dropLat,
+            lng: priceCalc.dropLng,
+          },
+          vehicleType: priceCalc.vehicleType,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.message || 'Failed to calculate price');
+      }
+
+      setCalcDistance(data.distanceKm);
+      setCalcDuration(data.duration);
+      setCalcPrice(data.price);
+      setCalcWarning(data.warning || '');
+      setIsCalculating(false);
+      setShowPriceResult(true);
+
+    } catch (e) {
+      setIsCalculating(false);
+      setCalcWarning(e?.message || 'Network/Google API error');
+      setShowPriceResult(true);
     }
   };
 
@@ -289,32 +390,116 @@ function Home() {
                   {/* Pickup Location */}
                   <div className="col-span-2 md:col-span-1">
                     <label className="block text-xs font-semibold text-gray-600 mb-1">Pickup</label>
-                    <select
-                      value={priceCalc.pickup}
-                      onChange={(e) => { setPriceCalc({...priceCalc, pickup: e.target.value}); setShowPriceResult(false); }}
-                      className="w-full px-2 py-2 md:py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition-all cursor-pointer bg-white text-gray-700 text-sm"
+                    <LoadScript
+                      googleMapsApiKey={import.meta.env.VITE_GOOGLE_MAPS_API_KEY}
+                      libraries={['places']}
+                      onError={(e) => console.error('Google Maps LoadScript error (Pickup):', e)}
                     >
-                      <option value="">Select</option>
-                      {biharCities.map(city => (
-                        <option key={city} value={city}>{city}</option>
-                      ))}
-                    </select>
+                      {/* Pickup: allow normal typing; only update lat/lng when a place is selected */}
+                      <Autocomplete
+                        options={pickupAutocompleteOptions}
+                        onLoad={(ac) => {
+                          pickupAutocompleteRef.current = ac;
+                        }}
+                        onPlaceChanged={() => {
+                          try {
+                            const ac = pickupAutocompleteRef.current;
+                            const place = ac?.getPlace?.();
+                            if (!place?.geometry?.location) return;
+
+                            const lat = place.geometry.location.lat();
+                            const lng = place.geometry.location.lng();
+                            const formatted_address = place.formatted_address || place.name || '';
+
+                            setPriceCalc((prev) => ({
+                              ...prev,
+                              pickup: formatted_address || prev.pickup,
+                              pickupPlaceId: place.place_id || prev.pickupPlaceId,
+                              pickupFormattedAddress: formatted_address,
+                              pickupLat: lat,
+                              pickupLng: lng,
+                            }));
+                            setShowPriceResult(false);
+                          } catch (e) {
+                            console.error('Google Autocomplete onPlaceChanged error (Pickup):', e);
+                          }
+                        }}
+                      >
+
+                        <input
+                          type="text"
+                          value={priceCalc.pickup}
+                          onChange={(e) => {
+                            setPriceCalc({ ...priceCalc, pickup: e.target.value });
+                            setShowPriceResult(false);
+                          }}
+                          placeholder="Enter pickup location"
+                          className="w-full px-2 py-2 md:py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition-all bg-white text-gray-700 text-sm"
+                        />
+                      </Autocomplete>
+                    </LoadScript>
+
+
+
+
                   </div>
+
 
                   {/* Drop Location */}
                   <div className="col-span-2 md:col-span-1">
                     <label className="block text-xs font-semibold text-gray-600 mb-1">Drop</label>
-                    <select
-                      value={priceCalc.drop}
-                      onChange={(e) => { setPriceCalc({...priceCalc, drop: e.target.value}); setShowPriceResult(false); }}
-                      className="w-full px-2 py-2 md:py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition-all cursor-pointer bg-white text-gray-700 text-sm"
+                    <LoadScript
+                      googleMapsApiKey={import.meta.env.VITE_GOOGLE_MAPS_API_KEY}
+                      libraries={['places']}
+                      onError={(e) => console.error('Google Maps LoadScript error (Drop):', e)}
                     >
-                      <option value="">Select</option>
-                      {biharCities.map(city => (
-                        <option key={city} value={city}>{city}</option>
-                      ))}
-                    </select>
+                      <Autocomplete
+                        options={pickupAutocompleteOptions}
+                        onLoad={(ac) => {
+                          dropAutocompleteRef.current = ac;
+                        }}
+                        onPlaceChanged={() => {
+                          try {
+                            const ac = dropAutocompleteRef.current;
+                            const place = ac?.getPlace?.();
+                            if (!place?.geometry?.location) return;
+
+                            const lat = place.geometry.location.lat();
+                            const lng = place.geometry.location.lng();
+                            const formatted_address = place.formatted_address || place.name || '';
+
+                            setPriceCalc((prev) => ({
+                              ...prev,
+                              drop: formatted_address || prev.drop,
+                              dropPlaceId: place.place_id || prev.dropPlaceId,
+                              dropFormattedAddress: formatted_address,
+                              dropLat: lat,
+                              dropLng: lng,
+                            }));
+                            setShowPriceResult(false);
+                          } catch (e) {
+                            console.error('Google Autocomplete onPlaceChanged error (Drop):', e);
+                          }
+                        }}
+                      >
+
+                        <input
+                          type="text"
+                          value={priceCalc.drop}
+                          onChange={(e) => {
+                            setPriceCalc({ ...priceCalc, drop: e.target.value });
+                            setShowPriceResult(false);
+                          }}
+                          placeholder="Enter drop location"
+                          className="w-full px-2 py-2 md:py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition-all bg-white text-gray-700 text-sm"
+                        />
+                      </Autocomplete>
+                    </LoadScript>
+
+
                   </div>
+
+
 
                   {/* Vehicle Type */}
                   <div className="col-span-2 md:col-span-1">

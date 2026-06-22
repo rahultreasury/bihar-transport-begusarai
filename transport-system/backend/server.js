@@ -7,6 +7,7 @@ const { testConnection } = require('./config/database');
 dotenv.config();
 
 // Set NODE_ENV for Render
+
 if (process.env.RENDER) {
   process.env.NODE_ENV = 'production';
   process.env.PORT = process.env.PORT || 3000;
@@ -22,6 +23,7 @@ const vehicleRoutes = require('./routes/vehicleRoutes');
 const licenseRoutes = require('./routes/licenseRoutes');
 const challanRoutes = require('./routes/challanRoutes');
 const appointmentRoutes = require('./routes/appointmentRoutes');
+const mapsRoutes = require('./routes/maps');
 
 const app = express();
 
@@ -43,6 +45,7 @@ app.use('/api/vehicles', vehicleRoutes);
 app.use('/api/licenses', licenseRoutes);
 app.use('/api/challans', challanRoutes);
 app.use('/api/appointments', appointmentRoutes);
+app.use('/api', mapsRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
