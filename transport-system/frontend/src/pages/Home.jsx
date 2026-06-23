@@ -294,7 +294,25 @@ function Home() {
     setCalcWarning('');
 
     try {
-    const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/calculate-price`, {
+    const url = `${import.meta.env.VITE_API_URL || 'http://localhost:3000/api'}/calculate-price`;
+    console.log("API URL:", url);
+    const payload = {
+      pickup: {
+        address: priceCalc.pickupFormattedAddress || priceCalc.pickup,
+        lat: priceCalc.pickupLat,
+        lng: priceCalc.pickupLng,
+      },
+      drop: {
+        address: priceCalc.dropFormattedAddress || priceCalc.drop,
+        lat: priceCalc.dropLat,
+        lng: priceCalc.dropLng,
+      },
+      vehicleType: priceCalc.vehicleType,
+    };
+    console.log("Payload:", payload);
+
+    const res = await fetch(url, {
+
 
         method: 'POST',
         headers: {
