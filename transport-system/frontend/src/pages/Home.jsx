@@ -280,14 +280,24 @@ function Home() {
   };
 
   const handleCheckPrice = async () => {
+    console.log("Check Price Clicked");
+    console.log("priceCalc:", priceCalc);
+
     if (
       !priceCalc.pickupLat ||
       !priceCalc.pickupLng ||
       !priceCalc.dropLat ||
       !priceCalc.dropLng
     ) {
+      console.log('Check Price early return: missing lat/lng', {
+        pickupLat: priceCalc.pickupLat,
+        pickupLng: priceCalc.pickupLng,
+        dropLat: priceCalc.dropLat,
+        dropLng: priceCalc.dropLng
+      });
       return;
     }
+
 
     setIsCalculating(true);
     setShowPriceResult(false);
