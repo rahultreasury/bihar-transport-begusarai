@@ -78,6 +78,10 @@ const calculatePriceHandler = async (req, res) => {
 
     const googleApiKey = process.env.GOOGLE_MAPS_API_KEY || '';
 
+    console.log("GOOGLE_MAPS_API_KEY exists:", !!process.env.GOOGLE_MAPS_API_KEY);
+    console.log("Length:", process.env.GOOGLE_MAPS_API_KEY?.length);
+    console.log("Preview:", process.env.GOOGLE_MAPS_API_KEY?.substring(0,10));
+
     if (!pickup?.address || !drop?.address) {
       return res.status(400).json({
         success: false,

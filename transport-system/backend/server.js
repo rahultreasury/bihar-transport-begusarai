@@ -1,10 +1,22 @@
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 const dotenv = require('dotenv');
 const { testConnection } = require('./config/database');
 
-// Load environment variables
-dotenv.config();
+// Load environment variables (explicit backend .env path)
+dotenv.config({
+  path: path.join(__dirname, '.env'),
+});
+
+// TEMP LOG: verify env is loaded correctly (remove later)
+console.log('[env] CWD:', process.cwd());
+console.log('[env] __dirname:', __dirname);
+console.log('[env] GOOGLE_MAPS_API_KEY exists:', !!process.env.GOOGLE_MAPS_API_KEY);
+console.log('[env] Length:', process.env.GOOGLE_MAPS_API_KEY?.length);
+console.log('[env] NODE_ENV:', process.env.NODE_ENV);
+
+
 
 // Set NODE_ENV for Render
 
