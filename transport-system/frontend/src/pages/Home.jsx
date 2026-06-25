@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { bookingAPI } from '../services/api';
 import { Link, useNavigate } from 'react-router-dom';
 import { LoadScript, Autocomplete } from '@react-google-maps/api';
 
@@ -280,7 +281,7 @@ function Home() {
   };
 
   const handleCheckPrice = async () => {
-    console.log("Check Price Clicked");
+    console.log("Check Price clicked");
     console.log("priceCalc:", priceCalc);
 
     if (
@@ -289,74 +290,79 @@ function Home() {
       !priceCalc.dropLat ||
       !priceCalc.dropLng
     ) {
-      console.log('Check Price early return: missing lat/lng', {
+      const reason = {
         pickupLat: priceCalc.pickupLat,
         pickupLng: priceCalc.pickupLng,
         dropLat: priceCalc.dropLat,
-        dropLng: priceCalc.dropLng
-      });
+        dropLng: priceCalc.dropLng,
+      };
+      console.log("Returning because:", reason);
       return;
     }
-
 
     setIsCalculating(true);
     setShowPriceResult(false);
     setCalcWarning('');
 
     try {
-    const url = `${import.meta.env.VITE_API_URL || 'http://localhost:3000/api'}/calculate-price`;
-    console.log("API URL:", url);
-    const payload = {
-      pickup: {
-        address: priceCalc.pickupFormattedAddress || priceCalc.pickup,
-        lat: priceCalc.pickupLat,
-        lng: priceCalc.pickupLng,
-      },
-      drop: {
-        address: priceCalc.dropFormattedAddress || priceCalc.drop,
-        lat: priceCalc.dropLat,
-        lng: priceCalc.dropLng,
-      },
-      vehicleType: priceCalc.vehicleType,
-    };
-    console.log("Payload:", payload);
+      const url = `${import.meta.env.VITE_API_URL || 'http://localhost:3000/api'}/calculate-price`;
+      console.log("Sending request to:", url);
 
-    const res = await fetch(url, {
+      const payload = {
+        pickup: {
+          address: priceCalc.pickupFormattedAddress || priceCalc.pickup,
+          lat: priceCalc.pickupLat,
+          lng: priceCalc.pickupLng,
+        },
+        drop: {
+          address: priceCalc.dropFormattedAddress || priceCalc.drop,
+          lat: priceCalc.dropLat,
+          lng: priceCalc.dropLng,
+        },
+        vehicleType: priceCalc.vehicleType,
+      };
+      console.log("Payload:", payload);
 
-
+      const res = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          pickup: {
-            address: priceCalc.pickupFormattedAddress || priceCalc.pickup,
-            lat: priceCalc.pickupLat,
-            lng: priceCalc.pickupLng,
-          },
-          drop: {
-            address: priceCalc.dropFormattedAddress || priceCalc.drop,
-            lat: priceCalc.dropLat,
-            lng: priceCalc.dropLng,
-          },
-          vehicleType: priceCalc.vehicleType,
-        }),
+        body: JSON.stringify(payload),
       });
 
       const data = await res.json();
+      console.log("Response:", { ok: res.ok, status: res.status, data });
 
       if (!res.ok || !data?.success) {
-        throw new Error(data?.message || 'Failed to calculate price');
+        const reason = data?.message || 'Failed to calculate price';
+        console.log("Returning because:", reason);
+        throw new Error(reason);
       }
 
       setCalcDistance(data.distanceKm);
       setCalcDuration(data.duration);
       setCalcPrice(data.price);
       setCalcWarning(data.warning || '');
+
+      // Snapshot latest successful quote for Book Now modal
+      setLatestQuote({
+        pickupLocation: priceCalc.pickup,
+        pickupAddress: priceCalc.pickupFormattedAddress || priceCalc.pickup,
+        pickupCity: priceCalc.pickup || 'Begusarai',
+        dropLocation: priceCalc.drop,
+        dropAddress: priceCalc.dropFormattedAddress || priceCalc.drop,
+        dropCity: priceCalc.drop || 'Patna',
+        vehicleType: priceCalc.vehicleType,
+        distanceKm: data.distanceKm,
+        price: data.price,
+      });
+
       setIsCalculating(false);
       setShowPriceResult(true);
 
     } catch (e) {
+      console.log("Returning because:", e?.message || e);
       setIsCalculating(false);
       setCalcWarning(e?.message || 'Network/Google API error');
       setShowPriceResult(true);
@@ -370,6 +376,124 @@ function Home() {
       drop: priceCalc.drop
     });
     navigate(`/book-transport?${params.toString()}`);
+  };
+
+  // ===== Book Now modal state (from latest price calc) =====
+  const [bookNowOpen, setBookNowOpen] = useState(false);
+  const [bookNowLoading, setBookNowLoading] = useState(false);
+  const [bookNowError, setBookNowError] = useState('');
+  const [bookNowSuccess, setBookNowSuccess] = useState('');
+
+  const [bookNowForm, setBookNowForm] = useState({
+    name: '',
+    mobile: '',
+    goods_type: '',
+  });
+
+  // Keep a stable snapshot of the latest price calculation
+  const [latestQuote, setLatestQuote] = useState(null);
+
+  const openBookNow = () => {
+    // Prevent opening without a latest successful quote
+    if (!latestQuote) return;
+    setBookNowError('');
+    setBookNowSuccess('');
+    setBookNowOpen(true);
+  };
+
+  const closeBookNow = () => {
+    if (bookNowLoading) return;
+    setBookNowOpen(false);
+  };
+
+  const validateMobile = (mobile) => {
+    // 10 digit Indian mobile numbers (basic validation)
+    return /^\d{10}$/.test(String(mobile).trim());
+  };
+
+  const handleBookNowSubmit = async (e) => {
+    e.preventDefault();
+    setBookNowError('');
+    setBookNowSuccess('');
+
+    if (!latestQuote) {
+      setBookNowError('Please calculate price again before booking.');
+      return;
+    }
+
+    const name = String(bookNowForm.name || '').trim();
+    const mobile = String(bookNowForm.mobile || '').trim();
+    const goods_type = String(bookNowForm.goods_type || '').trim();
+
+    if (!name) {
+      setBookNowError('Name is required');
+      return;
+    }
+
+    if (!validateMobile(mobile)) {
+      setBookNowError('Please enter a valid 10-digit mobile number');
+      return;
+    }
+
+    if (!goods_type) {
+      setBookNowError('Goods Type is required');
+      return;
+    }
+
+    setBookNowLoading(true);
+
+    try {
+      // Backend expects booking fields (see bookingRoutes.js)
+      // We map latestQuote -> booking payload.
+      const payload = {
+        pickup_location: latestQuote.pickupLocation,
+        pickup_address: latestQuote.pickupAddress,
+        pickup_city: latestQuote.pickupCity,
+        pickup_state: 'Bihar',
+        pickup_pincode: '',
+
+        pickup_date: new Date().toISOString().slice(0, 10),
+        pickup_time: '10:00:00',
+
+        drop_location: latestQuote.dropLocation,
+        drop_address: latestQuote.dropAddress,
+        drop_city: latestQuote.dropCity,
+        drop_state: 'Bihar',
+        drop_pincode: '',
+
+        goods_description: `Goods - ${goods_type}`,
+        goods_type,
+        goods_weight_kg: 0,
+        goods_volume: 0,
+        number_of_items: 1,
+        fragile: 0,
+
+        vehicle_type_required: latestQuote.vehicleType,
+        estimated_distance_km: latestQuote.distanceKm,
+        estimated_price: latestQuote.price,
+      };
+
+      const res = await bookingAPI.create(payload);
+
+      if (!res?.data?.success) {
+        throw new Error(res?.data?.message || 'Failed to submit booking');
+      }
+
+      setBookNowSuccess('Booking Submitted Successfully. Our team will contact you shortly.');
+
+      // Reset form after successful booking
+      setBookNowForm({ name: '', mobile: '', goods_type: '' });
+      setBookNowLoading(false);
+
+      // Close modal after short delay
+      setTimeout(() => {
+        setBookNowOpen(false);
+      }, 900);
+
+    } catch (err) {
+      setBookNowLoading(false);
+      setBookNowError(err?.message || 'Failed to submit booking');
+    }
   };
 
   // Handle WhatsApp
@@ -558,17 +682,36 @@ function Home() {
 
                 {/* Price Result */}
                 {showPriceResult && !isCalculating && (
-                  <div className="mt-2 md:mt-3 bg-green-50 rounded-lg p-2 md:p-3 border border-green-200">
-                    <div className="flex justify-between items-center text-sm">
-                      <span className="text-gray-600">{calcDistance} km</span>
-                      <span className="font-bold text-green-600 text-lg">₹{calcPrice}</span>
+                  <div>
+                    <div className="mt-2 md:mt-3 bg-green-50 rounded-lg p-2 md:p-3 border border-green-200">
+                      <div className="flex justify-between items-center text-sm">
+                        <span className="text-gray-600">{calcDistance} km</span>
+                        <span className="font-bold text-green-600 text-lg">₹{calcPrice}</span>
+                      </div>
                     </div>
+
+                    {/* Book Now button below price result */}
+                    <button
+                      type="button"
+                      onClick={openBookNow}
+                      disabled={!latestQuote || bookNowLoading}
+                      className="mt-2 w-full py-2 md:py-2.5 px-2 md:px-4 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer text-sm"
+                    >
+                      {bookNowLoading ? 'Processing...' : 'Book Now'}
+                    </button>
+
+                    {calcWarning && (
+                      <div className="mt-2 text-xs text-amber-700">
+                        {calcWarning}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
 
-              {/* Action Buttons - Full width on mobile */}
-              <div className="grid grid-cols-1 sm:flex sm:flex-wrap gap-2 md:gap-3 mt-3 md:mt-4 animate-slide-in-left delay-300">
+        {/* Action Buttons - Full width on mobile */}
+        <div className="grid grid-cols-1 sm:flex sm:flex-wrap gap-2 md:gap-3 mt-3 md:mt-4 animate-slide-in-left delay-300">
+
                 <Link 
                   to="/book-transport" 
                   className="w-full sm:w-auto flex-1 md:flex-none px-4 md:px-6 py-3 bg-amber-500 text-white rounded-xl font-semibold hover:bg-amber-600 transition-all shadow-lg text-center btn-hover-scale cursor-pointer"
