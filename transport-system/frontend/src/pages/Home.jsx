@@ -3,18 +3,6 @@ import { bookingAPI } from '../services/api';
 import { Link, useNavigate } from 'react-router-dom';
 import { LoadScript, Autocomplete } from '@react-google-maps/api';
 
-
-
-
-
-
-
-
-
-
-
-
-
 // SVG Icons for vehicles
 const TruckIcon = () => (
   <svg viewBox="0 0 64 64" className="w-16 h-16" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -393,13 +381,19 @@ function Home() {
   // Keep a stable snapshot of the latest price calculation
   const [latestQuote, setLatestQuote] = useState(null);
 
-  const openBookNow = () => {
-    // Prevent opening without a latest successful quote
-    if (!latestQuote) return;
+   const openBookNow = () => {
+    console.log("Button Clicked");
+    console.log(latestQuote);
+
+    if (!latestQuote) {
+        console.log("latestQuote is NULL");
+        return;
+    }
+
     setBookNowError('');
     setBookNowSuccess('');
     setBookNowOpen(true);
-  };
+};
 
   const closeBookNow = () => {
     if (bookNowLoading) return;
@@ -1061,6 +1055,220 @@ function Home() {
         </a>
       </div>
 
+      {/* ============================================
+          BOOK NOW MODAL (missing UI)
+          ============================================ */}
+      {bookNowOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3">
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={closeBookNow}
+            aria-hidden="true"
+          />
+
+          {/* Modal panel */}
+          <div
+            className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="book-now-modal-title"
+          >
+            <div className="p-4 md:p-6 border-b border-gray-100">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2
+                    id="book-now-modal-title"
+                    className="text-lg md:text-xl font-bold text-gray-900"
+                  >
+                    Book Now
+                  </h2>
+                  {latestQuote?.distanceKm != null && latestQuote?.price != null ? (
+                    <p className="text-sm md:text-base text-gray-600 mt-1">
+                      {latestQuote.distanceKm} km • ₹{latestQuote.price}
+                    </p>
+                  ) : (
+                    <p className="text-sm md:text-base text-gray-600 mt-1">
+                      Confirm your booking details
+                    </p>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={closeBookNow}
+                  disabled={bookNowLoading}
+                  className="shrink-0 inline-flex items-center justify-center w-9 h-9 rounded-xl border border-gray-200 text-gray-500 hover:text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  aria-label="Close"
+                >
+                  <span className="text-xl leading-none">×</span>
+                </button>
+              </div>
+            </div>
+
+            <form onSubmit={handleBookNowSubmit} className="p-4 md:p-6">
+              {/* Readonly fields */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-gray-600">
+                    Pickup
+                  </label>
+                  <input
+                    type="text"
+                    value={latestQuote?.pickupAddress || latestQuote?.pickupLocation || ''}
+                    readOnly
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-700 text-sm"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-gray-600">
+                    Drop
+                  </label>
+                  <input
+                    type="text"
+                    value={latestQuote?.dropAddress || latestQuote?.dropLocation || ''}
+                    readOnly
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-700 text-sm"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-gray-600">
+                    Vehicle
+                  </label>
+                  <input
+                    type="text"
+                    value={latestQuote?.vehicleType || ''}
+                    readOnly
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-700 text-sm"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-gray-600">
+                    Distance
+                  </label>
+                  <input
+                    type="text"
+                    value={latestQuote?.distanceKm != null ? `${latestQuote.distanceKm} km` : ''}
+                    readOnly
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-700 text-sm"
+                  />
+                </div>
+
+                <div className="space-y-1 md:col-span-2">
+                  <label className="block text-xs font-semibold text-gray-600">
+                    Price
+                  </label>
+                  <input
+                    type="text"
+                    value={latestQuote?.price != null ? `₹${latestQuote.price}` : ''}
+                    readOnly
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-700 text-sm"
+                  />
+                </div>
+              </div>
+
+              {/* Inputs */}
+              <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-gray-600">
+                    Customer Name
+                  </label>
+                  <input
+                    type="text"
+                    value={bookNowForm.name}
+                    onChange={(e) =>
+                      setBookNowForm((prev) => ({ ...prev, name: e.target.value }))
+                    }
+                    placeholder="Enter customer name"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition-all bg-white text-gray-700 text-sm"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-gray-600">
+                    Mobile Number
+                  </label>
+                  <input
+                    type="tel"
+                    inputMode="numeric"
+                    value={bookNowForm.mobile}
+                    onChange={(e) =>
+                      setBookNowForm((prev) => ({ ...prev, mobile: e.target.value }))
+                    }
+                    placeholder="Enter 10-digit mobile number"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition-all bg-white text-gray-700 text-sm"
+                  />
+                </div>
+
+                <div className="space-y-1 md:col-span-2">
+                  <label className="block text-xs font-semibold text-gray-600">
+                    Goods Type
+                  </label>
+                  <input
+                    type="text"
+                    value={bookNowForm.goods_type}
+                    onChange={(e) =>
+                      setBookNowForm((prev) => ({
+                        ...prev,
+                        goods_type: e.target.value,
+                      }))
+                    }
+                    placeholder="e.g., Household, Electronics, Furniture"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition-all bg-white text-gray-700 text-sm"
+                  />
+                </div>
+              </div>
+
+              {/* Messages */}
+              {bookNowLoading ? (
+                <div className="mt-4 flex items-center gap-2 text-amber-700 text-sm">
+                  <div
+                    className="h-5 w-5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin"
+                    aria-hidden="true"
+                  />
+                  <span>Submitting booking...</span>
+                </div>
+              ) : null}
+
+              {bookNowSuccess ? (
+                <div className="mt-4 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-green-700 text-sm">
+                  {bookNowSuccess}
+                </div>
+              ) : null}
+
+              {bookNowError ? (
+                <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-red-700 text-sm">
+                  {bookNowError}
+                </div>
+              ) : null}
+
+              {/* Actions */}
+              <div className="mt-6 flex flex-col sm:flex-row gap-3 sm:gap-4">
+                <button
+                  type="button"
+                  onClick={closeBookNow}
+                  disabled={bookNowLoading}
+                  className="w-full sm:w-auto flex-1 px-4 py-2.5 rounded-lg border border-gray-200 text-gray-800 font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={bookNowLoading}
+                  className="w-full sm:w-auto flex-1 px-4 py-2.5 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {bookNowLoading ? 'Submitting...' : 'Submit'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Extra bottom padding for sticky bar on mobile */}
       <div className="h-20 md:hidden"></div>
     </div>
@@ -1068,4 +1276,5 @@ function Home() {
 }
 
 export default Home;
+
 
