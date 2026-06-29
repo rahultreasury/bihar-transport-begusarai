@@ -74,7 +74,7 @@ app.get('/api/health', (req, res) => {
 // WhatsApp Webhook Verification
 // WhatsApp Webhook Events
 
-app.use('/', webhookRoutes);
+app.use('/api', webhookRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
