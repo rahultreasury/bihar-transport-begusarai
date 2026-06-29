@@ -293,7 +293,7 @@ function Home() {
     setCalcWarning('');
 
     try {
-      const url = `${import.meta.env.VITE_API_URL || 'http://localhost:3000/api'}/calculate-price`;
+const url = `${import.meta.env.VITE_API_URL || 'http://localhost:3000/api'}/calculate-price`;
       console.log("Sending request to:", url);
 
       const payload = {
@@ -439,32 +439,18 @@ function Home() {
     try {
       // Backend expects booking fields (see bookingRoutes.js)
       // We map latestQuote -> booking payload.
+      // MVP contract fields expected by backend POST /api/booking
       const payload = {
-        pickup_location: latestQuote.pickupLocation,
-        pickup_address: latestQuote.pickupAddress,
-        pickup_city: latestQuote.pickupCity,
-        pickup_state: 'Bihar',
-        pickup_pincode: '',
-
-        pickup_date: new Date().toISOString().slice(0, 10),
-        pickup_time: '10:00:00',
-
-        drop_location: latestQuote.dropLocation,
-        drop_address: latestQuote.dropAddress,
-        drop_city: latestQuote.dropCity,
-        drop_state: 'Bihar',
-        drop_pincode: '',
-
-        goods_description: `Goods - ${goods_type}`,
-        goods_type,
-        goods_weight_kg: 0,
-        goods_volume: 0,
-        number_of_items: 1,
-        fragile: 0,
-
-        vehicle_type_required: latestQuote.vehicleType,
-        estimated_distance_km: latestQuote.distanceKm,
-        estimated_price: latestQuote.price,
+        pickup: latestQuote.pickupLocation,
+        drop: latestQuote.dropLocation,
+        vehicle: latestQuote.vehicleType,
+        distance: String(latestQuote.distanceKm),
+        price: String(latestQuote.price),
+        customerName: name,
+        mobile,
+        goodsType: goods_type,
+        pickupDate: new Date().toISOString().slice(0, 10),
+        pickupTime: '10:00 AM',
       };
 
       const res = await bookingAPI.create(payload);

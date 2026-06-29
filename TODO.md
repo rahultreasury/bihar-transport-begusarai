@@ -1,5 +1,7 @@
-- [ ] Replace Pickup dropdown in transport-system/frontend/src/pages/Home.jsx with Google Places Autocomplete (using @react-google-maps/api, VITE_GOOGLE_MAPS_API_KEY) and store selected address in priceCalc.pickup.
-- [ ] Replace Drop dropdown in transport-system/frontend/src/pages/Home.jsx with Google Places Autocomplete and store selected address in priceCalc.drop.
-- [ ] Ensure Vehicle dropdown and existing Check Price/pricing logic remain unchanged.
-- [ ] Keep Tailwind styling responsive to match existing inputs.
-- [ ] Verify app builds and “Check Price” uses updated priceCalc.pickup/drop.
+- [ ] Locate current WhatsApp owner/customer flow in transport-system/backend/services/BookingService.js
+- [ ] Wrap only customer WhatsApp send in its own try/catch
+- [ ] Ensure owner WhatsApp send code remains unchanged
+- [ ] In customer catch: log only console.warn("[booking][customer] WhatsApp skipped:", err.message)
+- [ ] Ensure customer WhatsApp failures do not throw / do not affect API or SQLite
+- [ ] Verify code compiles (optional: run node syntax check)
+

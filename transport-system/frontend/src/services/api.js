@@ -48,7 +48,8 @@ export const authAPI = {
 
 // Booking APIs
 export const bookingAPI = {
-  create: (data) => api.post('/bookings/create', data),
+  // Canonical MVP booking endpoint
+  create: (data) => api.post('/booking', data),
   getMyBookings: () => api.get('/bookings/my-bookings'),
   getUserBookings: (userId) => api.get(`/bookings/user/${userId}`),
   getBooking: (id) => api.get(`/bookings/${id}`),
@@ -74,6 +75,10 @@ export const adminAPI = {
   getDrivers: (params) => api.get('/admin/drivers', { params }),
   getVehicles: (params) => api.get('/admin/vehicles', { params }),
   getBookings: (params) => api.get('/admin/bookings', { params }),
+  getBooking: (id) => api.get(`/admin/bookings/${id}`),
+  updateBooking: (id, data) => api.put(`/admin/bookings/${id}`, data),
+  deleteBooking: (id) => api.delete(`/admin/bookings/${id}`),
+  updateBookingStatus: (id, status) => api.patch(`/admin/bookings/${id}/status`, { status }),
   verifyDriver: (id) => api.put(`/admin/drivers/${id}/verify`),
   verifyVehicle: (id) => api.put(`/admin/vehicles/${id}/verify`),
   toggleUserStatus: (id, isActive) => api.put(`/admin/users/${id}/status`, { is_active: isActive })

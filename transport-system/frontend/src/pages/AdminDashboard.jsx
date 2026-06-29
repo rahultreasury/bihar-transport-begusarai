@@ -1,4 +1,4 @@
-import { useState, useEffect, useContext } from 'react';
+import { useEffect, useMemo, useState, useContext } from 'react';
 import { Link } from 'react-router-dom';
 import { AuthContext } from '../App';
 import { adminAPI } from '../services/api';
@@ -6,11 +6,47 @@ import { adminAPI } from '../services/api';
 function AdminDashboard() {
   const { user } = useContext(AuthContext);
   const [activeTab, setActiveTab] = useState('dashboard');
+
   const [dashboard, setDashboard] = useState(null);
   const [users, setUsers] = useState([]);
   const [drivers, setDrivers] = useState([]);
+
+  // Booking management state
   const [bookings, setBookings] = useState([]);
+  const [bookingsLoading, setBookingsLoading] = useState(false);
+  const [bookingsError, setBookingsError] = useState('');
+
+  const [bookingQuery, setBookingQuery] = useState({
+    search: '',
+    status: '',
+    date: '', // YYYY-MM-DD
+    page: 1,
+    limit: 20,
+  });
+
+  const [bookingsMeta, setBookingsMeta] = useState({
+    total: 0,
+    pages: 1,
+    page: 1,
+    limit: 20,
+  });
+
+  const [bookingModalOpen, setBookingModalOpen] = useState(false);
+  const [bookingModalMode, setBookingModalMode] = useState('view'); // view | edit
+  const [bookingModalBusy, setBookingModalBusy] = useState(false);
+  const [bookingModalError, setBookingModalError] = useState('');
+  const [bookingModalSuccess, setBookingModalSuccess] = useState('');
+
+  const [selectedBooking, setSelectedBooking] = useState(null);
+  const [bookingDraft, setBookingDraft] = useState({});
+
+  const [toast, setToast] = useState({
+    kind: 'success',
+    message: '',
+  });
+
   const [loading, setLoading] = useState(true);
+
 
   useEffect(() => {
     fetchData();
