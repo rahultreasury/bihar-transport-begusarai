@@ -17,6 +17,7 @@ import Dashboard from './pages/Dashboard';
 import DriverDashboard from './pages/DriverDashboard';
 import DeliveryTracking from './pages/DeliveryTracking';
 import AdminDashboard from './pages/AdminDashboard';
+import AdminLogin from './pages/AdminLogin';
 import About from './pages/About';
 import Contact from './pages/Contact';
 import VehicleSearch from './pages/VehicleSearch';
@@ -93,10 +94,12 @@ function App() {
               />
               
               {/* Admin Routes */}
+              <Route path="/admin/login" element={<AdminLogin />} />
               <Route 
                 path="/admin" 
                 element={user?.role === 'admin' || user?.role === 'super_admin' ? <AdminDashboard /> : <Navigate to="/" />} 
               />
+
               
               {/* Catch all - redirect to home */}
               <Route path="*" element={<Navigate to="/" />} />

@@ -400,5 +400,232 @@ router.put('/users/:id/status', protect, async (req, res) => {
   }
 });
 
+/**
+ * ===============================
+ * Admin Booking Management (Phase 1)
+ * ===============================
+ */
+
+
+
+// @route   GET /api/admin/bookings/:id
+// @desc    Get a booking by id
+// @access  Private (Admin)
+router.get('/bookings/:id', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied'
+      });
+    }
+
+    const bookingId = req.params.id;
+
+    const booking = await get(
+      `SELECT b.*, 
+         u.first_name as customer_first_name,
+         u.last_name as customer_last_name,
+         u.email as customer_email,
+         u.phone as customer_phone,
+         tv.vehicle_number,
+         tv.vehicle_name,
+         d.user_id as driver_user_id
+       FROM bookings b
+       JOIN users u ON b.user_id = u.user_id
+       LEFT JOIN transport_vehicles tv ON b.vehicle_id = tv.vehicle_id
+       LEFT JOIN drivers d ON b.driver_id = d.driver_id
+       WHERE b.booking_id = ?`,
+      [bookingId]
+    );
+
+    if (!booking) {
+      return res.status(404).json({
+        success: false,
+        message: 'Booking not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: booking
+    });
+  } catch (error) {
+    console.error('Get booking error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
+});
+
+// @route   PUT /api/admin/bookings/:id
+// @desc    Edit/update a booking by id
+// @access  Private (Admin)
+router.put('/bookings/:id', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied'
+      });
+    }
+
+    const bookingId = req.params.id;
+
+    // Only allow editing a limited safe subset.
+    // This prevents accidental schema-breaking writes.
+    const {
+      pickup_address,
+      drop_address,
+      pickup_city,
+      drop_city,
+      goods_description,
+      goods_type,
+      goods_weight_kg,
+      number_of_items,
+      fragile,
+      vehicle_type_required,
+      estimated_distance_km,
+      estimated_price,
+      final_price
+    } = req.body || {};
+
+    const updateSql = `UPDATE bookings SET
+      pickup_address = COALESCE(?, pickup_address),
+      drop_address = COALESCE(?, drop_address),
+      pickup_city = COALESCE(?, pickup_city),
+      drop_city = COALESCE(?, drop_city),
+      goods_description = COALESCE(?, goods_description),
+      goods_type = COALESCE(?, goods_type),
+      goods_weight_kg = COALESCE(?, goods_weight_kg),
+      number_of_items = COALESCE(?, number_of_items),
+      fragile = COALESCE(?, fragile),
+      vehicle_type_required = COALESCE(?, vehicle_type_required),
+      estimated_distance_km = COALESCE(?, estimated_distance_km),
+      estimated_price = COALESCE(?, estimated_price),
+      final_price = COALESCE(?, final_price)
+    WHERE booking_id = ?`;
+
+    const result = await run(updateSql, [
+      pickup_address ?? null,
+      drop_address ?? null,
+      pickup_city ?? null,
+      drop_city ?? null,
+      goods_description ?? null,
+      goods_type ?? null,
+      goods_weight_kg ?? null,
+      number_of_items ?? null,
+      typeof fragile === 'boolean' ? (fragile ? 1 : 0) : fragile ?? null,
+      vehicle_type_required ?? null,
+      estimated_distance_km ?? null,
+      estimated_price ?? null,
+      final_price ?? null,
+      bookingId,
+    ]);
+
+    res.json({
+      success: true,
+      message: 'Booking updated successfully',
+      data: { booking_id: bookingId, changes: result.changes }
+    });
+  } catch (error) {
+    console.error('Update booking error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
+});
+
+// @route   DELETE /api/admin/bookings/:id
+// @desc    Delete booking by id
+// @access  Private (Admin)
+router.delete('/bookings/:id', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied'
+      });
+    }
+
+    const bookingId = req.params.id;
+
+    // Delete delivery record first if exists (to avoid FK issues in some SQLite setups)
+    await run('DELETE FROM deliveries WHERE booking_id = ?', [bookingId]);
+    const result = await run('DELETE FROM bookings WHERE booking_id = ?', [bookingId]);
+
+    res.json({
+      success: true,
+      message: 'Booking deleted successfully',
+      data: { booking_id: bookingId, changes: result.changes }
+    });
+  } catch (error) {
+    console.error('Delete booking error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
+});
+
+// @route   PATCH /api/admin/bookings/:id/status
+// @desc    Update booking status by id
+// @access  Private (Admin)
+router.patch('/bookings/:id/status', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied'
+      });
+    }
+
+    const bookingId = req.params.id;
+    const { status } = req.body || {};
+
+    if (!status) {
+      return res.status(400).json({
+        success: false,
+        message: 'status is required'
+      });
+    }
+
+    // Only allow known states (based on schema)
+    const allowed = [
+      'pending',
+      'confirmed',
+      'driver_assigned',
+      'pickup_completed',
+      'in_transit',
+      'delivered',
+      'cancelled',
+      'completed'
+    ];
+
+    if (!allowed.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid status'
+      });
+    }
+
+    await run('UPDATE bookings SET status = ? WHERE booking_id = ?', [status, bookingId]);
+
+    res.json({
+      success: true,
+      message: 'Booking status updated successfully'
+    });
+  } catch (error) {
+    console.error('Update booking status error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
+});
+
 module.exports = router;
+
 

@@ -36,8 +36,13 @@ const licenseRoutes = require('./routes/licenseRoutes');
 const challanRoutes = require('./routes/challanRoutes');
 const appointmentRoutes = require('./routes/appointmentRoutes');
 const mapsRoutes = require('./routes/maps');
+const bookingMvpRoutes = require('./routes/bookingMvpRoutes');
+
+const webhookRoutes = require('./routes/webhookRoutes');
 
 const app = express();
+
+
 
 // Middleware
 app.use(cors({
@@ -58,14 +63,22 @@ app.use('/api/licenses', licenseRoutes);
 app.use('/api/challans', challanRoutes);
 app.use('/api/appointments', appointmentRoutes);
 app.use('/api', mapsRoutes);
+app.use('/api', bookingMvpRoutes);
+
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'Bihar Transport Begusarai API is running' });
 });
 
+// WhatsApp Webhook Verification
+// WhatsApp Webhook Events
+
+app.use('/api', webhookRoutes);
+
 // Error handling middleware
 app.use((err, req, res, next) => {
+
   console.error(err.stack);
   res.status(500).json({
     success: false,

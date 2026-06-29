@@ -293,7 +293,11 @@ function Home() {
     setCalcWarning('');
 
     try {
+<<<<<<< HEAD
       const url = `${import.meta.env.VITE_API_URL || 'http://localhost:3000/api'}/calculate-price`;
+=======
+const url = `${import.meta.env.VITE_API_URL || 'http://localhost:3000/api'}/calculate-price`;
+>>>>>>> backend
       console.log("Sending request to:", url);
 
       const payload = {
@@ -439,6 +443,7 @@ function Home() {
     try {
       // Backend expects booking fields (see bookingRoutes.js)
       // We map latestQuote -> booking payload.
+<<<<<<< HEAD
       const payload = {
         pickup_location: latestQuote.pickupLocation,
         pickup_address: latestQuote.pickupAddress,
@@ -465,6 +470,20 @@ function Home() {
         vehicle_type_required: latestQuote.vehicleType,
         estimated_distance_km: latestQuote.distanceKm,
         estimated_price: latestQuote.price,
+=======
+      // MVP contract fields expected by backend POST /api/booking
+      const payload = {
+        pickup: latestQuote.pickupLocation,
+        drop: latestQuote.dropLocation,
+        vehicle: latestQuote.vehicleType,
+        distance: String(latestQuote.distanceKm),
+        price: String(latestQuote.price),
+        customerName: name,
+        mobile,
+        goodsType: goods_type,
+        pickupDate: new Date().toISOString().slice(0, 10),
+        pickupTime: '10:00 AM',
+>>>>>>> backend
       };
 
       const res = await bookingAPI.create(payload);
