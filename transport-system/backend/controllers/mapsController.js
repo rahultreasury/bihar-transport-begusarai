@@ -78,19 +78,13 @@ const calculatePriceHandler = async (req, res) => {
 
     const googleApiKey = process.env.GOOGLE_MAPS_API_KEY || '';
 
-<<<<<<< HEAD
-    console.log("GOOGLE_MAPS_API_KEY exists:", !!process.env.GOOGLE_MAPS_API_KEY);
-    console.log("Length:", process.env.GOOGLE_MAPS_API_KEY?.length);
-    console.log("Preview:", process.env.GOOGLE_MAPS_API_KEY?.substring(0,10));
-=======
     if (process.env.NODE_ENV === 'development') {
-      console.log("GOOGLE_MAPS_API_KEY exists:", !!process.env.GOOGLE_MAPS_API_KEY);
-      console.log("Length:", process.env.GOOGLE_MAPS_API_KEY?.length);
-      console.log("Preview:", process.env.GOOGLE_MAPS_API_KEY?.substring(0,10));
+      console.log('GOOGLE_MAPS_API_KEY exists:', !!process.env.GOOGLE_MAPS_API_KEY);
+      console.log('Length:', process.env.GOOGLE_MAPS_API_KEY?.length);
+      console.log('Preview:', process.env.GOOGLE_MAPS_API_KEY?.substring(0, 10));
     }
 
->>>>>>> backend
-
+    // Current contract expects address fields too (even if lat/lng are used)
     if (!pickup?.address || !drop?.address) {
       return res.status(400).json({
         success: false,
@@ -161,7 +155,7 @@ const calculatePriceHandler = async (req, res) => {
   } catch (err) {
     return res.status(500).json({
       success: false,
-      message: err.message || 'Failed to calculate price',
+      message: err?.message || 'Failed to calculate price',
     });
   }
 };

@@ -26,30 +26,48 @@ function Login() {
   };
 
   const handleSubmit = async (e) => {
+    console.log('[Login] handleSubmit CALLED');
+    console.log('[Login] Calling e.preventDefault()...');
     e.preventDefault();
+    console.log('[Login] e.preventDefault() EXECUTED');
     setError('');
     setLoading(true);
 
     try {
-      const endpoint = showAdminLogin ? '/auth/admin-login' : '/auth/login';
-      const response = await authAPI.login(formData);
-      
-      if (response.data.success) {
-        login(response.data.data, response.data.token);
-        
-        // Redirect based on role
-        if (response.data.data.role === 'admin' || response.data.data.role === 'super_admin') {
+      console.log('[Login] showAdminLogin:', showAdminLogin);
+      if (showAdminLogin) {
+        console.log('[Login] Calling authAPI.adminLogin()...');
+        const response = await authAPI.adminLogin(formData);
+        console.log('[Login] Admin login response:', response?.data);
+        if (response.data.success) {
+          console.log('[Login] Admin login SUCCESS, navigating to /admin');
+          login(response.data.data, response.data.token);
           navigate('/admin');
-        } else if (response.data.data.role === 'driver') {
-          navigate('/driver-dashboard');
         } else {
-          navigate(from);
+          throw new Error(response.data.message || 'Admin login failed');
+        }
+      } else {
+        console.log('[Login] Calling authAPI.login()...');
+        const response = await authAPI.login(formData);
+        console.log('[Login] Customer login response:', response?.data);
+        if (response.data.success) {
+          console.log('[Login] Customer login SUCCESS');
+          login(response.data.data, response.data.token);
+          if (response.data.data.role === 'admin' || response.data.data.role === 'super_admin') {
+            navigate('/admin');
+          } else if (response.data.data.role === 'driver') {
+            navigate('/driver-dashboard');
+          } else {
+            navigate(from);
+          }
         }
       }
     } catch (err) {
+      console.log('[Login] CATCH block, error:', err?.message, 'status:', err?.response?.status);
       setError(err.response?.data?.message || 'Login failed');
     } finally {
       setLoading(false);
+      console.log('[Login] handleSubmit COMPLETE');
     }
   };
 

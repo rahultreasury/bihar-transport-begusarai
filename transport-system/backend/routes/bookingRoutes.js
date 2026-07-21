@@ -1,33 +1,27 @@
 const express = require('express');
 const router = express.Router();
 const { query, run, get } = require('../config/database');
-const { protect } = require('../middleware/auth');
-const { body, validationResult } = require('express-validator');
 
-// Generate booking reference
+// Legacy helpers for backward compatible request/response fields
 const generateBookingRef = () => {
   const timestamp = Date.now().toString(36).toUpperCase();
   const random = Math.random().toString(36).substring(2, 5).toUpperCase();
   return `BTB-${timestamp.slice(-4)}${random}`;
 };
 
-// Calculate estimated price based on distance and vehicle type
 const calculatePrice = (distance, vehicleType) => {
   const rates = {
-    'truck': { base: 500, perKm: 25 },
-    'mini_truck': { base: 300, perKm: 18 },
-    'pickup': { base: 250, perKm: 15 },
-    'tempo': { base: 400, perKm: 20 },
-    'lorry': { base: 700, perKm: 30 }
+    truck: { base: 500, perKm: 25 },
+    mini_truck: { base: 300, perKm: 18 },
+    pickup: { base: 250, perKm: 15 },
+    tempo: { base: 400, perKm: 20 },
+    lorry: { base: 700, perKm: 30 },
   };
-  
-  const rate = rates[vehicleType] || rates['pickup'];
-  return rate.base + (distance * rate.perKm);
+  const rate = rates[vehicleType] || rates.pickup;
+  return rate.base + distance * rate.perKm;
 };
 
-// Estimate distance (in a real app, use a mapping API)
 const estimateDistance = (fromCity, toCity) => {
-  // Simple distance estimation - in production, use Google Maps API
   const cityDistances = {
     'Begusarai-Patna': 180,
     'Patna-Begusarai': 180,
@@ -40,12 +34,48 @@ const estimateDistance = (fromCity, toCity) => {
     'Patna-Gaya': 110,
     'Gaya-Patna': 110,
     'Muzaffarpur-Darbhanga': 45,
-    'Darbhanga-Muzaffarpur': 45
+    'Darbhanga-Muzaffarpur': 45,
   };
-  
+
   const key = `${fromCity}-${toCity}`;
-  return cityDistances[key] || 100; // Default 100km if unknown
+  return cityDistances[key] || 100;
 };
+
+const { protect } = require('../middleware/auth');
+const { body, validationResult } = require('express-validator');
+
+const { BookingService, ValidationError, NotFoundError } = require('../services/BookingService');
+
+const bookingService = new BookingService();
+
+const mapDomainErrorToHttp = (err, res, fallback = {}) => {
+  const name = err?.name;
+  const code = err?.code;
+
+  if (name === 'ValidationError' || code === 'VALIDATION_ERROR') {
+    return res.status(400).json({
+      success: false,
+      message: err?.message || 'Validation failed',
+      ...fallback,
+    });
+  }
+
+  if (name === 'NotFoundError' || code === 'NOT_FOUND') {
+    return res.status(404).json({
+      success: false,
+      message: err?.message || 'Not found',
+      ...fallback,
+    });
+  }
+
+  // No other domain exception types exist in BookingService today.
+  return res.status(500).json({
+    success: false,
+    message: 'Internal server error',
+    ...fallback,
+  });
+};
+
 
 // @route   POST /api/bookings/create
 // @desc    Create a new transport booking
@@ -110,7 +140,7 @@ router.post('/create', protect, [
       success: true,
       message: 'Booking created successfully',
       data: {
-        booking_id: result.lastID,
+        booking_id: bookingResult.booking_id ?? bookingResult.lastID ?? bookingResult,
         booking_reference,
         estimated_distance_km,
         estimated_price,
