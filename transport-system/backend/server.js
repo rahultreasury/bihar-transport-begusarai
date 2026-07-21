@@ -167,7 +167,7 @@ const startServer = async () => {
 
   // Background SMTP verification — never blocks server startup
   (async () => {
-    // Verify SMTP connection
+    // Verify SMTP connection only (no test email — that's done manually via /api/test/email)
     try {
       const verifyResult = await emailService.verifyConnection();
       if (verifyResult.success) {
@@ -178,20 +178,8 @@ const startServer = async () => {
     } catch (err) {
       console.error('[email] SMTP verification threw:', err.message);
     }
-
-    // Send a startup test email to verify end-to-end SMTP
-    try {
-      console.log('[email] Sending startup test email...');
-      const testResult = await emailService.sendTestEmail();
-      if (testResult.success) {
-        console.log(`[email] Startup test result: ${testResult.message} — messageId=${testResult.messageId}`);
-      } else {
-        console.warn(`[email] Startup test result: ${testResult.message}`);
-      }
-    } catch (err) {
-      console.error('[email] Startup test email threw:', err.message);
-    }
   })();
+};
 
 startServer();
 
