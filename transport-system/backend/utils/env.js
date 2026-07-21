@@ -1,14 +1,14 @@
 const required = [
   'JWT_SECRET',
-  'WHATSAPP_ACCESS_TOKEN',
-  'WHATSAPP_PHONE_NUMBER_ID',
-  'WHATSAPP_BUSINESS_NUMBER',
 ];
 
 
-// Treat these as optional in dev; booking/maps can still work with fallback.
+// Treat these as optional; booking/maps/email can still work with fallback.
 const optional = [
   'GOOGLE_MAPS_API_KEY',
+  'WHATSAPP_ACCESS_TOKEN',
+  'WHATSAPP_PHONE_NUMBER_ID',
+  'WHATSAPP_BUSINESS_NUMBER',
 ];
 
 function validateEnv() {

@@ -34,6 +34,11 @@ try {
   if (strict) process.exit(1);
 }
 
+// Check WhatsApp config and warn if disabled
+if (!process.env.WHATSAPP_ACCESS_TOKEN || !process.env.WHATSAPP_PHONE_NUMBER_ID || !process.env.WHATSAPP_BUSINESS_NUMBER) {
+  console.warn('[whatsapp] WhatsApp notifications are disabled.');
+}
+
 
 // Import routes
 const authRoutes = require('./routes/authRoutes');
