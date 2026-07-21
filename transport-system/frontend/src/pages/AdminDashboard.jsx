@@ -1,333 +1,263 @@
-import { useEffect, useMemo, useState, useContext } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useState, useContext, useMemo } from 'react';
 import { AuthContext } from '../App';
 import { adminAPI } from '../services/api';
 
+import AdminShell from '../components/admin-premium/layout/AdminShell';
+import KpiCard from '../components/admin-premium/ui/KpiCard';
+import SectionCard from '../components/admin-premium/ui/SectionCard';
+import PremiumTable from '../components/admin-premium/ui/PremiumTable';
+import EmptyState from '../components/admin-premium/ui/EmptyState';
+import { LoadingSkeleton } from '../components/admin-premium/ui/LoadingSkeleton';
+
 function AdminDashboard() {
   const { user } = useContext(AuthContext);
-  const [activeTab, setActiveTab] = useState('dashboard');
 
   const [dashboard, setDashboard] = useState(null);
-  const [users, setUsers] = useState([]);
-  const [drivers, setDrivers] = useState([]);
-
-  // Booking management state
-  const [bookings, setBookings] = useState([]);
-  const [bookingsLoading, setBookingsLoading] = useState(false);
-  const [bookingsError, setBookingsError] = useState('');
-
-  const [bookingQuery, setBookingQuery] = useState({
-    search: '',
-    status: '',
-    date: '', // YYYY-MM-DD
-    page: 1,
-    limit: 20,
-  });
-
-  const [bookingsMeta, setBookingsMeta] = useState({
-    total: 0,
-    pages: 1,
-    page: 1,
-    limit: 20,
-  });
-
-  const [bookingModalOpen, setBookingModalOpen] = useState(false);
-  const [bookingModalMode, setBookingModalMode] = useState('view'); // view | edit
-  const [bookingModalBusy, setBookingModalBusy] = useState(false);
-  const [bookingModalError, setBookingModalError] = useState('');
-  const [bookingModalSuccess, setBookingModalSuccess] = useState('');
-
-  const [selectedBooking, setSelectedBooking] = useState(null);
-  const [bookingDraft, setBookingDraft] = useState({});
-
-  const [toast, setToast] = useState({
-    kind: 'success',
-    message: '',
-  });
-
   const [loading, setLoading] = useState(true);
 
+  // Phase 1: enterprise home only. Other admin tabs are removed from this screen
+  // (backend/APIs untouched; Phase 2 will reintroduce these as proper routes).
+  const [activeKey, setActiveKey] = useState('dashboard');
+
+  const navItems = useMemo(
+    () => [
+      { key: 'dashboard', label: 'Dashboard', icon: '▦' },
+      { key: 'bookings', label: 'Bookings', icon: '⟐' },
+      { key: 'drivers', label: 'Drivers', icon: '⌁' },
+      { key: 'vehicles', label: 'Vehicles', icon: '⧉' },
+      { key: 'analytics', label: 'Analytics', icon: '◷' },
+      { key: 'ai', label: 'AI Insights', icon: '✦' }
+    ],
+    []
+  );
 
   useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const response = await adminAPI.getDashboard();
+        if (response.data?.success) setDashboard(response.data.data);
+      } catch (error) {
+        console.error('Error fetching dashboard:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
     fetchData();
   }, []);
 
-  const fetchData = async () => {
-    try {
-      const response = await adminAPI.getDashboard();
-      if (response.data.success) {
-        setDashboard(response.data.data);
-      }
-    } catch (error) {
-      console.error('Error fetching dashboard:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchUsers = async () => {
-    try {
-      const response = await adminAPI.getUsers({ limit: 50 });
-      if (response.data.success) setUsers(response.data.data);
-    } catch (error) {
-      console.error('Error fetching users:', error);
-    }
-  };
-
-  const fetchDrivers = async () => {
-    try {
-      const response = await adminAPI.getDrivers({ limit: 50 });
-      if (response.data.success) setDrivers(response.data.data);
-    } catch (error) {
-      console.error('Error fetching drivers:', error);
-    }
-  };
-
-  const fetchBookings = async () => {
-    try {
-      const response = await adminAPI.getBookings({ limit: 50 });
-      if (response.data.success) setBookings(response.data.data);
-    } catch (error) {
-      console.error('Error fetching bookings:', error);
-    }
-  };
-
-  useEffect(() => {
-    if (activeTab === 'users') fetchUsers();
-    if (activeTab === 'drivers') fetchDrivers();
-    if (activeTab === 'bookings') fetchBookings();
-  }, [activeTab]);
-
   const getStatusBadge = (status) => {
     const badges = {
-      pending: { class: 'badge-pending', label: 'Pending' },
-      confirmed: { class: 'badge-confirmed', label: 'Confirmed' },
-      in_transit: { class: 'badge-in-transit', label: 'In Transit' },
-      delivered: { class: 'badge-delivered', label: 'Delivered' },
-      cancelled: { class: 'badge-cancelled', label: 'Cancelled' }
+      pending: { className: 'badge-pending', label: 'Pending' },
+      confirmed: { className: 'badge-confirmed', label: 'Confirmed' },
+      in_transit: { className: 'badge-in-transit', label: 'In Transit' },
+      delivered: { className: 'badge-delivered', label: 'Delivered' },
+      cancelled: { className: 'badge-cancelled', label: 'Cancelled' }
     };
     const badge = badges[status] || badges.pending;
-    return <span className={`badge ${badge.class}`}>{badge.label}</span>;
+    return <span className={`badge ${badge.className}`}>{badge.label}</span>;
   };
+
+  const stats = dashboard?.stats || {};
+  const recentBookings = dashboard?.recentBookings || [];
+  const availableDrivers = dashboard?.availableDrivers || [];
+
+  const kpis = [
+    { key: 'todayRevenue', title: "Today's Revenue", value: stats?.todayRevenue ?? stats?.totalRevenue, sub: 'INR', accent: 'amber', loading },
+    { key: 'todayBookings', title: "Today's Bookings", value: stats?.todayBookings ?? stats?.activeDeliveries, sub: 'Trips', accent: 'green', loading },
+    { key: 'pendingBookings', title: 'Pending Bookings', value: stats?.pendingBookings ?? 0, sub: 'Awaiting dispatch', accent: 'purple', loading },
+    { key: 'activeTrips', title: 'Active Trips', value: stats?.activeTrips ?? stats?.activeDeliveries, sub: 'In progress', accent: 'sky', loading },
+    { key: 'completedTrips', title: 'Completed Trips', value: stats?.completedTrips ?? 0, sub: 'Delivered', accent: 'green', loading },
+    { key: 'cancelledTrips', title: 'Cancelled Trips', value: stats?.cancelledTrips ?? 0, sub: 'Canceled', accent: 'purple', loading },
+    { key: 'availableDrivers', title: 'Available Drivers', value: stats?.availableDrivers ?? availableDrivers?.length ?? 0, sub: 'Ready to accept', accent: 'amber', loading },
+    { key: 'onlineDrivers', title: 'Online Drivers', value: stats?.onlineDrivers ?? availableDrivers?.length ?? 0, sub: 'Connected', accent: 'sky', loading },
+  ];
+
+  const bookingColumns = useMemo(
+    () => [
+      {
+        key: 'booking_reference',
+        header: 'Booking #',
+        render: (r) => <span className="text-amber-500 font-semibold">{r.booking_reference}</span>
+      },
+      {
+        key: 'route',
+        header: 'Route',
+        render: (r) => (
+          <span>
+            {r.pickup_city} → {r.drop_city}
+          </span>
+        )
+      },
+      {
+        key: 'customer',
+        header: 'Customer',
+        render: (r) => (
+          <span>
+            {r.customer_first_name} {r.customer_last_name}
+          </span>
+        )
+      },
+      {
+        key: 'status',
+        header: 'Status',
+        render: (r) => getStatusBadge(r.status)
+      },
+      {
+        key: 'final_price',
+        header: 'Price',
+        render: (r) => <span className="font-semibold">₹{r.final_price}</span>
+      }
+    ],
+    []
+  );
+
+  const bookingRows = useMemo(() => {
+    if (!recentBookings?.length) return [];
+    // Ensure stable shape for PremiumTable
+    return recentBookings.map((b) => ({
+      ...b,
+      id: b.booking_id
+    }));
+  }, [recentBookings]);
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-amber-500"></div>
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-amber-500" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 py-12">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">Admin Dashboard</h1>
-          <p className="text-gray-600">Welcome, {user?.full_name || user?.first_name}!</p>
+    <AdminShell
+      navItems={navItems}
+      activeKey={activeKey}
+      onNav={(k) => setActiveKey(k)}
+    >
+      <div className="space-y-6">
+        <div className="flex items-end justify-between">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">Admin Dashboard</h1>
+            <p className="text-sm text-muted mt-1">Welcome, {user?.full_name || user?.first_name || 'Admin'}.</p>
+          </div>
+          <div className="hidden md:flex items-center gap-3">
+            <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl px-4 py-2">
+              <div className="text-xs text-muted">Ops Mode</div>
+              <div className="text-sm font-semibold">Enterprise</div>
+            </div>
+          </div>
         </div>
 
-        {/* Stats */}
-        {dashboard && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-            <div className="card">
-              <div className="text-2xl font-bold text-amber-500">{dashboard.stats.totalUsers}</div>
-              <div className="text-gray-600">Total Customers</div>
-            </div>
-            <div className="card">
-              <div className="text-2xl font-bold text-green-600">{dashboard.stats.totalDrivers}</div>
-              <div className="text-gray-600">Total Drivers</div>
-            </div>
-            <div className="card">
-              <div className="text-2xl font-bold text-purple-600">{dashboard.stats.activeDeliveries}</div>
-              <div className="text-gray-600">Active Deliveries</div>
-            </div>
-            <div className="card">
-              <div className="text-2xl font-bold text-sky-500">₹{dashboard.stats.totalRevenue?.toLocaleString()}</div>
-              <div className="text-gray-600">Total Revenue</div>
-            </div>
-          </div>
-        )}
-
-        {/* Tabs */}
-        <div className="flex flex-wrap gap-2 mb-6">
-          <button
-            onClick={() => setActiveTab('dashboard')}
-            className={`px-4 py-2 rounded-lg font-medium ${activeTab === 'dashboard' ? 'bg-amber-500 text-white' : 'bg-white text-gray-700'}`}
-          >
-            Dashboard
-          </button>
-          <button
-            onClick={() => setActiveTab('bookings')}
-            className={`px-4 py-2 rounded-lg font-medium ${activeTab === 'bookings' ? 'bg-amber-500 text-white' : 'bg-white text-gray-700'}`}
-          >
-            Bookings
-          </button>
-          <button
-            onClick={() => setActiveTab('users')}
-            className={`px-4 py-2 rounded-lg font-medium ${activeTab === 'users' ? 'bg-amber-500 text-white' : 'bg-white text-gray-700'}`}
-          >
-            Customers
-          </button>
-          <button
-            onClick={() => setActiveTab('drivers')}
-            className={`px-4 py-2 rounded-lg font-medium ${activeTab === 'drivers' ? 'bg-amber-500 text-white' : 'bg-white text-gray-700'}`}
-          >
-            Drivers
-          </button>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {kpis.slice(0, 4).map((k) => (
+            <KpiCard
+              key={k.key}
+              title={k.title}
+              value={typeof k.value === 'number' ? k.value.toLocaleString() : (k.value ?? '—')}
+              sub={k.sub}
+              accent={k.accent}
+              loading={k.loading}
+            />
+          ))}
         </div>
 
-        {/* Dashboard Tab */}
-        {activeTab === 'dashboard' && dashboard && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Recent Bookings */}
-            <div className="card">
-              <h3 className="text-lg font-semibold mb-4">Recent Bookings</h3>
-              <div className="space-y-3">
-                {dashboard.recentBookings.map((booking) => (
-                  <div key={booking.booking_id} className="flex items-center justify-between border-b pb-2">
-                    <div>
-                      <p className="font-medium text-amber-500">{booking.booking_reference}</p>
-                      <p className="text-sm text-gray-500">{booking.pickup_city} → {booking.drop_city}</p>
-                    </div>
-                    <div className="text-right">
-                      {getStatusBadge(booking.status)}
-                      <p className="text-sm font-medium">₹{booking.final_price}</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {kpis.slice(4, 8).map((k) => (
+            <KpiCard
+              key={k.key}
+              title={k.title}
+              value={typeof k.value === 'number' ? k.value.toLocaleString() : (k.value ?? '—')}
+              sub={k.sub}
+              accent={k.accent}
+              loading={k.loading}
+            />
+          ))}
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-7 gap-6">
+          <div className="lg:col-span-4">
+            <SectionCard
+              title="Live Operations"
+              right={<div className="text-xs text-muted">Real-time view</div>}
+            >
+              {dashboard ? (
+                <div className="space-y-4">
+                  <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-4">
+                    <div className="text-sm font-semibold">Delayed Deliveries</div>
+                    <div className="mt-2 text-xs text-muted">
+                      {stats?.delayedDeliveriesCount != null
+                        ? `${stats.delayedDeliveriesCount} flagged trips`
+                        : 'No delayed delivery data from dashboard API yet.'}
                     </div>
                   </div>
-                ))}
-              </div>
-            </div>
 
-            {/* Available Drivers */}
-            <div className="card">
-              <h3 className="text-lg font-semibold mb-4">Available Drivers</h3>
-              <div className="space-y-3">
-                {dashboard.availableDrivers.map((driver) => (
-                  <div key={driver.driver_id} className="flex items-center justify-between border-b pb-2">
-                    <div className="flex items-center">
-                      <div className="w-10 h-10 bg-amber-500 rounded-full flex items-center justify-center text-white font-bold mr-3">
-                        {driver.first_name?.[0]}
-                      </div>
-                      <div>
-                        <p className="font-medium">{driver.first_name} {driver.last_name}</p>
-                        <p className="text-sm text-gray-500">⭐ {driver.rating}</p>
-                      </div>
+                  <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-4">
+                    <div className="text-sm font-semibold">Emergency Alerts</div>
+                    <div className="mt-2 text-xs text-muted">
+                      {stats?.emergencyAlertsCount != null
+                        ? `${stats.emergencyAlertsCount} alerts pending`
+                        : 'No emergency alerts from dashboard API yet.'}
                     </div>
-                    <span className="text-green-600 text-sm">Available</span>
                   </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
 
-        {/* Bookings Tab */}
-        {activeTab === 'bookings' && (
-          <div className="card">
-            <h3 className="text-lg font-semibold mb-4">All Bookings</h3>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b">
-                    <th className="text-left py-3 px-2">Ref</th>
-                    <th className="text-left py-3 px-2">Route</th>
-                    <th className="text-left py-3 px-2">Customer</th>
-                    <th className="text-left py-3 px-2">Status</th>
-                    <th className="text-left py-3 px-2">Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {bookings.map((booking) => (
-                    <tr key={booking.booking_id} className="border-b">
-                      <td className="py-3 px-2 font-medium text-amber-500">{booking.booking_reference}</td>
-                      <td className="py-3 px-2">{booking.pickup_city} → {booking.drop_city}</td>
-                      <td className="py-3 px-2">{booking.customer_first_name} {booking.customer_last_name}</td>
-                      <td className="py-3 px-2">{getStatusBadge(booking.status)}</td>
-                      <td className="py-3 px-2 font-medium">₹{booking.final_price}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-4">
+                    <div className="text-sm font-semibold">Driver Status</div>
+                    <div className="mt-2 text-xs text-muted">
+                      {stats?.onlineDrivers != null
+                        ? `${stats.onlineDrivers} online drivers`
+                        : `${availableDrivers.length} available drivers`}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <LoadingSkeleton className="h-56" />
+              )}
+            </SectionCard>
           </div>
-        )}
 
-        {/* Users Tab */}
-        {activeTab === 'users' && (
-          <div className="card">
-            <h3 className="text-lg font-semibold mb-4">All Customers</h3>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b">
-                    <th className="text-left py-3 px-2">Name</th>
-                    <th className="text-left py-3 px-2">Email</th>
-                    <th className="text-left py-3 px-2">Phone</th>
-                    <th className="text-left py-3 px-2">City</th>
-                    <th className="text-left py-3 px-2">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {users.map((u) => (
-                    <tr key={u.user_id} className="border-b">
-                      <td className="py-3 px-2">{u.first_name} {u.last_name}</td>
-                      <td className="py-3 px-2">{u.email}</td>
-                      <td className="py-3 px-2">{u.phone}</td>
-                      <td className="py-3 px-2">{u.city}</td>
-                      <td className="py-3 px-2">
-                        <span className={`badge ${u.is_active ? 'badge-delivered' : 'badge-cancelled'}`}>
-                          {u.is_active ? 'Active' : 'Inactive'}
-                        </span>
-                      </td>
-                    </tr>
+          <div className="lg:col-span-3">
+            <SectionCard
+              title="Available Drivers"
+              right={<div className="text-xs text-muted">Dispatch-ready</div>}
+            >
+              {availableDrivers.length ? (
+                <div className="space-y-3">
+                  {availableDrivers.slice(0, 6).map((driver) => (
+                    <div key={driver.driver_id} className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="h-10 w-10 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center text-white font-semibold">
+                          {driver.first_name?.[0] || 'D'}
+                        </div>
+                        <div>
+                          <div className="text-sm font-semibold">
+                            {driver.first_name} {driver.last_name}
+                          </div>
+                          <div className="text-xs text-muted">⭐ {driver.rating ?? '—'}</div>
+                        </div>
+                      </div>
+                      <div className="text-xs font-semibold text-green-500">Available</div>
+                    </div>
                   ))}
-                </tbody>
-              </table>
-            </div>
+                </div>
+              ) : (
+                <EmptyState title="No available drivers" subtitle="Drivers will appear here when online." />
+              )}
+            </SectionCard>
           </div>
-        )}
+        </div>
 
-        {/* Drivers Tab */}
-        {activeTab === 'drivers' && (
-          <div className="card">
-            <h3 className="text-lg font-semibold mb-4">All Drivers</h3>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b">
-                    <th className="text-left py-3 px-2">Name</th>
-                    <th className="text-left py-3 px-2">Phone</th>
-                    <th className="text-left py-3 px-2">License</th>
-                    <th className="text-left py-3 px-2">Rating</th>
-                    <th className="text-left py-3 px-2">Deliveries</th>
-                    <th className="text-left py-3 px-2">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {drivers.map((driver) => (
-                    <tr key={driver.driver_id} className="border-b">
-                      <td className="py-3 px-2">{driver.first_name} {driver.last_name}</td>
-                      <td className="py-3 px-2">{driver.phone}</td>
-                      <td className="py-3 px-2 text-sm">{driver.license_number}</td>
-                      <td className="py-3 px-2">⭐ {driver.rating}</td>
-                      <td className="py-3 px-2">{driver.total_deliveries}</td>
-                      <td className="py-3 px-2">
-                        <span className={`badge ${driver.is_available ? 'badge-delivered' : 'badge-pending'}`}>
-                          {driver.is_available ? 'Available' : 'Busy'}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
+        <SectionCard title="Recent Bookings" right={<div className="text-xs text-muted">Last updates</div>}>
+          {bookingRows.length ? (
+            <PremiumTable columns={bookingColumns} rows={bookingRows.slice(0, 8)} loading={false} />
+          ) : (
+            <EmptyState title="No recent bookings" subtitle="Bookings will appear here once created." />
+          )}
+        </SectionCard>
       </div>
-    </div>
+    </AdminShell>
   );
 }
 
 export default AdminDashboard;
+
 

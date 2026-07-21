@@ -1,29 +1,33 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { useState, useEffect, createContext } from 'react';
+import { useState, useEffect, createContext, lazy, Suspense } from 'react';
 
 // Context
 export const AuthContext = createContext(null);
 
-// Components
+// Components (keep Navbar + Footer eager for instant shell)
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
+import PageLoader from './components/PageLoader';
 
-// Pages
+// Eager pages (critical path — small, always needed)
 import Home from './pages/Home';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
-import BookTransport from './pages/BookTransport';
-import Dashboard from './pages/Dashboard';
-import DriverDashboard from './pages/DriverDashboard';
-import DeliveryTracking from './pages/DeliveryTracking';
-import AdminDashboard from './pages/AdminDashboard';
-import AdminLogin from './pages/AdminLogin';
-import About from './pages/About';
-import Contact from './pages/Contact';
-import VehicleSearch from './pages/VehicleSearch';
-import LicenseSearch from './pages/LicenseSearch';
-import ChallanSearch from './pages/ChallanSearch';
-import Appointment from './pages/Appointment';
+
+// Lazy pages (code-split by route)
+const About = lazy(() => import('./pages/About'));
+const Contact = lazy(() => import('./pages/Contact'));
+const BookTransport = lazy(() => import('./pages/BookTransport'));
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const DriverDashboard = lazy(() => import('./pages/DriverDashboard'));
+const DeliveryTracking = lazy(() => import('./pages/DeliveryTracking'));
+const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
+const AdminBookings = lazy(() => import('./pages/AdminBookings'));
+const AdminLogin = lazy(() => import('./pages/AdminLogin'));
+const VehicleSearch = lazy(() => import('./pages/VehicleSearch'));
+const LicenseSearch = lazy(() => import('./pages/LicenseSearch'));
+const ChallanSearch = lazy(() => import('./pages/ChallanSearch'));
+const Appointment = lazy(() => import('./pages/Appointment'));
 
 function App() {
   const [user, setUser] = useState(null);
@@ -66,41 +70,62 @@ function App() {
           <Navbar />
           <main className="flex-grow">
             <Routes>
-              {/* Public Routes */}
+              {/* Public Routes (eager) */}
               <Route path="/" element={<Home />} />
-              <Route path="/about" element={<About />} />
-              <Route path="/contact" element={<Contact />} />
               <Route path="/login" element={<Login />} />
               <Route path="/signup" element={<Signup />} />
-              <Route path="/track" element={<DeliveryTracking />} />
-              <Route path="/vehicle-search" element={<VehicleSearch />} />
-              <Route path="/license-search" element={<LicenseSearch />} />
-              <Route path="/challan-search" element={<ChallanSearch />} />
-              <Route path="/appointment" element={<Appointment />} />
+
+              {/* Public Routes (lazy) */}
+              <Route path="/about" element={<Suspense fallback={<PageLoader label="Loading About..." />}><About /></Suspense>} />
+              <Route path="/contact" element={<Suspense fallback={<PageLoader label="Loading Contact..." />}><Contact /></Suspense>} />
+              <Route path="/track" element={<Suspense fallback={<PageLoader label="Loading Tracking..." />}><DeliveryTracking /></Suspense>} />
+              <Route path="/vehicle-search" element={<Suspense fallback={<PageLoader label="Loading..." />}><VehicleSearch /></Suspense>} />
+              <Route path="/license-search" element={<Suspense fallback={<PageLoader label="Loading..." />}><LicenseSearch /></Suspense>} />
+              <Route path="/challan-search" element={<Suspense fallback={<PageLoader label="Loading..." />}><ChallanSearch /></Suspense>} />
+              <Route path="/appointment" element={<Suspense fallback={<PageLoader label="Loading..." />}><Appointment /></Suspense>} />
               
-              {/* Book Transport - Available to all (redirects to login if not authenticated) */}
-              <Route path="/book-transport" element={<BookTransport />} />
+              {/* Book Transport - Available to all */}
+              <Route path="/book-transport" element={<Suspense fallback={<PageLoader label="Loading Booking..." />}><BookTransport /></Suspense>} />
               
               {/* Customer Routes */}
               <Route 
                 path="/dashboard" 
-                element={user ? <Dashboard /> : <Navigate to="/login" />} 
+                element={
+                  user 
+                    ? <Suspense fallback={<PageLoader label="Loading Dashboard..." />}><Dashboard /></Suspense>
+                    : <Navigate to="/login" />
+                } 
               />
               
               {/* Driver Routes */}
               <Route 
                 path="/driver-dashboard" 
-                element={user?.role === 'driver' ? <DriverDashboard /> : <Navigate to="/" />} 
+                element={
+                  user?.role === 'driver' 
+                    ? <Suspense fallback={<PageLoader label="Loading Driver Dashboard..." />}><DriverDashboard /></Suspense>
+                    : <Navigate to="/" />
+                } 
               />
               
               {/* Admin Routes */}
-              <Route path="/admin/login" element={<AdminLogin />} />
+              <Route path="/admin/login" element={<Suspense fallback={<PageLoader label="Loading..." />}><AdminLogin /></Suspense>} />
               <Route 
                 path="/admin" 
-                element={user?.role === 'admin' || user?.role === 'super_admin' ? <AdminDashboard /> : <Navigate to="/" />} 
+                element={
+                  user?.role === 'admin' || user?.role === 'super_admin' 
+                    ? <Suspense fallback={<PageLoader label="Loading Admin..." />}><AdminDashboard /></Suspense>
+                    : <Navigate to="/" />
+                } 
+              />
+              <Route 
+                path="/admin/bookings" 
+                element={
+                  user?.role === 'admin' || user?.role === 'super_admin' 
+                    ? <Suspense fallback={<PageLoader label="Loading Bookings..." />}><AdminBookings /></Suspense>
+                    : <Navigate to="/" />
+                } 
               />
 
-              
               {/* Catch all - redirect to home */}
               <Route path="*" element={<Navigate to="/" />} />
             </Routes>

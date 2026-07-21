@@ -1,0 +1,2 @@
+Temporary note: implement transaction support in database.js and update repositories to accept optional tx.
+

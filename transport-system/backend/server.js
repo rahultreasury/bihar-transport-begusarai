@@ -2,28 +2,38 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const dotenv = require('dotenv');
+const compression = require('compression');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const morgan = require('morgan');
 const { testConnection } = require('./config/database');
+const { validateEnv } = require('./utils/env');
+
+const { NotFoundError } = require('./utils/AppError');
+const errorHandler = require('./middleware/errorHandler');
 
 // Load environment variables (explicit backend .env path)
 dotenv.config({
   path: path.join(__dirname, '.env'),
 });
 
-// TEMP LOG: verify env is loaded correctly (remove later)
-console.log('[env] CWD:', process.cwd());
-console.log('[env] __dirname:', __dirname);
-console.log('[env] GOOGLE_MAPS_API_KEY exists:', !!process.env.GOOGLE_MAPS_API_KEY);
-console.log('[env] Length:', process.env.GOOGLE_MAPS_API_KEY?.length);
-console.log('[env] NODE_ENV:', process.env.NODE_ENV);
-
-
-
 // Set NODE_ENV for Render
-
 if (process.env.RENDER) {
   process.env.NODE_ENV = 'production';
   process.env.PORT = process.env.PORT || 3000;
 }
+
+// Fail fast on required env vars (can be disabled via ENV_STRICT=false)
+try {
+  validateEnv();
+} catch (e) {
+  // In dev/local we avoid hard-failing; in production strict mode we still exit.
+  const strict = String(process.env.ENV_STRICT || 'true') === 'true';
+  // eslint-disable-next-line no-console
+  console.error('[env] Validation failed:', e.message);
+  if (strict) process.exit(1);
+}
+
 
 // Import routes
 const authRoutes = require('./routes/authRoutes');
@@ -37,75 +47,143 @@ const challanRoutes = require('./routes/challanRoutes');
 const appointmentRoutes = require('./routes/appointmentRoutes');
 const mapsRoutes = require('./routes/maps');
 const bookingMvpRoutes = require('./routes/bookingMvpRoutes');
-
 const webhookRoutes = require('./routes/webhookRoutes');
+const testEmailRoutes = require('./routes/testEmailRoutes');
+const emailService = require('./services/emailService');
 
 const app = express();
 
-
-
 // Middleware
+app.use(helmet({
+  contentSecurityPolicy: {
+    useDefaults: true,
+    directives: {
+      'default-src': ["'self'"],
+      'connect-src': ["'self'", 'https:'],
+      'img-src': ["'self'", 'data:', 'https:'],
+      'script-src': ["'self'"],
+      'style-src': ["'self'", 'https:'],
+      'frame-ancestors': ["'none'"],
+    },
+  },
+  frameguard: { action: 'deny' },
+  xssFilter: false,
+  noSniff: true,
+  referrerPolicy: { policy: 'no-referrer' },
+}));
+
 app.use(cors({
   origin: process.env.FRONTEND_URL || '*',
-  credentials: true
+  credentials: true,
 }));
-app.use(express.json());
+
+app.use(compression());
+app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// API Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/bookings', bookingRoutes);
-app.use('/api/drivers', driverRoutes);
-app.use('/api/admin', adminRoutes);
-app.use('/api/delivery', deliveryRoutes);
-app.use('/api/vehicles', vehicleRoutes);
-app.use('/api/licenses', licenseRoutes);
-app.use('/api/challans', challanRoutes);
-app.use('/api/appointments', appointmentRoutes);
-app.use('/api', mapsRoutes);
-app.use('/api', bookingMvpRoutes);
+// Request logging
+app.use(morgan(process.env.NODE_ENV === 'development' ? 'dev' : 'combined'));
 
+// Rate limiting
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 2000,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const bookingLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const adminLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.use(globalLimiter);
+
+// API Routes
+app.use('/api/auth', loginLimiter, authRoutes);
+app.use('/api/bookings', bookingLimiter, bookingRoutes);
+app.use('/api', bookingLimiter, bookingMvpRoutes);
+app.use('/api/admin', adminLimiter, adminRoutes);
+app.use('/api/drivers', bookingLimiter, driverRoutes);
+app.use('/api/delivery', bookingLimiter, deliveryRoutes);
+app.use('/api/vehicles', bookingLimiter, vehicleRoutes);
+app.use('/api/licenses', bookingLimiter, licenseRoutes);
+app.use('/api/challans', bookingLimiter, challanRoutes);
+app.use('/api/appointments', bookingLimiter, appointmentRoutes);
+app.use('/api', mapsRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', message: 'Bihar Transport Begusarai API is running' });
+  res.json({ success: true, status: 'ok', message: 'Bihar Transport Begusarai API is running', data: null, timestamp: new Date().toISOString() });
 });
 
-// WhatsApp Webhook Verification
 // WhatsApp Webhook Events
-
 app.use('/api', webhookRoutes);
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-
-  console.error(err.stack);
-  res.status(500).json({
-    success: false,
-    message: 'Internal server error',
-    error: process.env.NODE_ENV === 'development' ? err.message : undefined
-  });
-});
+// Test email endpoint — sends a test email to OWNER_EMAIL and returns SMTP response
+app.use('/api', testEmailRoutes);
 
 // 404 handler
-app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    message: 'Route not found'
-  });
+app.use((req, res, next) => {
+  next(new NotFoundError({ message: 'Route not found' }));
 });
+
+// Error handling middleware
+app.use(errorHandler);
 
 const PORT = process.env.PORT || 3000;
 
 // Start server
 const startServer = async () => {
   await testConnection();
-  
+
+  // Verify SMTP connection (logs result)
+  const verifyResult = await emailService.verifyConnection();
+  if (verifyResult.success) {
+    console.log('✓ Email Service Ready');
+  } else {
+    console.warn('[email] Service not available:', verifyResult.message);
+  }
+
+  // Send a startup test email to verify end-to-end SMTP
+  (async () => {
+    try {
+      console.log('[email] Sending startup test email...');
+      const testResult = await emailService.sendTestEmail();
+      if (testResult.success) {
+        console.log(`[email] Startup test result: ${testResult.message} — messageId=${testResult.messageId}`);
+      } else {
+        console.warn(`[email] Startup test result: ${testResult.message}`);
+      }
+    } catch (err) {
+      console.error('[email] Startup test email threw:', err.message);
+    }
+  })();
+
   app.listen(PORT, '0.0.0.0', () => {
+    // eslint-disable-next-line no-console
     console.log(`✅ Server running on port ${PORT}`);
+    // eslint-disable-next-line no-console
     console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
   });
 };
 
 startServer();
+
 

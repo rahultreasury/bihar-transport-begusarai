@@ -2,8 +2,8 @@ const express = require('express');
 const { body, validationResult } = require('express-validator');
 const bcrypt = require('bcryptjs');
 
-const BookingService = require('../services/BookingService');
 const { query, run, get } = require('../config/database');
+const { sendBookingNotification } = require('../services/emailService');
 
 const router = express.Router();
 
@@ -169,26 +169,27 @@ router.post('/booking', validateMvpBooking, async (req, res) => {
     const bookingResult = await run(bookingSql, bookingValues);
 
     // Commit booking as the source of truth.
-    // WhatsApp must be best-effort and MUST NOT affect the booking result.
+    console.log('Booking saved');
+
     const bookingPayload = {
       ...req.body,
       booking_reference,
       booking_id: bookingResult.lastID,
     };
 
-    // Fire-and-forget WhatsApp (never await) so it cannot impact booking response.
-    (async () => {
-      try {
-        await BookingService.submitBooking(bookingPayload);
-        console.log('[booking][success] WhatsApp dispatched (owner).');
-      } catch (whatsappErr) {
-        // Catch locally: log and never rethrow.
-        console.error(
-          '[booking][whatsapp] failed:',
-          whatsappErr && whatsappErr.message ? whatsappErr.message : whatsappErr
-        );
+    // Send booking email AFTER save — sequential await, never before saving.
+    // If email fails: log the error, keep booking successful, never rollback.
+    console.log('Sending booking email...');
+    try {
+      const emailResult = await sendBookingNotification(bookingPayload);
+      if (emailResult.success) {
+        console.log('Booking email sent successfully');
+      } else {
+        console.warn(`[booking][email] Owner notification skipped: ${emailResult.message}`);
       }
-    })();
+    } catch (emailErr) {
+      console.error('[booking][email] Owner notification failed:', emailErr.message);
+    }
 
     return res.status(200).json({
       success: true,

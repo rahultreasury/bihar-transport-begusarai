@@ -99,6 +99,7 @@ const initializeDatabase = () => {
     db.run(`CREATE TABLE IF NOT EXISTS bookings (
       booking_id INTEGER PRIMARY KEY AUTOINCREMENT,
       booking_reference TEXT UNIQUE NOT NULL,
+      booking_number TEXT,
       user_id INTEGER NOT NULL,
       driver_id INTEGER,
       vehicle_id INTEGER,
@@ -135,6 +136,71 @@ const initializeDatabase = () => {
       FOREIGN KEY (driver_id) REFERENCES drivers(driver_id),
       FOREIGN KEY (vehicle_id) REFERENCES transport_vehicles(vehicle_id)
     )`);
+
+    // Backward compatible migration for booking_number (idempotent)
+    db.run(`PRAGMA table_info(bookings)`, [], function(err, cols) {
+      if (err) {
+        console.error('PRAGMA table_info(bookings) failed:', err);
+        return;
+      }
+      const hasBookingNumber = (cols || []).some(c => c.name === 'booking_number');
+
+      if (!hasBookingNumber) {
+        db.run(`ALTER TABLE bookings ADD COLUMN booking_number TEXT`, (err2) => {
+          if (err2) {
+            // If already added by the CREATE TABLE path above, ignore duplicate column errors.
+            if (String(err2.message || err2).includes('duplicate column name')) {
+              console.log('ℹ️ booking_number already exists (duplicate ignored)');
+              return;
+            }
+            console.error('ALTER TABLE bookings ADD COLUMN booking_number failed:', err2);
+          } else {
+            console.log('✅ booking_number column added to bookings');
+          }
+        });
+      }
+    });
+
+
+    // booking_events table
+    db.run(`CREATE TABLE IF NOT EXISTS booking_events (
+      booking_event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      booking_id INTEGER NOT NULL,
+      event_type TEXT NOT NULL,
+      event_payload TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (booking_id) REFERENCES bookings(booking_id) ON DELETE CASCADE
+    )`);
+
+    // booking_assignments table
+    db.run(`CREATE TABLE IF NOT EXISTS booking_assignments (
+      booking_assignment_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      booking_id INTEGER NOT NULL,
+      assigned_driver_id INTEGER,
+      assigned_vehicle_id INTEGER,
+      assigned_by_admin_id INTEGER,
+      assignment_status TEXT DEFAULT 'active',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (booking_id) REFERENCES bookings(booking_id) ON DELETE CASCADE,
+      FOREIGN KEY (assigned_driver_id) REFERENCES drivers(driver_id) ON DELETE SET NULL,
+      FOREIGN KEY (assigned_vehicle_id) REFERENCES transport_vehicles(vehicle_id) ON DELETE SET NULL,
+      FOREIGN KEY (assigned_by_admin_id) REFERENCES admins(admin_id) ON DELETE SET NULL
+    )`);
+
+    // Indexes (additive/idempotent)
+    // NOTE: booking_number may have been added via ALTER TABLE above; index creation is safe to keep idempotent.
+    db.run(`CREATE INDEX IF NOT EXISTS idx_bookings_booking_number ON bookings(booking_number)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_bookings_reference ON bookings(booking_reference)`);
+
+
+    db.run(`CREATE INDEX IF NOT EXISTS idx_booking_events_booking_id ON booking_events(booking_id)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_booking_events_event_type ON booking_events(event_type)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_booking_events_created_at ON booking_events(created_at)`);
+
+    db.run(`CREATE INDEX IF NOT EXISTS idx_booking_assignments_booking_id ON booking_assignments(booking_id)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_booking_assignments_driver_id ON booking_assignments(assigned_driver_id)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_booking_assignments_vehicle_id ON booking_assignments(assigned_vehicle_id)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_booking_assignments_created_at ON booking_assignments(created_at)`);
 
     // Deliveries table
     db.run(`CREATE TABLE IF NOT EXISTS deliveries (
@@ -260,5 +326,90 @@ const get = (sql, params = []) => {
   });
 };
 
-module.exports = { db, query, run, get, testConnection: () => Promise.resolve(true) };
+class TransactionError extends Error {
+  constructor(message = 'Transaction failed') {
+    super(message);
+    this.name = 'TransactionError';
+  }
+}
+
+/**
+ * Execute operations in a single SQLite transaction.
+ *
+ * Usage:
+ *   const result = await db.transaction(async (tx) => {
+ *     await tx.run('INSERT ...', [..]);
+ *     const row = await tx.get('SELECT ...', [..]);
+ *     return row;
+ *   });
+ */
+const transaction = async (work) => {
+  if (typeof work !== 'function') {
+    throw new TypeError('db.transaction(work) requires a function');
+  }
+
+  // Serialize ensures we don't interleave statements across concurrent transactions.
+  return new Promise((resolve, reject) => {
+    db.serialize(async () => {
+      try {
+        db.run('BEGIN TRANSACTION');
+
+        const tx = {
+          run: (sql, params = []) => runTx(sql, params),
+          query: (sql, params = []) => queryTx(sql, params),
+          get: (sql, params = []) => getTx(sql, params),
+        };
+
+        const result = await work(tx);
+
+        db.run('COMMIT', (err) => {
+          if (err) return reject(err);
+          resolve(result);
+        });
+      } catch (err) {
+        db.run('ROLLBACK', () => {
+          reject(err instanceof TransactionError ? err : err);
+        });
+      }
+    });
+  });
+};
+
+function runTx(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.run(sql, params, function (err) {
+      if (err) return reject(err);
+      resolve({ lastID: this.lastID, changes: this.changes });
+    });
+  });
+}
+
+function queryTx(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => {
+      if (err) return reject(err);
+      resolve(rows);
+    });
+  });
+}
+
+function getTx(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.get(sql, params, (err, row) => {
+      if (err) return reject(err);
+      resolve(row);
+    });
+  });
+}
+
+module.exports = {
+  db,
+  query,
+  run,
+  get,
+  transaction,
+  testConnection: () => Promise.resolve(true),
+  TransactionError
+};
+
 

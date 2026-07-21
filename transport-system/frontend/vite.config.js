@@ -7,10 +7,40 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-target: 'http://localhost:3000',
+        target: 'http://localhost:3000',
         changeOrigin: true
       }
     }
-  }
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Core vendor — React runtime + router
+          vendor: [
+            'react',
+            'react-dom',
+            'react-router-dom',
+          ],
+          // Animation library — framer-motion is large
+          animations: [
+            'framer-motion',
+          ],
+          // HTTP client
+          network: [
+            'axios',
+          ],
+          // Google Maps — conditionally loaded
+          maps: [
+            '@react-google-maps/api',
+          ],
+        },
+      },
+    },
+    // Generate source maps for debug builds only
+    sourcemap: false,
+    // Reduce CSS duplication
+    cssCodeSplit: false,
+  },
 })
 

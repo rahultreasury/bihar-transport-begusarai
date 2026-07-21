@@ -39,25 +39,40 @@ function AdminLogin() {
   };
 
   const handleSubmit = async (e) => {
-    console.log('AdminLogin: Login clicked');
-    if (e && typeof e.preventDefault === 'function') e.preventDefault();
+    console.log('[AdminLogin] handleSubmit CALLED');
+    console.log('[AdminLogin] Calling e.preventDefault()...');
+    e.preventDefault();
+    console.log('[AdminLogin] e.preventDefault() EXECUTED, form will NOT reload');
     setError('');
     setLoading(true);
-
+    console.log('[AdminLogin] Starting API request to /auth/admin-login...');
 
     try {
+      console.log('[AdminLogin] API request: authAPI.adminLogin() calling...');
       const response = await authAPI.adminLogin(formData);
+      console.log('[AdminLogin] API RESPONSE received:', response?.data);
 
       if (response?.data?.success) {
+        console.log('[AdminLogin] Login SUCCESS, updating auth context...');
         login(response.data.data, response.data.token);
+        console.log('[AdminLogin] Navigating to /admin...');
         navigate('/admin', { replace: true });
       } else {
+        console.log('[AdminLogin] Login FAILED (success=false):', response?.data?.message);
         throw new Error(response?.data?.message || 'Admin login failed');
       }
     } catch (err) {
-      setError(err?.response?.data?.message || err?.message || 'Admin login failed');
+      console.log('[AdminLogin] CATCH block entered. Error:', err?.message, 'Status:', err?.response?.status);
+      console.log('[AdminLogin] axios error.config.url:', err?.config?.url);
+      // Attempt to prevent any full-page redirect from axios interceptor
+      if (err?.response?.status === 401) {
+        setError(err?.response?.data?.message || 'Invalid credentials');
+      } else {
+        setError(err?.response?.data?.message || err?.message || 'Admin login failed');
+      }
     } finally {
       setLoading(false);
+      console.log('[AdminLogin] handleSubmit COMPLETED (finally block)');
     }
   };
 

@@ -27,7 +27,12 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    // Only redirect for 401 on protected routes, not auth endpoints
+    const authPaths = ['/auth/login', '/auth/admin-login', '/auth/signup', '/auth/driver-signup'];
+    const requestUrl = error.config?.url || '';
+    const isAuthRequest = authPaths.some(path => requestUrl.includes(path));
+
+    if (error.response?.status === 401 && !isAuthRequest) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
       window.location.href = '/login';
