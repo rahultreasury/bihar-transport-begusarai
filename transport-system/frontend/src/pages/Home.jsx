@@ -349,6 +349,7 @@ function Home() {
   const validateMobile = (mobile) => /^\d{10}$/.test(String(mobile).trim());
 
   const handleBookNowSubmit = async (e) => {
+    console.log("1. Submit clicked");
     e.preventDefault();
     setBookNowError('');
     setBookNowSuccess('');
@@ -366,9 +367,12 @@ function Home() {
     if (!validateMobile(mobile)) return setBookNowError('Please enter a valid 10-digit mobile number');
     if (!goods_type) return setBookNowError('Goods Type is required');
 
+    console.log("2. Validation passed");
+
     setBookNowLoading(true);
 
     try {
+      console.log("3. Creating payload");
       // MVP contract fields expected by backend POST /api/booking
       const payload = {
         pickup: latestQuote.pickupLocation,
@@ -383,7 +387,11 @@ function Home() {
         pickupTime: '10:00 AM'
       };
 
+      console.log("4. Payload:", payload);
+
+      console.log("5. About to call bookingAPI.create()");
       const res = await bookingAPI.create(payload);
+      console.log("6. bookingAPI.create() returned", res);
 
       if (!res?.data?.success) {
         throw new Error(res?.data?.message || 'Failed to submit booking');
@@ -398,6 +406,7 @@ function Home() {
         setBookNowOpen(false);
       }, 900);
     } catch (err) {
+      console.error("7. Booking submission error:", err);
       setBookNowLoading(false);
       setBookNowError(err?.message || 'Failed to submit booking');
     }
