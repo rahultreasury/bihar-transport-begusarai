@@ -177,19 +177,19 @@ router.post('/booking', validateMvpBooking, async (req, res) => {
       booking_id: bookingResult.lastID,
     };
 
-    // Send booking email AFTER save — sequential await, never before saving.
-    // If email fails: log the error, keep booking successful, never rollback.
-    console.log('Sending booking email...');
-    try {
-      const emailResult = await sendBookingNotification(bookingPayload);
-      if (emailResult.success) {
-        console.log('Booking email sent successfully');
-      } else {
-        console.warn(`[booking][email] Owner notification skipped: ${emailResult.message}`);
+// Fire-and-forget email notification — never blocks the booking response.
+    (async () => {
+      try {
+        const result = await sendBookingNotification(bookingPayload);
+        if (result.success) {
+          console.log('[booking][email] sent');
+        } else {
+          console.warn('[booking][email]', result.message);
+        }
+      } catch (err) {
+        console.error('[booking][email]', err);
       }
-    } catch (emailErr) {
-      console.error('[booking][email] Owner notification failed:', emailErr.message);
-    }
+    })();
 
     return res.status(200).json({
       success: true,

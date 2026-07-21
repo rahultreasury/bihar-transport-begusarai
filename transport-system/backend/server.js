@@ -192,7 +192,6 @@ const startServer = async () => {
       console.error('[email] Startup test email threw:', err.message);
     }
   })();
-};
 
 startServer();
 
