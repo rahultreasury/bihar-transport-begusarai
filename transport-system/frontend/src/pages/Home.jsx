@@ -391,6 +391,9 @@ function Home() {
 
       console.log("5. About to call bookingAPI.create()");
       const res = await bookingAPI.create(payload);
+      console.log("Full Axios Response:", res);
+      console.log("Response Data:", res.data);
+      console.log("Success field:", res.data.success);
       console.log("6. bookingAPI.create() returned", res);
 
       if (!res?.data?.success) {
