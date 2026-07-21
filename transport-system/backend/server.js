@@ -158,16 +158,28 @@ const PORT = process.env.PORT || 3000;
 const startServer = async () => {
   await testConnection();
 
-  // Verify SMTP connection (logs result)
-  const verifyResult = await emailService.verifyConnection();
-  if (verifyResult.success) {
-    console.log('✓ Email Service Ready');
-  } else {
-    console.warn('[email] Service not available:', verifyResult.message);
-  }
+  app.listen(PORT, '0.0.0.0', () => {
+    // eslint-disable-next-line no-console
+    console.log(`✅ Server running on port ${PORT}`);
+    // eslint-disable-next-line no-console
+    console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+  });
 
-  // Send a startup test email to verify end-to-end SMTP
+  // Background SMTP verification — never blocks server startup
   (async () => {
+    // Verify SMTP connection
+    try {
+      const verifyResult = await emailService.verifyConnection();
+      if (verifyResult.success) {
+        console.log('✓ Email Service Ready');
+      } else {
+        console.warn('[email] Service not available:', verifyResult.message);
+      }
+    } catch (err) {
+      console.error('[email] SMTP verification threw:', err.message);
+    }
+
+    // Send a startup test email to verify end-to-end SMTP
     try {
       console.log('[email] Sending startup test email...');
       const testResult = await emailService.sendTestEmail();
@@ -180,13 +192,6 @@ const startServer = async () => {
       console.error('[email] Startup test email threw:', err.message);
     }
   })();
-
-  app.listen(PORT, '0.0.0.0', () => {
-    // eslint-disable-next-line no-console
-    console.log(`✅ Server running on port ${PORT}`);
-    // eslint-disable-next-line no-console
-    console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  });
 };
 
 startServer();
