@@ -2,7 +2,7 @@ const express = require('express');
 const { body, validationResult } = require('express-validator');
 const bcrypt = require('bcryptjs');
 
-const { query, run, get } = require('../config/database');
+const { query, run, get, transaction } = require('../config/database');
 const { sendBookingNotification } = require('../services/emailService');
 
 const router = express.Router();
@@ -30,10 +30,11 @@ const validateMvpBooking = [
     .matches(/^\d+(\.\d+)?$/)
     .withMessage('price must be a number'),
 
-  // Spec: 10-digit Indian mobile number
+// Spec: 10-digit Indian mobile number starting with 6, 7, 8, or 9
   body('mobile')
-    .matches(/^\d{10}$/)
-    .withMessage('mobile must be a valid 10-digit Indian number'),
+    .trim()
+    .matches(/^[6-9]\d{9}$/)
+    .withMessage('mobile must be a valid 10-digit Indian number starting with 6, 7, 8, or 9'),
 
   // Optional fields - accept strings if present
   body('pickupDate').optional().isString(),
@@ -72,32 +73,24 @@ router.post('/booking', validateMvpBooking, async (req, res) => {
     }
 
 
-    // Ensure we have a customer user_id for the bookings table.
-    // Strategy: find by mobile; if not found, create a new customer.
-    const mobile = req.body.mobile;
-
+const mobile = req.body.mobile;
     const placeholderEmail = `guest_${mobile}@btb.local`;
 
+    // Lookup or create guest user
     let user;
-    user = await get('SELECT user_id FROM users WHERE phone = ? OR phone = ?', [mobile, mobile]);
-
+    user = await get('SELECT user_id FROM users WHERE phone = ?', [mobile]);
     if (!user) {
       const salt = await bcrypt.genSalt(10);
       const password_hash = await bcrypt.hash(`guest_${mobile}`, salt);
-
       const result = await run(
         `INSERT INTO users (first_name, last_name, email, phone, password_hash, role)
-         VALUES (?, ?, ?, ?, ?, ?)` ,
+         VALUES (?, ?, ?, ?, ?, ?)`,
         ['Guest', 'Customer', placeholderEmail, mobile, password_hash, 'customer']
       );
-
       user = { user_id: result.lastID };
     }
 
-    // Generate booking reference (format requested: BTB202600001)
-    const timestamp = Date.now().toString();
-    const base = `BTB${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}`;
-    const booking_reference = `${base}${String(timestamp % 1000000000).padStart(3, '0')}`;
+    // Booking reference will be generated after INSERT using the auto-generated booking_id.
 
     // Insert booking into SQLite
     const estimated_distance_km = Number(req.body.distance);
@@ -131,8 +124,8 @@ router.post('/booking', validateMvpBooking, async (req, res) => {
         status
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) `;
 
-    const bookingValues = [
-      booking_reference,
+const bookingValues = [
+      'TEMP', // placeholder — will be updated after INSERT with real booking_reference
       user.user_id,
       req.body.pickup,
       null,
@@ -166,15 +159,25 @@ router.post('/booking', validateMvpBooking, async (req, res) => {
       console.log('[booking][debug]', { columnsCount, placeholdersCount, valuesCount: bookingValues.length });
     }
 
-    const bookingResult = await run(bookingSql, bookingValues);
+const { booking_id, booking_reference } = await transaction(async (tx) => {
+      const bookingResult = await tx.run(bookingSql, bookingValues);
+      const bid = bookingResult.lastID;
+      const year = new Date().getFullYear();
+      const ref = `BTB${year}${String(bid).padStart(5, '0')}`;
+      await tx.run('UPDATE bookings SET booking_reference = ? WHERE booking_id = ?', [ref, bid]);
+      await tx.run(
+        'INSERT INTO deliveries (booking_id, current_status, status_description) VALUES (?, ?, ?)',
+        [bid, 'booking_confirmed', 'Booking confirmed, waiting for driver assignment']
+      );
+      return { booking_id: bid, booking_reference: ref };
+    });
 
-    // Commit booking as the source of truth.
-    console.log('Booking saved');
+    console.log('Booking saved with id:', booking_id);
 
     const bookingPayload = {
       ...req.body,
       booking_reference,
-      booking_id: bookingResult.lastID,
+      booking_id,
     };
 
 // Fire-and-forget email notification — never blocks the booking response.
@@ -191,7 +194,7 @@ router.post('/booking', validateMvpBooking, async (req, res) => {
       }
     })();
 
-    return res.status(200).json({
+    return res.status(201).json({
       success: true,
       bookingReference: booking_reference,
       message: 'Booking submitted successfully.',
@@ -201,7 +204,7 @@ router.post('/booking', validateMvpBooking, async (req, res) => {
     // Do not expose stack traces
     console.error('[booking][error]', err);
 
-    return res.status(200).json({
+    return res.status(500).json({
       success: false,
       message: 'Booking received but WhatsApp delivery failed.',
     });

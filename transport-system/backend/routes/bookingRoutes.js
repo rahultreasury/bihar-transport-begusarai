@@ -140,7 +140,7 @@ router.post('/create', protect, [
       success: true,
       message: 'Booking created successfully',
       data: {
-        booking_id: bookingResult.booking_id ?? bookingResult.lastID ?? bookingResult,
+        booking_id: result.lastID,
         booking_reference,
         estimated_distance_km,
         estimated_price,
@@ -388,9 +388,9 @@ router.get('/track/:reference', async (req, res) => {
     // Get driver info if assigned
     let driverInfo = null;
     if (booking.driver_id) {
-      const driver = await get(
-        `SELECT d.driver_id, d.rating, d.total_deliveries, u.first_name, u.last_name         FROM drivers d, u.phone
-
+const driver = await get(
+        `SELECT d.driver_id, d.rating, d.total_deliveries, u.first_name, u.last_name, u.phone
+         FROM drivers d
          JOIN users u ON d.user_id = u.user_id
          WHERE d.driver_id = ?`,
         [booking.driver_id]

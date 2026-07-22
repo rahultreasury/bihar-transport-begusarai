@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { query, run, get } = require('../config/database');
+const { query, run, get, transaction } = require('../config/database');
 const { protect } = require('../middleware/auth');
 
 // @route   GET /api/admin/dashboard
@@ -430,11 +430,18 @@ router.get('/bookings/:id', protect, async (req, res) => {
          u.phone as customer_phone,
          tv.vehicle_number,
          tv.vehicle_name,
-         d.user_id as driver_user_id
+         d.user_id as driver_user_id,
+         du.first_name as driver_first_name,
+         du.last_name as driver_last_name,
+         du.phone as driver_phone,
+         del.current_status as delivery_current_status,
+         del.status_description as delivery_status_description
        FROM bookings b
        JOIN users u ON b.user_id = u.user_id
        LEFT JOIN transport_vehicles tv ON b.vehicle_id = tv.vehicle_id
        LEFT JOIN drivers d ON b.driver_id = d.driver_id
+       LEFT JOIN users du ON d.user_id = du.user_id
+       LEFT JOIN deliveries del ON b.booking_id = del.booking_id
        WHERE b.booking_id = ?`,
       [bookingId]
     );
@@ -622,6 +629,309 @@ router.patch('/bookings/:id/status', protect, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error'
+    });
+  }
+});
+
+/**
+ * ===============================
+ * Driver Assignment API
+ * ===============================
+ */
+
+// @route   POST /api/admin/bookings/:id/assign-driver
+// @desc    Assign an available driver to a booking
+// @access  Private (Admin)
+router.post('/bookings/:id/assign-driver', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied'
+      });
+    }
+
+    const bookingId = req.params.id;
+    const { driver_id } = req.body || {};
+
+    if (!driver_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'driver_id is required'
+      });
+    }
+
+    // Validate booking exists
+    const booking = await get('SELECT * FROM bookings WHERE booking_id = ?', [bookingId]);
+    if (!booking) {
+      return res.status(404).json({
+        success: false,
+        message: 'Booking not found'
+      });
+    }
+
+    // Prevent assigning driver to cancelled/completed bookings
+    if (['cancelled', 'completed', 'delivered'].includes(booking.status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot assign driver to a booking with status: ${booking.status}`
+      });
+    }
+
+    // Prevent reassigning if driver already assigned
+    if (booking.driver_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Driver already assigned to this booking'
+      });
+    }
+
+    // Validate driver exists and is available
+    const driver = await get(
+      `SELECT d.*, u.first_name, u.last_name, u.phone
+       FROM drivers d
+       JOIN users u ON d.user_id = u.user_id
+       WHERE d.driver_id = ?`,
+      [driver_id]
+    );
+    if (!driver) {
+      return res.status(404).json({
+        success: false,
+        message: 'Driver not found'
+      });
+    }
+    if (!driver.is_available) {
+      return res.status(400).json({
+        success: false,
+        message: 'Driver is not available'
+      });
+    }
+
+    // Check driver is not already assigned to another active booking
+    const activeBooking = await get(
+      `SELECT booking_id FROM bookings
+       WHERE driver_id = ? AND status NOT IN ('cancelled', 'completed', 'delivered')`,
+      [driver_id]
+    );
+    if (activeBooking) {
+      return res.status(400).json({
+        success: false,
+        message: 'Driver is already assigned to another active booking'
+      });
+    }
+
+    // Execute assignment within a transaction
+    await transaction(async (tx) => {
+      // 1. Update booking: set driver_id, status, driver_assigned_at
+      await tx.run(
+        `UPDATE bookings SET
+           driver_id = ?,
+           status = 'driver_assigned',
+           driver_assigned_at = CURRENT_TIMESTAMP
+         WHERE booking_id = ?`,
+        [driver_id, bookingId]
+      );
+
+      // 2. Mark driver as unavailable
+      await tx.run(
+        'UPDATE drivers SET is_available = 0 WHERE driver_id = ?',
+        [driver_id]
+      );
+
+      // 3. Insert booking_assignment record
+      await tx.run(
+        `INSERT INTO booking_assignments
+           (booking_id, assigned_driver_id, assigned_by_admin_id, assignment_status)
+         VALUES (?, ?, ?, 'active')`,
+        [bookingId, driver_id, req.user.user_id]
+      );
+
+      // 4. Update delivery record if exists
+      const delivery = await tx.get(
+        'SELECT delivery_id FROM deliveries WHERE booking_id = ?',
+        [bookingId]
+      );
+      if (delivery) {
+        await tx.run(
+          `UPDATE deliveries SET
+             driver_id = ?,
+             current_status = 'driver_assigned',
+             status_description = 'Driver assigned to booking'
+           WHERE booking_id = ?`,
+          [driver_id, bookingId]
+        );
+      }
+    });
+
+    res.json({
+      success: true,
+      message: 'Driver assigned successfully',
+      data: {
+        booking_id: parseInt(bookingId),
+        driver_id: parseInt(driver_id),
+        driver_name: `${driver.first_name} ${driver.last_name}`,
+        driver_phone: driver.phone,
+        status: 'driver_assigned'
+      }
+    });
+
+  } catch (error) {
+    console.error('Assign driver error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Server error assigning driver'
+    });
+  }
+});
+
+/**
+ * ===============================
+ * Vehicle Assignment API
+ * ===============================
+ */
+
+// @route   POST /api/admin/bookings/:id/assign-vehicle
+// @desc    Assign an available vehicle to a booking
+// @access  Private (Admin)
+router.post('/bookings/:id/assign-vehicle', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied'
+      });
+    }
+
+    const bookingId = req.params.id;
+    const { vehicle_id } = req.body || {};
+
+    if (!vehicle_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'vehicle_id is required'
+      });
+    }
+
+    // Validate booking exists
+    const booking = await get('SELECT * FROM bookings WHERE booking_id = ?', [bookingId]);
+    if (!booking) {
+      return res.status(404).json({
+        success: false,
+        message: 'Booking not found'
+      });
+    }
+
+    // Prevent assigning to cancelled/completed bookings
+    if (['cancelled', 'completed', 'delivered'].includes(booking.status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot assign vehicle to a booking with status: ${booking.status}`
+      });
+    }
+
+    // Prevent reassigning if vehicle already assigned
+    if (booking.vehicle_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Vehicle already assigned to this booking'
+      });
+    }
+
+    // Validate vehicle exists and is available
+    const vehicle = await get(
+      'SELECT * FROM transport_vehicles WHERE vehicle_id = ?',
+      [vehicle_id]
+    );
+    if (!vehicle) {
+      return res.status(404).json({
+        success: false,
+        message: 'Vehicle not found'
+      });
+    }
+    if (!vehicle.is_available) {
+      return res.status(400).json({
+        success: false,
+        message: 'Vehicle is not available'
+      });
+    }
+
+    // Check vehicle is not already assigned to another active booking
+    const activeBooking = await get(
+      `SELECT booking_id FROM bookings
+       WHERE vehicle_id = ? AND status NOT IN ('cancelled', 'completed', 'delivered')`,
+      [vehicle_id]
+    );
+    if (activeBooking) {
+      return res.status(400).json({
+        success: false,
+        message: 'Vehicle is already assigned to another active booking'
+      });
+    }
+
+    // Execute assignment within a transaction
+    await transaction(async (tx) => {
+      // 1. Update booking: set vehicle_id
+      await tx.run(
+        `UPDATE bookings SET vehicle_id = ? WHERE booking_id = ?`,
+        [vehicle_id, bookingId]
+      );
+
+      // 2. Mark vehicle as unavailable
+      await tx.run(
+        "UPDATE transport_vehicles SET is_available = 0, current_status = 'on_trip' WHERE vehicle_id = ?",
+        [vehicle_id]
+      );
+
+      // 3. Upsert booking_assignment with vehicle_id
+      // Check if a booking_assignment record already exists (e.g., from driver assignment)
+      const existingAssignment = await tx.get(
+        'SELECT booking_assignment_id FROM booking_assignments WHERE booking_id = ?',
+        [bookingId]
+      );
+      if (existingAssignment) {
+        await tx.run(
+          'UPDATE booking_assignments SET assigned_vehicle_id = ? WHERE booking_id = ?',
+          [vehicle_id, bookingId]
+        );
+      } else {
+        await tx.run(
+          `INSERT INTO booking_assignments
+             (booking_id, assigned_vehicle_id, assigned_by_admin_id, assignment_status)
+           VALUES (?, ?, ?, 'active')`,
+          [bookingId, vehicle_id, req.user.user_id]
+        );
+      }
+
+      // 4. Update delivery record if exists
+      const delivery = await tx.get(
+        'SELECT delivery_id FROM deliveries WHERE booking_id = ?',
+        [bookingId]
+      );
+      if (delivery) {
+        await tx.run(
+          'UPDATE deliveries SET vehicle_id = ? WHERE booking_id = ?',
+          [vehicle_id, bookingId]
+        );
+      }
+    });
+
+    res.json({
+      success: true,
+      message: 'Vehicle assigned successfully',
+      data: {
+        booking_id: parseInt(bookingId),
+        vehicle_id: parseInt(vehicle_id),
+        vehicle_name: vehicle.vehicle_name,
+        vehicle_number: vehicle.vehicle_number,
+        vehicle_type: vehicle.vehicle_type
+      }
+    });
+
+  } catch (error) {
+    console.error('Assign vehicle error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Server error assigning vehicle'
     });
   }
 });

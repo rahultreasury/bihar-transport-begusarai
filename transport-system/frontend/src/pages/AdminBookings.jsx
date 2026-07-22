@@ -4,7 +4,7 @@ import AdminShell from '../components/admin-premium/layout/AdminShell';
 import { LoadingSkeleton } from '../components/admin-premium/ui/LoadingSkeleton';
 import EmptyState from '../components/admin-premium/ui/EmptyState';
 import PremiumTable from '../components/admin-premium/ui/PremiumTable';
-import StatusBadge, { getStatusLabel } from '../components/admin-premium/booking/StatusBadge';
+import StatusBadge, { getStatusLabel, getAllStatuses } from '../components/admin-premium/booking/StatusBadge';
 import BookingFilters from '../components/admin-premium/booking/BookingFilters';
 import BookingDetailsDrawer from '../components/admin-premium/booking/BookingDetailsDrawer';
 import useBookingFilters from '../components/admin-premium/booking/useBookingFilters';
@@ -116,6 +116,12 @@ function AdminBookings() {
     setPagination(prev => ({ ...prev, page: 1 }));
   }, [selection]);
 
+  // Status management state
+  const [statusUpdateBookingId, setStatusUpdateBookingId] = useState(null);
+  const [statusUpdateOpen, setStatusUpdateOpen] = useState(false);
+  const [newStatus, setNewStatus] = useState('');
+  const [isUpdating, setIsUpdating] = useState(false);
+
   // Open booking details drawer
   const openDrawer = useCallback(async (bookingId) => {
     try {
@@ -133,6 +139,39 @@ function AdminBookings() {
     setDrawerOpen(false);
     setTimeout(() => setSelectedBooking(null), 200);
   }, []);
+
+  // Handle status update
+  const handleOpenStatusUpdate = useCallback((bookingId, currentStatus) => {
+    setStatusUpdateBookingId(bookingId);
+    setNewStatus(currentStatus || 'pending');
+    setStatusUpdateOpen(true);
+  }, []);
+
+  const handleCloseStatusUpdate = useCallback(() => {
+    setStatusUpdateOpen(false);
+    setStatusUpdateBookingId(null);
+    setNewStatus('');
+  }, []);
+
+  const handleStatusUpdate = useCallback(async () => {
+    if (!statusUpdateBookingId || !newStatus) return;
+    setIsUpdating(true);
+    try {
+      await adminAPI.updateBookingStatus(statusUpdateBookingId, newStatus);
+      handleCloseStatusUpdate();
+      fetchBookings(pagination.page);
+    } catch (err) {
+      console.error('Error updating status:', err);
+    } finally {
+      setIsUpdating(false);
+    }
+  }, [statusUpdateBookingId, newStatus, pagination.page, fetchBookings, handleCloseStatusUpdate]);
+
+  // Handle driver assignment — navigate to drivers or show placeholder
+  const handleAssignDriver = useCallback((bookingId) => {
+    // Opens the drawer which already shows driver/vehicle assignment info
+    openDrawer(bookingId);
+  }, [openDrawer]);
 
   // Bulk actions
   const handleBulkStatusUpdate = useCallback(async (newStatus) => {
@@ -290,12 +329,12 @@ function AdminBookings() {
     {
       key: 'actions',
       header: 'Actions',
-      width: 100,
+      width: 160,
       render: (r) => (
         <div className="flex items-center gap-1">
           <button
             onClick={() => openDrawer(r.booking_id)}
-            className="p-1.5 rounded-lg hover:bg-hover/60 transition text-muted hover:text-text"
+            className="p-1.5 rounded-lg hover:bg-blue-500/10 transition text-blue-500 hover:text-blue-600"
             aria-label={`View details for ${r.booking_reference}`}
             title="View Details"
           >
@@ -305,21 +344,29 @@ function AdminBookings() {
             </svg>
           </button>
           <button
-            onClick={() => {
-              navigator.clipboard.writeText(r.booking_reference);
-            }}
-            className="p-1.5 rounded-lg hover:bg-hover/60 transition text-muted hover:text-text"
-            aria-label={`Copy booking reference ${r.booking_reference}`}
-            title="Copy Booking #"
+            onClick={() => handleAssignDriver(r.booking_id)}
+            className="p-1.5 rounded-lg hover:bg-violet-500/10 transition text-violet-500 hover:text-violet-600"
+            aria-label={`Assign driver for ${r.booking_reference}`}
+            title="Assign Driver"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+            </svg>
+          </button>
+          <button
+            onClick={() => handleOpenStatusUpdate(r.booking_id, r.status)}
+            className="p-1.5 rounded-lg hover:bg-amber-500/10 transition text-amber-500 hover:text-amber-600"
+            aria-label={`Update status for ${r.booking_reference}`}
+            title="Update Status"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
           </button>
         </div>
       )
     }
-  ], [openDrawer]);
+  ], [openDrawer, handleAssignDriver, handleOpenStatusUpdate]);
 
   // Mobile card view
   const renderMobileCard = useCallback((booking) => (
@@ -583,7 +630,62 @@ function AdminBookings() {
           booking={selectedBooking}
           isOpen={drawerOpen}
           onClose={closeDrawer}
+          onBookingUpdated={(bookingId) => {
+            // Refresh booking details after driver assignment
+            openDrawer(bookingId);
+            // Also refresh the bookings list
+            fetchBookings(pagination.page);
+          }}
         />
+
+        {/* Status Update Modal */}
+        {statusUpdateOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={handleCloseStatusUpdate} />
+            <div className="relative w-full max-w-md bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-border/60 overflow-hidden" role="dialog" aria-modal="true" aria-label="Update Booking Status">
+              <div className="p-5 border-b border-border/60">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-bold">Update Status</h3>
+                  <button onClick={handleCloseStatusUpdate} className="h-8 w-8 rounded-lg border border-border/60 flex items-center justify-center hover:bg-hover/60 transition" aria-label="Close">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+                <p className="text-sm text-muted mt-1">Booking #{statusUpdateBookingId}</p>
+              </div>
+              <div className="p-5 space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold mb-2">New Status</label>
+                  <select
+                    value={newStatus}
+                    onChange={(e) => setNewStatus(e.target.value)}
+                    className="w-full px-3 py-2.5 border border-border/60 rounded-xl bg-surface text-sm focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500 outline-none transition"
+                  >
+                    {getAllStatuses().map((s) => (
+                      <option key={s} value={s}>{s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex gap-3 pt-2">
+                  <button
+                    onClick={handleCloseStatusUpdate}
+                    className="flex-1 px-4 py-2.5 rounded-xl border border-border/60 text-sm font-semibold hover:bg-hover/60 transition"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleStatusUpdate}
+                    disabled={isUpdating}
+                    className="flex-1 px-4 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition disabled:opacity-50"
+                  >
+                    {isUpdating ? 'Updating...' : 'Update'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </AdminShell>
   );

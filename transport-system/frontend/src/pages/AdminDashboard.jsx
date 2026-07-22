@@ -1,4 +1,5 @@
 import { useEffect, useState, useContext, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AuthContext } from '../App';
 import { adminAPI } from '../services/api';
 
@@ -72,30 +73,49 @@ function AdminDashboard() {
     { key: 'onlineDrivers', title: 'Online Drivers', value: stats?.onlineDrivers ?? availableDrivers?.length ?? 0, sub: 'Connected', accent: 'sky', loading },
   ];
 
+  const navigate = useNavigate();
+
   const bookingColumns = useMemo(
     () => [
       {
         key: 'booking_reference',
         header: 'Booking #',
-        render: (r) => <span className="text-amber-500 font-semibold">{r.booking_reference}</span>
-      },
-      {
-        key: 'route',
-        header: 'Route',
         render: (r) => (
-          <span>
-            {r.pickup_city} → {r.drop_city}
-          </span>
+          <button
+            onClick={() => navigate('/admin/bookings')}
+            className="text-amber-500 font-semibold hover:underline"
+          >
+            {r.booking_reference}
+          </button>
         )
       },
       {
         key: 'customer',
         header: 'Customer',
         render: (r) => (
-          <span>
-            {r.customer_first_name} {r.customer_last_name}
-          </span>
+          <div>
+            <div className="font-medium">{r.first_name} {r.last_name}</div>
+            <div className="text-[11px] text-muted">{r.phone || '—'}</div>
+          </div>
         )
+      },
+      {
+        key: 'route',
+        header: 'Route',
+        render: (r) => (
+          <div className="flex items-center gap-1">
+            <span className="font-medium">{r.pickup_city}</span>
+            <svg className="w-3 h-3 text-muted shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
+            </svg>
+            <span className="font-medium">{r.drop_city}</span>
+          </div>
+        )
+      },
+      {
+        key: 'goods_type',
+        header: 'Goods',
+        render: (r) => <span className="text-sm text-muted">{r.goods_type || '—'}</span>
       },
       {
         key: 'status',
@@ -106,9 +126,18 @@ function AdminDashboard() {
         key: 'final_price',
         header: 'Price',
         render: (r) => <span className="font-semibold">₹{r.final_price}</span>
+      },
+      {
+        key: 'created_at',
+        header: 'Booked',
+        render: (r) => (
+          <span className="text-sm text-muted">
+            {r.created_at ? new Date(r.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}
+          </span>
+        )
       }
     ],
-    []
+    [navigate]
   );
 
   const bookingRows = useMemo(() => {

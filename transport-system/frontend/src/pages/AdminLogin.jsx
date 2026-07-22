@@ -163,12 +163,6 @@ function AdminLogin() {
             </Link>
           </p>
 
-          {/* Demo Credentials (keep consistent with existing Login.jsx) */}
-          <div className="mt-6 p-4 bg-blue-50 rounded-lg">
-            <p className="text-sm font-semibold text-blue-800 mb-2">Demo Credentials:</p>
-            <p className="text-sm text-blue-700">Admin: admin@bihartransport.com</p>
-            <p className="text-xs text-blue-600 mt-1">Password for all: password123</p>
-          </div>
         </form>
       </div>
     </div>
