@@ -29,6 +29,17 @@ const LicenseSearch = lazy(() => import('./pages/LicenseSearch'));
 const ChallanSearch = lazy(() => import('./pages/ChallanSearch'));
 const Appointment = lazy(() => import('./pages/Appointment'));
 
+// SEO Resource Pages
+const ServicesListing = lazy(() => import('./pages/resources/ServicesListing'));
+const StatePage = lazy(() => import('./pages/resources/StatePage'));
+const CityPage = lazy(() => import('./pages/resources/CityPage'));
+const RoutePage = lazy(() => import('./pages/resources/RoutePage'));
+
+// New SEO / Nav Pages
+const Blog = lazy(() => import('./pages/Blog'));
+const Partner = lazy(() => import('./pages/Partner'));
+const RoutesListing = lazy(() => import('./pages/RoutesListing'));
+
 function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -126,6 +137,15 @@ function App() {
                     : <Navigate to="/" />
                 } 
               />
+
+              {/* SEO Resource Pages */}
+              <Route path="/transport-services" element={<Suspense fallback={<PageLoader label="Loading..." />}><ServicesListing /></Suspense>} />
+              <Route path="/transport-services/:stateSlug" element={<Suspense fallback={<PageLoader label="Loading..." />}><StatePage /></Suspense>} />
+              <Route path="/cities/:citySlug" element={<Suspense fallback={<PageLoader label="Loading..." />}><CityPage /></Suspense>} />
+              <Route path="/routes" element={<Suspense fallback={<PageLoader label="Loading..." />}><RoutesListing /></Suspense>} />
+              <Route path="/routes/:routeSlug" element={<Suspense fallback={<PageLoader label="Loading..." />}><RoutePage /></Suspense>} />
+              <Route path="/blog" element={<Suspense fallback={<PageLoader label="Loading..." />}><Blog /></Suspense>} />
+              <Route path="/partner" element={<Suspense fallback={<PageLoader label="Loading..." />}><Partner /></Suspense>} />
 
               {/* Catch all - redirect to home */}
               <Route path="*" element={<Navigate to="/" />} />

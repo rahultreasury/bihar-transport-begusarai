@@ -35,19 +35,19 @@ function Navbar() {
             <Link to="/track" className="px-4 py-2 rounded-lg hover:bg-white/10 transition-colors nav-link">Track Delivery</Link>
             <Link to="/contact" className="px-4 py-2 rounded-lg hover:bg-white/10 transition-colors nav-link">Contact</Link>
             
-            {/* Services Dropdown */}
+            {/* Resources Dropdown */}
             <div className="relative group">
               <button className="px-4 py-2 rounded-lg hover:bg-white/10 transition-colors flex items-center gap-1 cursor-pointer">
-                Services
+                Resources
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                 </svg>
               </button>
-              <div className="absolute left-0 mt-2 w-48 bg-white rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 text-gray-800">
-                <Link to="/vehicle-search" className="block px-4 py-2 hover:bg-gray-100 rounded-t-lg">Vehicle Search</Link>
-                <Link to="/license-search" className="block px-4 py-2 hover:bg-gray-100">License Search</Link>
-                <Link to="/challan-search" className="block px-4 py-2 hover:bg-gray-100">Challan Search</Link>
-                <Link to="/appointment" className="block px-4 py-2 hover:bg-gray-100 rounded-b-lg">Book Appointment</Link>
+              <div className="absolute left-0 mt-2 w-52 bg-white rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 text-gray-800">
+                <Link to="/transport-services" className="block px-4 py-2 hover:bg-gray-100 rounded-t-lg">Transport Services by State</Link>
+                <Link to="/routes" className="block px-4 py-2 hover:bg-gray-100">Popular Transport Routes</Link>
+                <Link to="/blog" className="block px-4 py-2 hover:bg-gray-100">Blog</Link>
+                <Link to="/partner" className="block px-4 py-2 hover:bg-gray-100 rounded-b-lg">Become a Partner</Link>
               </div>
             </div>
           </div>
@@ -126,11 +126,11 @@ function Navbar() {
             <Link to="/track" className="block px-4 py-2 rounded-lg hover:bg-white/10">Track Delivery</Link>
             <Link to="/contact" className="block px-4 py-2 rounded-lg hover:bg-white/10">Contact</Link>
             <hr className="border-white/20 my-2" />
-            <p className="px-4 py-1 text-xs text-gray-400 uppercase">Services</p>
-            <Link to="/vehicle-search" className="block px-4 py-2 rounded-lg hover:bg-white/10">Vehicle Search</Link>
-            <Link to="/license-search" className="block px-4 py-2 rounded-lg hover:bg-white/10">License Search</Link>
-            <Link to="/challan-search" className="block px-4 py-2 rounded-lg hover:bg-white/10">Challan Search</Link>
-            <Link to="/appointment" className="block px-4 py-2 rounded-lg hover:bg-white/10">Book Appointment</Link>
+            <p className="px-4 py-1 text-xs text-gray-400 uppercase">Resources</p>
+            <Link to="/transport-services" className="block px-4 py-2 rounded-lg hover:bg-white/10">Transport Services by State</Link>
+            <Link to="/routes" className="block px-4 py-2 rounded-lg hover:bg-white/10">Popular Transport Routes</Link>
+            <Link to="/blog" className="block px-4 py-2 rounded-lg hover:bg-white/10">Blog</Link>
+            <Link to="/partner" className="block px-4 py-2 rounded-lg hover:bg-white/10">Become a Partner</Link>
             <hr className="border-white/20 my-2" />
             {user ? (
               <>

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { bookingAPI } from '../services/api';
+import SEO from '../components/seo/SEO';
 
 // Tracking components
 import BookingHeader from '../components/tracking/BookingHeader';
@@ -107,7 +108,14 @@ function TrackBooking() {
   // ==============================
   if (!bookingNumber) {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white">
+      <>
+        <SEO
+          title="Track Booking"
+          description="Track your goods transport booking with Bihar Transport. Enter your booking reference number to get real-time status of your shipment."
+          keywords="track truck booking, track delivery Bihar, goods tracking, transport tracking Begusarai, booking status"
+          canonical="https://bihartransport.com/track"
+        />
+        <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white">
         <div className="max-w-lg mx-auto px-4 sm:px-6 py-16 md:py-24">
           {/* Header */}
           <div className="text-center mb-8">
@@ -187,7 +195,8 @@ function TrackBooking() {
           </div>
         </div>
       </div>
-    );
+    </>
+  );
   }
 
   // ==============================

@@ -2,6 +2,9 @@ import { useState, useEffect, useRef } from 'react';
 import { bookingAPI } from '../services/api';
 import { Link, useNavigate } from 'react-router-dom';
 import { LoadScript, Autocomplete } from '@react-google-maps/api';
+import SEO from '../components/seo/SEO';
+import PanIndiaCoverage from '../components/home/PanIndiaCoverage';
+import TrustedClients from '../components/home/TrustedClients';
 
 // SVG Icons for vehicles
 const TruckIcon = () => (
@@ -94,15 +97,6 @@ const vehicleTypes = [
 ];
 
 // Service areas
-const serviceAreas = [
-  { name: 'Begusarai', icon: '📍' },
-  { name: 'Patna', icon: '🏙️' },
-  { name: 'Muzaffarpur', icon: '🏘️' },
-  { name: 'Darbhanga', icon: '🏘️' },
-  { name: 'Samastipur', icon: '🏘️' },
-  { name: 'Khagaria', icon: '🏘️' }
-];
-
 // Customer reviews with Bihar cities
 const testimonials = [
   {
@@ -430,7 +424,31 @@ function Home() {
   const renderStars = (rating) => '⭐'.repeat(rating);
 
   return (
-    <div className="overflow-hidden">
+    <>
+      <SEO
+        title="Home"
+        description="Book trucks online with Bihar Transport Begusarai. Reliable logistics, FTL, PTL, industrial transportation, Pan India transport services since 1998."
+        keywords="Bihar Transport, truck booking Begusarai, goods transport Bihar, logistics services, freight services Patna, truck rental Bihar, mini truck booking"
+        canonical="https://bihartransport.com/"
+        schema={[
+          {
+            '@context': 'https://schema.org',
+            '@type': 'Service',
+            name: 'Goods Transportation Services',
+            provider: { '@type': 'Organization', name: 'Bihar Transport' },
+            areaServed: ['Begusarai', 'Patna', 'Muzaffarpur', 'Gaya', 'Bihar'],
+            serviceType: 'Trucking and Logistics',
+          },
+          {
+            '@context': 'https://schema.org',
+            '@type': 'BreadcrumbList',
+            itemListElement: [
+              { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://bihartransport.com/' },
+            ],
+          },
+        ]}
+      />
+      <div className="overflow-hidden">
       {/* HERO SECTION */}
       <section className="hero-gradient relative overflow-hidden hero-pattern">
         <div className="absolute inset-0 overflow-hidden">
@@ -671,22 +689,8 @@ function Home() {
         </div>
       </section>
 
-      {/* LIVE VEHICLE AVAILABILITY */}
-      <section className="py-8 bg-white border-b">
-        <div className="max-w-7xl mx-auto px-4">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4 text-center">Available Vehicles Today</h3>
-          <div className="flex flex-wrap justify-center gap-4 md:gap-8">
-            {vehicleTypes.map((vehicle) => (
-              <div key={vehicle.type} className="flex items-center gap-2 bg-gray-50 px-4 py-2 rounded-full cursor-pointer hover:bg-gray-100 transition-colors">
-                <span className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></span>
-                <span className="font-medium text-gray-800">
-                  {vehicle.available} {vehicle.name}(s) Available
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
+      {/* TRUSTED CLIENTS */}
+      <TrustedClients />
 
       {/* STATS */}
       <section ref={statsRef} className="py-10 bg-gray-50">
@@ -831,29 +835,8 @@ function Home() {
         </div>
       </section>
 
-      {/* SERVICE AREAS */}
-      <section className="py-16 md:py-20 bg-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-12">
-            <h2 className="text-2xl md:text-3xl font-bold text-gray-900 mb-2">We Serve Across Bihar</h2>
-            <p className="text-gray-600">Professional transport services covering major cities in Bihar</p>
-          </div>
-
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-            {serviceAreas.map((area, index) => (
-              <div
-                key={index}
-                className="card text-center hover:border-amber-500 border-2 border-transparent transition-all cursor-pointer"
-                style={{ borderRadius: '12px' }}
-              >
-                <div className="text-3xl mb-2">{area.icon}</div>
-                <h3 className="font-semibold text-gray-900">{area.name}</h3>
-                <p className="text-xs text-gray-500 mt-1">Service Available</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
+      {/* PAN INDIA COVERAGE */}
+      <PanIndiaCoverage />
 
       {/* GOOGLE MAP */}
       <section className="py-16 md:py-20 bg-gray-50">
@@ -1125,6 +1108,7 @@ function Home() {
 
       <div className="h-20 md:hidden"></div>
     </div>
+    </>
   );
 }
 
