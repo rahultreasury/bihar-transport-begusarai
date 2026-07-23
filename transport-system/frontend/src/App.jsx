@@ -20,7 +20,7 @@ const Contact = lazy(() => import('./pages/Contact'));
 const BookTransport = lazy(() => import('./pages/BookTransport'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const DriverDashboard = lazy(() => import('./pages/DriverDashboard'));
-const DeliveryTracking = lazy(() => import('./pages/DeliveryTracking'));
+const TrackBooking = lazy(() => import('./pages/TrackBooking'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const AdminBookings = lazy(() => import('./pages/AdminBookings'));
 const AdminLogin = lazy(() => import('./pages/AdminLogin'));
@@ -78,7 +78,8 @@ function App() {
               {/* Public Routes (lazy) */}
               <Route path="/about" element={<Suspense fallback={<PageLoader label="Loading About..." />}><About /></Suspense>} />
               <Route path="/contact" element={<Suspense fallback={<PageLoader label="Loading Contact..." />}><Contact /></Suspense>} />
-              <Route path="/track" element={<Suspense fallback={<PageLoader label="Loading Tracking..." />}><DeliveryTracking /></Suspense>} />
+              <Route path="/track" element={<Suspense fallback={<PageLoader label="Loading Tracking..." />}><TrackBooking /></Suspense>} />
+              <Route path="/track/:bookingNumber" element={<Suspense fallback={<PageLoader label="Loading Tracking..." />}><TrackBooking /></Suspense>} />
               <Route path="/vehicle-search" element={<Suspense fallback={<PageLoader label="Loading..." />}><VehicleSearch /></Suspense>} />
               <Route path="/license-search" element={<Suspense fallback={<PageLoader label="Loading..." />}><LicenseSearch /></Suspense>} />
               <Route path="/challan-search" element={<Suspense fallback={<PageLoader label="Loading..." />}><ChallanSearch /></Suspense>} />

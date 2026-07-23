@@ -284,8 +284,9 @@ function BookTransport() {
       const response = await bookingAPI.create(submitData);
       
       if (response.data.success) {
-        navigate('/dashboard', { 
-          state: { message: 'Booking created successfully!', bookingRef: response.data.data.booking_reference }
+        const bookingRef = response.data.data.booking_reference;
+        navigate(`/track/${bookingRef}`, {
+          state: { message: 'Booking created successfully!' }
         });
       }
     } catch (err) {

@@ -400,13 +400,15 @@ function Home() {
         throw new Error(res?.data?.message || 'Failed to submit booking');
       }
 
-      setBookNowSuccess('Booking Submitted Successfully. Our team will contact you shortly.');
+      const bookingRef = res.data.bookingReference;
+      setBookNowSuccess('Booking Submitted Successfully.');
 
       setBookNowForm({ name: '', mobile: '', goods_type: '' });
       setBookNowLoading(false);
 
       setTimeout(() => {
         setBookNowOpen(false);
+        navigate(`/track/${bookingRef}`);
       }, 900);
     } catch (err) {
       console.error("7. Booking submission error:", err);
