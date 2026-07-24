@@ -259,32 +259,66 @@ router.get('/my-bookings', protect, async (req, res) => {
 // @access  Private
 router.get('/:id', protect, async (req, res) => {
   try {
-    const bookingId = req.params.id;
+    const bookingId = parseInt(req.params.id, 10);
 
-    const booking = await get(
-      `SELECT b.*, 
-        u.first_name as customer_first_name, u.last_name as customer_last_name, u.phone as customer_phone, u.address as customer_address,
-        dr.driver_id, dr.license_number, dr.rating, dr.total_deliveries,
-        d.first_name as driver_first_name, d.last_name as driver_last_name, d.phone as driver_phone,
-        tv.vehicle_number, tv.vehicle_type, tv.vehicle_name, tv.vehicle_make, tv.vehicle_model,
-        tv.capacity_kg, tv.per_km_rate,
-        del.current_status, del.status_description, del.estimated_pickup_time, del.estimated_delivery_time,
-        del.actual_pickup_time, del.actual_delivery_time, del.delivery_otp, del.otp_verified,
-        del.recipient_name, del.delivery_notes
-       FROM bookings b
-       LEFT JOIN users u ON b.user_id = u.user_id
-       LEFT JOIN drivers dr ON b.driver_id = dr.driver_id
-       LEFT JOIN users d ON dr.user_id = d.user_id
-       LEFT JOIN transport_vehicles tv ON b.vehicle_id = tv.vehicle_id
-       LEFT JOIN deliveries del ON b.booking_id = del.booking_id
-       WHERE b.booking_id = ?`,
-      [bookingId]
-    );
+    const booking = await prisma.booking.findUnique({
+      where: { booking_id: bookingId },
+      include: {
+        user: {
+          select: {
+            first_name: true,
+            last_name: true,
+            phone: true,
+            address: true,
+          },
+        },
+        driver: {
+          select: {
+            driver_id: true,
+            license_number: true,
+            rating: true,
+            total_deliveries: true,
+            user: {
+              select: {
+                first_name: true,
+                last_name: true,
+                phone: true,
+              },
+            },
+          },
+        },
+        vehicle: {
+          select: {
+            vehicle_number: true,
+            vehicle_type: true,
+            vehicle_name: true,
+            vehicle_make: true,
+            vehicle_model: true,
+            capacity_kg: true,
+            per_km_rate: true,
+          },
+        },
+        delivery: {
+          select: {
+            current_status: true,
+            status_description: true,
+            estimated_pickup_time: true,
+            estimated_delivery_time: true,
+            actual_pickup_time: true,
+            actual_delivery_time: true,
+            delivery_otp: true,
+            otp_verified: true,
+            recipient_name: true,
+            delivery_notes: true,
+          },
+        },
+      },
+    });
 
     if (!booking) {
       return res.status(404).json({
         success: false,
-        message: 'Booking not found'
+        message: 'Booking not found',
       });
     }
 
@@ -292,19 +326,86 @@ router.get('/:id', protect, async (req, res) => {
     if (booking.user_id !== req.user.user_id && req.user.role !== 'admin' && req.user.role !== 'driver') {
       return res.status(403).json({
         success: false,
-        message: 'Not authorized to view this booking'
+        message: 'Not authorized to view this booking',
       });
     }
 
+    // Flatten the nested relations into the same shape as the original SQL query
+    const flatBooking = {
+      booking_id: booking.booking_id,
+      booking_reference: booking.booking_reference,
+      booking_number: booking.booking_number,
+      user_id: booking.user_id,
+      driver_id: booking.driver_id,
+      vehicle_id: booking.vehicle_id,
+      pickup_location: booking.pickup_location,
+      pickup_address: booking.pickup_address,
+      pickup_city: booking.pickup_city,
+      pickup_state: booking.pickup_state,
+      pickup_pincode: booking.pickup_pincode,
+      pickup_date: booking.pickup_date,
+      pickup_time: booking.pickup_time,
+      drop_location: booking.drop_location,
+      drop_address: booking.drop_address,
+      drop_city: booking.drop_city,
+      drop_state: booking.drop_state,
+      drop_pincode: booking.drop_pincode,
+      goods_description: booking.goods_description,
+      goods_type: booking.goods_type,
+      goods_weight_kg: booking.goods_weight_kg,
+      goods_volume: booking.goods_volume,
+      number_of_items: booking.number_of_items,
+      fragile: booking.fragile,
+      vehicle_type_required: booking.vehicle_type_required,
+      estimated_distance_km: booking.estimated_distance_km,
+      estimated_price: booking.estimated_price,
+      final_price: booking.final_price,
+      status: booking.status,
+      created_at: booking.created_at,
+      updated_at: booking.updated_at,
+      confirmed_at: booking.confirmed_at,
+      driver_assigned_at: booking.driver_assigned_at,
+      pickup_completed_at: booking.pickup_completed_at,
+      delivered_at: booking.delivered_at,
+      customer_first_name: booking.user?.first_name || null,
+      customer_last_name: booking.user?.last_name || null,
+      customer_phone: booking.user?.phone || null,
+      customer_address: booking.user?.address || null,
+      driver_id: booking.driver?.driver_id || null,
+      license_number: booking.driver?.license_number || null,
+      rating: booking.driver?.rating || null,
+      total_deliveries: booking.driver?.total_deliveries || null,
+      driver_first_name: booking.driver?.user?.first_name || null,
+      driver_last_name: booking.driver?.user?.last_name || null,
+      driver_phone: booking.driver?.user?.phone || null,
+      vehicle_number: booking.vehicle?.vehicle_number || null,
+      vehicle_type: booking.vehicle?.vehicle_type || null,
+      vehicle_name: booking.vehicle?.vehicle_name || null,
+      vehicle_make: booking.vehicle?.vehicle_make || null,
+      vehicle_model: booking.vehicle?.vehicle_model || null,
+      capacity_kg: booking.vehicle?.capacity_kg || null,
+      per_km_rate: booking.vehicle?.per_km_rate || null,
+      current_status: booking.delivery?.current_status || null,
+      status_description: booking.delivery?.status_description || null,
+      estimated_pickup_time: booking.delivery?.estimated_pickup_time || null,
+      estimated_delivery_time: booking.delivery?.estimated_delivery_time || null,
+      actual_pickup_time: booking.delivery?.actual_pickup_time || null,
+      actual_delivery_time: booking.delivery?.actual_delivery_time || null,
+      delivery_otp: booking.delivery?.delivery_otp || null,
+      otp_verified: booking.delivery?.otp_verified || null,
+      recipient_name: booking.delivery?.recipient_name || null,
+      delivery_notes: booking.delivery?.delivery_notes || null,
+    };
+
     res.json({
       success: true,
-      data: booking
+      data: flatBooking,
     });
   } catch (error) {
     console.error('Get booking error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error'
+      message: 'Server error',
     });
   }
 });
@@ -386,53 +487,91 @@ router.get('/track/:reference', async (req, res) => {
   try {
     const reference = req.params.reference;
 
-    const booking = await get(
-      `SELECT b.booking_id, b.booking_reference, b.pickup_location, b.pickup_city, b.drop_location, b.drop_city,
-        b.goods_description, b.status, b.estimated_price, b.pickup_date, b.pickup_time,
-        b.driver_id, b.vehicle_id,
-        tv.vehicle_number, tv.vehicle_name, tv.vehicle_type,
-        del.current_status, del.status_description, del.estimated_pickup_time, del.estimated_delivery_time,
-        dr.user_id
-       FROM bookings b
-       LEFT JOIN transport_vehicles tv ON b.vehicle_id = tv.vehicle_id
-       LEFT JOIN deliveries del ON b.booking_id = del.booking_id
-       LEFT JOIN drivers dr ON b.driver_id = dr.driver_id
-       WHERE b.booking_reference = ?`,
-      [reference]
-    );
+    const booking = await prisma.booking.findUnique({
+      where: { booking_reference: reference },
+      include: {
+        vehicle: {
+          select: {
+            vehicle_number: true,
+            vehicle_name: true,
+            vehicle_type: true,
+          },
+        },
+        delivery: {
+          select: {
+            current_status: true,
+            status_description: true,
+            estimated_pickup_time: true,
+            estimated_delivery_time: true,
+          },
+        },
+        driver: {
+          select: {
+            driver_id: true,
+            rating: true,
+            total_deliveries: true,
+            user: {
+              select: {
+                user_id: true,
+                first_name: true,
+                last_name: true,
+                phone: true,
+              },
+            },
+          },
+        },
+      },
+    });
 
     if (!booking) {
       return res.status(404).json({
         success: false,
-        message: 'Booking not found'
+        message: 'Booking not found',
       });
     }
 
-    // Get driver info if assigned
-    let driverInfo = null;
-    if (booking.driver_id) {
-const driver = await get(
-        `SELECT d.driver_id, d.rating, d.total_deliveries, u.first_name, u.last_name, u.phone
-         FROM drivers d
-         JOIN users u ON d.user_id = u.user_id
-         WHERE d.driver_id = ?`,
-        [booking.driver_id]
-      );
-      driverInfo = driver;
-    }
+    const driverInfo = booking.driver
+      ? {
+          driver_id: booking.driver.driver_id,
+          rating: booking.driver.rating,
+          total_deliveries: booking.driver.total_deliveries,
+          first_name: booking.driver.user.first_name,
+          last_name: booking.driver.user.last_name,
+          phone: booking.driver.user.phone,
+        }
+      : null;
 
     res.json({
       success: true,
       data: {
-        ...booking,
-        driver: driverInfo
-      }
+        booking_id: booking.booking_id,
+        booking_reference: booking.booking_reference,
+        pickup_location: booking.pickup_location,
+        pickup_city: booking.pickup_city,
+        drop_location: booking.drop_location,
+        drop_city: booking.drop_city,
+        goods_description: booking.goods_description,
+        status: booking.status,
+        estimated_price: booking.estimated_price,
+        pickup_date: booking.pickup_date,
+        pickup_time: booking.pickup_time,
+        driver_id: booking.driver_id,
+        vehicle_id: booking.vehicle_id,
+        vehicle_number: booking.vehicle?.vehicle_number || null,
+        vehicle_name: booking.vehicle?.vehicle_name || null,
+        vehicle_type: booking.vehicle?.vehicle_type || null,
+        current_status: booking.delivery?.current_status || null,
+        status_description: booking.delivery?.status_description || null,
+        estimated_pickup_time: booking.delivery?.estimated_pickup_time || null,
+        estimated_delivery_time: booking.delivery?.estimated_delivery_time || null,
+        driver: driverInfo,
+      },
     });
   } catch (error) {
     console.error('Track booking error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error tracking booking'
+      message: 'Server error tracking booking',
     });
   }
 });

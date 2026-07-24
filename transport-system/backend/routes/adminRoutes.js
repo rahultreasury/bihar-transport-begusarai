@@ -277,55 +277,114 @@ router.get('/bookings', protect, async (req, res) => {
     }
 
     const { page = 1, limit = 20, status = '', search = '' } = req.query;
-    const offset = (page - 1) * limit;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const take = parseInt(limit);
 
-    let whereClause = '';
-    let params = [];
+    // Build Prisma where clause
+    const where = {};
 
     if (status) {
-      whereClause = 'WHERE b.status = ?';
-      params.push(status);
+      where.status = status;
     }
 
     if (search) {
-      whereClause += whereClause ? ' AND' : 'WHERE';
-      whereClause += ' (b.booking_reference LIKE ? OR b.pickup_city LIKE ? OR b.drop_city LIKE ?)';
-      const searchTerm = `%${search}%`;
-      params.push(searchTerm, searchTerm, searchTerm);
+      where.OR = [
+        { booking_reference: { contains: search, mode: 'insensitive' } },
+        { pickup_city: { contains: search, mode: 'insensitive' } },
+        { drop_city: { contains: search, mode: 'insensitive' } },
+      ];
     }
 
-    const bookings = await query(
-      `SELECT b.*, 
-        u.first_name as customer_first_name, u.last_name as customer_last_name, u.phone as customer_phone,
-        tv.vehicle_number, tv.vehicle_name,
-        d.user_id as driver_user_id
-       FROM bookings b
-       JOIN users u ON b.user_id = u.user_id
-       LEFT JOIN transport_vehicles tv ON b.vehicle_id = tv.vehicle_id
-       LEFT JOIN drivers d ON b.driver_id = d.driver_id
-       ${whereClause}
-       ORDER BY b.created_at DESC
-       LIMIT ? OFFSET ?`,
-      [...params, parseInt(limit), offset]
-    );
+    const [bookings, total] = await Promise.all([
+      prisma.booking.findMany({
+        where,
+        include: {
+          user: {
+            select: {
+              first_name: true,
+              last_name: true,
+              phone: true,
+            },
+          },
+          vehicle: {
+            select: {
+              vehicle_number: true,
+              vehicle_name: true,
+            },
+          },
+          driver: {
+            select: {
+              user_id: true,
+            },
+          },
+        },
+        orderBy: { created_at: 'desc' },
+        skip,
+        take,
+      }),
+      prisma.booking.count({ where }),
+    ]);
 
-    const total = await get('SELECT COUNT(*) as count FROM bookings', []);
+    // Flatten Prisma result to match original SQL response format
+    const flattened = bookings.map((b) => ({
+      booking_id: b.booking_id,
+      booking_reference: b.booking_reference,
+      booking_number: b.booking_number,
+      user_id: b.user_id,
+      driver_id: b.driver_id,
+      vehicle_id: b.vehicle_id,
+      pickup_location: b.pickup_location,
+      pickup_address: b.pickup_address,
+      pickup_city: b.pickup_city,
+      pickup_state: b.pickup_state,
+      pickup_pincode: b.pickup_pincode,
+      pickup_date: b.pickup_date,
+      pickup_time: b.pickup_time,
+      drop_location: b.drop_location,
+      drop_address: b.drop_address,
+      drop_city: b.drop_city,
+      drop_state: b.drop_state,
+      drop_pincode: b.drop_pincode,
+      goods_description: b.goods_description,
+      goods_type: b.goods_type,
+      goods_weight_kg: b.goods_weight_kg,
+      goods_volume: b.goods_volume,
+      number_of_items: b.number_of_items,
+      fragile: b.fragile,
+      vehicle_type_required: b.vehicle_type_required,
+      estimated_distance_km: b.estimated_distance_km,
+      estimated_price: b.estimated_price,
+      final_price: b.final_price,
+      status: b.status,
+      created_at: b.created_at,
+      updated_at: b.updated_at,
+      confirmed_at: b.confirmed_at,
+      driver_assigned_at: b.driver_assigned_at,
+      pickup_completed_at: b.pickup_completed_at,
+      delivered_at: b.delivered_at,
+      customer_first_name: b.user?.first_name ?? null,
+      customer_last_name: b.user?.last_name ?? null,
+      customer_phone: b.user?.phone ?? null,
+      vehicle_number: b.vehicle?.vehicle_number ?? null,
+      vehicle_name: b.vehicle?.vehicle_name ?? null,
+      driver_user_id: b.driver?.user_id ?? null,
+    }));
 
     res.json({
       success: true,
-      data: bookings,
+      data: flattened,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
-        total: total.count,
-        pages: Math.ceil(total.count / limit)
-      }
+        total: total,
+        pages: Math.ceil(total / parseInt(limit)),
+      },
     });
   } catch (error) {
     console.error('Get bookings error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error'
+      message: 'Server error',
     });
   }
 });
@@ -441,48 +500,113 @@ router.get('/bookings/:id', protect, async (req, res) => {
       });
     }
 
-    const bookingId = req.params.id;
+    const bookingId = parseInt(req.params.id);
 
-    const booking = await get(
-      `SELECT b.*, 
-         u.first_name as customer_first_name,
-         u.last_name as customer_last_name,
-         u.email as customer_email,
-         u.phone as customer_phone,
-         tv.vehicle_number,
-         tv.vehicle_name,
-         d.user_id as driver_user_id,
-         du.first_name as driver_first_name,
-         du.last_name as driver_last_name,
-         du.phone as driver_phone,
-         del.current_status as delivery_current_status,
-         del.status_description as delivery_status_description
-       FROM bookings b
-       JOIN users u ON b.user_id = u.user_id
-       LEFT JOIN transport_vehicles tv ON b.vehicle_id = tv.vehicle_id
-       LEFT JOIN drivers d ON b.driver_id = d.driver_id
-       LEFT JOIN users du ON d.user_id = du.user_id
-       LEFT JOIN deliveries del ON b.booking_id = del.booking_id
-       WHERE b.booking_id = ?`,
-      [bookingId]
-    );
+    const booking = await prisma.booking.findUnique({
+      where: { booking_id: bookingId },
+      include: {
+        user: {
+          select: {
+            first_name: true,
+            last_name: true,
+            email: true,
+            phone: true,
+          },
+        },
+        vehicle: {
+          select: {
+            vehicle_number: true,
+            vehicle_name: true,
+          },
+        },
+        driver: {
+          select: {
+            user_id: true,
+            user: {
+              select: {
+                first_name: true,
+                last_name: true,
+                phone: true,
+              },
+            },
+          },
+        },
+        delivery: {
+          select: {
+            current_status: true,
+            status_description: true,
+          },
+        },
+      },
+    });
 
     if (!booking) {
       return res.status(404).json({
         success: false,
-        message: 'Booking not found'
+        message: 'Booking not found',
       });
     }
 
+    // Flatten Prisma result to match original SQL response format
+    const flattened = {
+      booking_id: booking.booking_id,
+      booking_reference: booking.booking_reference,
+      booking_number: booking.booking_number,
+      user_id: booking.user_id,
+      driver_id: booking.driver_id,
+      vehicle_id: booking.vehicle_id,
+      pickup_location: booking.pickup_location,
+      pickup_address: booking.pickup_address,
+      pickup_city: booking.pickup_city,
+      pickup_state: booking.pickup_state,
+      pickup_pincode: booking.pickup_pincode,
+      pickup_date: booking.pickup_date,
+      pickup_time: booking.pickup_time,
+      drop_location: booking.drop_location,
+      drop_address: booking.drop_address,
+      drop_city: booking.drop_city,
+      drop_state: booking.drop_state,
+      drop_pincode: booking.drop_pincode,
+      goods_description: booking.goods_description,
+      goods_type: booking.goods_type,
+      goods_weight_kg: booking.goods_weight_kg,
+      goods_volume: booking.goods_volume,
+      number_of_items: booking.number_of_items,
+      fragile: booking.fragile,
+      vehicle_type_required: booking.vehicle_type_required,
+      estimated_distance_km: booking.estimated_distance_km,
+      estimated_price: booking.estimated_price,
+      final_price: booking.final_price,
+      status: booking.status,
+      created_at: booking.created_at,
+      updated_at: booking.updated_at,
+      confirmed_at: booking.confirmed_at,
+      driver_assigned_at: booking.driver_assigned_at,
+      pickup_completed_at: booking.pickup_completed_at,
+      delivered_at: booking.delivered_at,
+      customer_first_name: booking.user?.first_name ?? null,
+      customer_last_name: booking.user?.last_name ?? null,
+      customer_email: booking.user?.email ?? null,
+      customer_phone: booking.user?.phone ?? null,
+      vehicle_number: booking.vehicle?.vehicle_number ?? null,
+      vehicle_name: booking.vehicle?.vehicle_name ?? null,
+      driver_user_id: booking.driver?.user_id ?? null,
+      driver_first_name: booking.driver?.user?.first_name ?? null,
+      driver_last_name: booking.driver?.user?.last_name ?? null,
+      driver_phone: booking.driver?.user?.phone ?? null,
+      delivery_current_status: booking.delivery?.current_status ?? null,
+      delivery_status_description: booking.delivery?.status_description ?? null,
+    };
+
     res.json({
       success: true,
-      data: booking
+      data: flattened,
     });
   } catch (error) {
     console.error('Get booking error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error'
+      message: 'Server error',
     });
   }
 });
