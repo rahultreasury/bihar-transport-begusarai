@@ -1,9 +1,10 @@
 /**
  * BookingTimelineRepository
  * Database-only repository for booking timeline events.
+ * Uses Prisma Client for all database operations.
  */
 
-const { query, run, get } = require('../config/database');
+const { prisma } = require('../config/prisma');
 
 class BookingTimelineRepository {
   /**
@@ -11,18 +12,20 @@ class BookingTimelineRepository {
    * @param {number} bookingId
    * @param {string} eventType
    * @param {string=} eventPayloadJson
+   * @param {object=} tx - Prisma transaction client
    * @returns {Promise<{booking_event_id:number}>}
    */
   async addEvent(bookingId, eventType, eventPayloadJson, tx = null) {
+    const client = tx || prisma;
     try {
-      const runner = tx?.run ?? run;
-      const result = await runner(
-        `INSERT INTO booking_events (booking_id, event_type, event_payload)
-         VALUES (?, ?, ?)`,
-        [bookingId, eventType, eventPayloadJson ?? null]
-      );
-
-      return { booking_event_id: result.lastID };
+      const event = await client.bookingEvent.create({
+        data: {
+          booking_id: bookingId,
+          event_type: eventType,
+          event_payload: eventPayloadJson ?? null,
+        },
+      });
+      return { booking_event_id: event.booking_event_id };
     } catch (err) {
       throw err;
     }
@@ -31,18 +34,19 @@ class BookingTimelineRepository {
   /**
    * Get full timeline for a booking.
    * @param {number} bookingId
+   * @param {object=} tx - Prisma transaction client
    * @returns {Promise<Object[]>}
    */
   async getTimeline(bookingId, tx = null) {
+    const client = tx || prisma;
     try {
-      const runner = tx?.query ?? query;
-      return await runner(
-        `SELECT booking_event_id, booking_id, event_type, event_payload, created_at
-         FROM booking_events
-         WHERE booking_id = ?
-         ORDER BY created_at ASC, booking_event_id ASC`,
-        [bookingId]
-      );
+      return await client.bookingEvent.findMany({
+        where: { booking_id: bookingId },
+        orderBy: [
+          { created_at: 'asc' },
+          { booking_event_id: 'asc' },
+        ],
+      });
     } catch (err) {
       throw err;
     }
@@ -51,19 +55,19 @@ class BookingTimelineRepository {
   /**
    * Get the latest timeline event for a booking.
    * @param {number} bookingId
+   * @param {object=} tx - Prisma transaction client
    * @returns {Promise<Object|null>}
    */
   async getLatestEvent(bookingId, tx = null) {
+    const client = tx || prisma;
     try {
-      const getter = tx?.get ?? get;
-      return await getter(
-        `SELECT booking_event_id, booking_id, event_type, event_payload, created_at
-         FROM booking_events
-         WHERE booking_id = ?
-         ORDER BY created_at DESC, booking_event_id DESC
-         LIMIT 1`,
-        [bookingId]
-      );
+      return await client.bookingEvent.findFirst({
+        where: { booking_id: bookingId },
+        orderBy: [
+          { created_at: 'desc' },
+          { booking_event_id: 'desc' },
+        ],
+      });
     } catch (err) {
       throw err;
     }

@@ -1,9 +1,10 @@
 /**
  * BookingAnalyticsRepository
  * Database-only repository for booking analytics.
+ * Uses Prisma Client for all database operations.
  */
 
-const { query, run, get } = require('../config/database');
+const { prisma } = require('../config/prisma');
 
 class BookingAnalyticsRepository {
   /**
@@ -15,27 +16,30 @@ class BookingAnalyticsRepository {
    */
   async getBookingCounts(opts = {}) {
     const { dateFrom, dateTo } = opts;
-    try {
-      let where = '1=1';
-      const params = [];
+    const where = {};
 
+    if (dateFrom || dateTo) {
+      where.created_at = {};
       if (dateFrom) {
-        where += ' AND DATE(created_at) >= DATE(?)';
-        params.push(dateFrom);
+        where.created_at.gte = new Date(dateFrom);
       }
       if (dateTo) {
-        where += ' AND DATE(created_at) <= DATE(?)';
-        params.push(dateTo);
+        where.created_at.lte = new Date(dateTo);
       }
+    }
 
-      return await query(
-        `SELECT status, COUNT(*) as count
-         FROM bookings
-         WHERE ${where}
-         GROUP BY status
-         ORDER BY count DESC`,
-        params
-      );
+    try {
+      const rows = await prisma.booking.groupBy({
+        by: ['status'],
+        _count: { status: true },
+        where,
+        orderBy: { _count: { status: 'desc' } },
+      });
+
+      return rows.map((r) => ({
+        status: r.status,
+        count: r._count.status,
+      }));
     } catch (err) {
       throw err;
     }
@@ -50,29 +54,31 @@ class BookingAnalyticsRepository {
    */
   async getRevenueSummary(opts = {}) {
     const { dateFrom, dateTo } = opts;
-    try {
-      let where = 'status IN (?, ?)';
-      const params = ['delivered', 'completed'];
+    const where = {
+      status: { in: ['delivered', 'completed'] },
+    };
 
+    if (dateFrom || dateTo) {
+      where.delivered_at = {};
       if (dateFrom) {
-        where += ' AND DATE(delivered_at) >= DATE(?)';
-        params.push(dateFrom);
+        where.delivered_at.gte = new Date(dateFrom);
       }
       if (dateTo) {
-        where += ' AND DATE(delivered_at) <= DATE(?)';
-        params.push(dateTo);
+        where.delivered_at.lte = new Date(dateTo);
       }
+    }
 
-      const row = await get(
-        `SELECT
-          COALESCE(SUM(final_price), 0) as totalRevenue,
-          COUNT(*) as deliveredCount
-         FROM bookings
-         WHERE ${where}`,
-        params
-      );
+    try {
+      const agg = await prisma.booking.aggregate({
+        where,
+        _sum: { final_price: true },
+        _count: true,
+      });
 
-      return row || { totalRevenue: 0, deliveredCount: 0 };
+      return {
+        totalRevenue: agg._sum.final_price || 0,
+        deliveredCount: agg._count,
+      };
     } catch (err) {
       throw err;
     }
@@ -86,15 +92,21 @@ class BookingAnalyticsRepository {
    */
   async getTopRoutes(topN = 10) {
     try {
-      return await query(
-        `SELECT pickup_city, drop_city, COUNT(*) as count
-         FROM bookings
-         WHERE status IN ('delivered', 'completed')
-         GROUP BY pickup_city, drop_city
-         ORDER BY count DESC
-         LIMIT ?`,
-        [topN]
-      );
+      const rows = await prisma.booking.groupBy({
+        by: ['pickup_city', 'drop_city'],
+        where: {
+          status: { in: ['delivered', 'completed'] },
+        },
+        _count: { booking_id: true },
+        orderBy: { _count: { booking_id: 'desc' } },
+        take: topN,
+      });
+
+      return rows.map((r) => ({
+        pickup_city: r.pickup_city,
+        drop_city: r.drop_city,
+        count: r._count.booking_id,
+      }));
     } catch (err) {
       throw err;
     }
@@ -109,15 +121,20 @@ class BookingAnalyticsRepository {
   async getVehicleUtilization(opts = {}) {
     const { limit = 20 } = opts;
     try {
-      return await query(
-        `SELECT vehicle_id, COUNT(*) as bookingCount
-         FROM bookings
-         WHERE vehicle_id IS NOT NULL
-         GROUP BY vehicle_id
-         ORDER BY bookingCount DESC
-         LIMIT ?`,
-        [limit]
-      );
+      const rows = await prisma.booking.groupBy({
+        by: ['vehicle_id'],
+        where: {
+          vehicle_id: { not: null },
+        },
+        _count: { booking_id: true },
+        orderBy: { _count: { booking_id: 'desc' } },
+        take: limit,
+      });
+
+      return rows.map((r) => ({
+        vehicle_id: r.vehicle_id,
+        bookingCount: r._count.booking_id,
+      }));
     } catch (err) {
       throw err;
     }
@@ -132,19 +149,23 @@ class BookingAnalyticsRepository {
   async getDriverPerformance(opts = {}) {
     const { limit = 20 } = opts;
     try {
-      return await query(
-        `SELECT
-          driver_id,
-          COUNT(*) as completedCount,
-          COALESCE(SUM(final_price), 0) as earnings
-         FROM bookings
-         WHERE driver_id IS NOT NULL
-           AND status IN ('delivered', 'completed')
-         GROUP BY driver_id
-         ORDER BY earnings DESC
-         LIMIT ?`,
-        [limit]
-      );
+      const rows = await prisma.booking.groupBy({
+        by: ['driver_id'],
+        where: {
+          driver_id: { not: null },
+          status: { in: ['delivered', 'completed'] },
+        },
+        _count: { booking_id: true },
+        _sum: { final_price: true },
+        orderBy: { _sum: { final_price: 'desc' } },
+        take: limit,
+      });
+
+      return rows.map((r) => ({
+        driver_id: r.driver_id,
+        completedCount: r._count.booking_id,
+        earnings: r._sum.final_price || 0,
+      }));
     } catch (err) {
       throw err;
     }

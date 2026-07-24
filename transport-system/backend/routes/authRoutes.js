@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
-const { query, run, get } = require('../config/database');
 const { generateToken, protect } = require('../middleware/auth');
 const { body, validationResult } = require('express-validator');
 const { prisma } = require('../config/prisma');
@@ -158,11 +157,18 @@ router.post('/driver-signup', [
 
     const user_id = newUser.user_id;
 
-    // Insert driver details (still uses SQLite — drivers module not migrated yet)
-    await run(
-      'INSERT INTO drivers (user_id, license_number, license_expiry, aadhar_number, date_of_birth, gender, experience_years) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [user_id, license_number, license_expiry, aadhar_number, date_of_birth, gender, experience_years || 0]
-    );
+    // Insert driver details via Prisma
+    await prisma.driver.create({
+      data: {
+        user_id,
+        license_number,
+        license_expiry,
+        aadhar_number,
+        date_of_birth,
+        gender,
+        experience_years: experience_years || 0,
+      },
+    });
 
     const token = generateToken(user_id);
 
@@ -237,10 +243,12 @@ router.post('/login', [
 
     const token = generateToken(user.user_id);
 
-    // Get driver details if user is driver (still uses SQLite)
+    // Get driver details if user is driver via Prisma
     let driverData = null;
     if (user.role === 'driver') {
-      driverData = await get('SELECT * FROM drivers WHERE user_id = ?', [user.user_id]);
+      driverData = await prisma.driver.findFirst({
+        where: { user_id: user.user_id },
+      });
     }
 
     res.json({
@@ -297,10 +305,12 @@ router.get('/me', protect, async (req, res) => {
       });
     }
 
-    // Get driver details if user is driver (still uses SQLite)
+    // Get driver details if user is driver via Prisma
     let driverData = null;
     if (user.role === 'driver') {
-      driverData = await get('SELECT * FROM drivers WHERE user_id = ?', [user.user_id]);
+      driverData = await prisma.driver.findFirst({
+        where: { user_id: user.user_id },
+      });
     }
 
     res.json({

@@ -10,6 +10,7 @@
 
 const BookingRepository = require('../repositories/BookingRepository');
 const BookingTimelineRepository = require('../repositories/BookingTimelineRepository');
+const { prisma } = require('../config/prisma');
 
 /**
  * @typedef {Object} ServiceResult
@@ -74,7 +75,7 @@ class BookingService {
       throw new ValidationError('vehicle_type_required is required');
     }
 
-    const bookingResult = await require('../config/database').transaction(async (tx) => {
+    const bookingResult = await prisma.$transaction(async (tx) => {
       const booking = await this.bookingRepo.create(input, tx);
       await this.timelineRepo.addEvent(
         booking.booking_id,

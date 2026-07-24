@@ -1,64 +1,67 @@
 const express = require('express');
 const router = express.Router();
-const { db } = require('../config/database');
+const { prisma } = require('../config/prisma');
 
 // Search vehicle by registration number
-router.get('/search/:registrationNumber', (req, res) => {
-  const { registrationNumber } = req.params;
-  
-  // First check in transport_vehicles table (our drivers' vehicles)
-  const sql = `
-    SELECT 
-      v.vehicle_id,
-      v.vehicle_number as registration_number,
-      v.vehicle_type,
-      v.vehicle_name,
-      v.vehicle_make,
-      v.vehicle_model,
-      v.manufacturing_year,
-      v.registration_date,
-      v.insurance_number,
-      v.insurance_expiry,
-      v.pollution_certificate as pollution_validity,
-      v.permit_number,
-      v.permit_expiry,
-      v.is_verified,
-      v.current_status,
-      v.base_location,
-      u.first_name || ' ' || u.last_name as owner_name,
-      u.email,
-      u.phone,
-      CASE 
-        WHEN v.insurance_expiry > date('now') AND v.permit_expiry > date('now') THEN 'active'
-        WHEN v.insurance_expiry <= date('now') OR v.permit_expiry <= date('now') THEN 'expired'
-        ELSE 'suspended'
-      END as status
-    FROM transport_vehicles v
-    LEFT JOIN drivers d ON v.driver_id = d.driver_id
-    LEFT JOIN users u ON d.user_id = u.user_id
-    WHERE v.vehicle_number = ?
-  `;
-  
-  db.get(sql, [registrationNumber], (err, vehicle) => {
-    if (err) {
-      console.error('Database error:', err);
-      return res.status(500).json({
-        success: false,
-        message: 'Database error'
-      });
-    }
+router.get('/search/:registrationNumber', async (req, res) => {
+  try {
+    const { registrationNumber } = req.params;
     
-    if (vehicle) {
+    // First check in transport_vehicles table (our drivers' vehicles)
+    const vehicle = await prisma.transportVehicle.findFirst({
+      where: { vehicle_number: registrationNumber },
+      include: {
+        driver: {
+          include: {
+            user: {
+              select: {
+                first_name: true,
+                last_name: true,
+                email: true,
+                phone: true,
+              },
+            },
+          },
+        },
+      },
+    });
+    
+    if (vehicle && vehicle.driver) {
+      const ownerName = `${vehicle.driver.user.first_name} ${vehicle.driver.user.last_name}`;
+      
       return res.json({
         success: true,
         data: {
-          ...vehicle,
+          vehicle_id: vehicle.vehicle_id,
+          registration_number: vehicle.vehicle_number,
+          vehicle_type: vehicle.vehicle_type,
+          vehicle_name: vehicle.vehicle_name,
+          vehicle_make: vehicle.vehicle_make,
+          vehicle_model: vehicle.vehicle_model,
+          manufacturing_year: vehicle.manufacturing_year,
+          registration_date: vehicle.registration_date,
+          insurance_number: vehicle.insurance_number,
+          insurance_expiry: vehicle.insurance_expiry,
+          pollution_validity: vehicle.pollution_certificate,
+          permit_number: vehicle.permit_number,
+          permit_expiry: vehicle.permit_expiry,
+          is_verified: vehicle.is_verified,
+          current_status: vehicle.current_status,
+          base_location: vehicle.base_location,
+          owner_name: ownerName,
+          email: vehicle.driver.user.email,
+          phone: vehicle.driver.user.phone,
+          status: (vehicle.insurance_expiry > new Date().toISOString().split('T')[0] && vehicle.permit_expiry > new Date().toISOString().split('T')[0])
+            ? 'active'
+            : (vehicle.insurance_expiry <= new Date().toISOString().split('T')[0] || vehicle.permit_expiry <= new Date().toISOString().split('T')[0])
+              ? 'expired'
+              : 'suspended',
           owner: {
-            email: vehicle.email,
-            phone: vehicle.phone
+            email: vehicle.driver.user.email,
+            phone: vehicle.driver.user.phone,
           },
-          registration_validity: vehicle.permit_expiry
-        }
+          registration_validity: vehicle.permit_expiry,
+        },
       });
     }
     
@@ -135,24 +138,69 @@ router.get('/search/:registrationNumber', (req, res) => {
       success: false,
       message: 'Vehicle not found'
     });
-  });
+  } catch (error) {
+    console.error('Database error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Database error',
+    });
+  }
 });
 
 // Get all vehicles (admin)
-router.get('/', (req, res) => {
-  const sql = `
-    SELECT v.*, u.first_name, u.last_name 
-    FROM transport_vehicles v
-    LEFT JOIN drivers d ON v.driver_id = d.driver_id
-    LEFT JOIN users u ON d.user_id = u.user_id
-  `;
-  
-  db.all(sql, [], (err, vehicles) => {
-    if (err) {
-      return res.status(500).json({ success: false, message: 'Database error' });
-    }
-    res.json({ success: true, data: vehicles });
-  });
+router.get('/', async (req, res) => {
+  try {
+    const vehicles = await prisma.transportVehicle.findMany({
+      include: {
+        driver: {
+          include: {
+            user: {
+              select: {
+                first_name: true,
+                last_name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    // Flatten to match original SQL response format
+    const flattened = vehicles.map((v) => ({
+      vehicle_id: v.vehicle_id,
+      driver_id: v.driver_id,
+      vehicle_number: v.vehicle_number,
+      vehicle_type: v.vehicle_type,
+      vehicle_name: v.vehicle_name,
+      capacity_kg: v.capacity_kg,
+      capacity_volume: v.capacity_volume,
+      vehicle_make: v.vehicle_make,
+      vehicle_model: v.vehicle_model,
+      manufacturing_year: v.manufacturing_year,
+      registration_date: v.registration_date,
+      insurance_number: v.insurance_number,
+      insurance_expiry: v.insurance_expiry,
+      permit_number: v.permit_number,
+      permit_expiry: v.permit_expiry,
+      pollution_certificate: v.pollution_certificate,
+      pollution_expiry: v.pollution_expiry,
+      is_available: v.is_available,
+      is_verified: v.is_verified,
+      current_status: v.current_status,
+      base_location: v.base_location,
+      hourly_rate: v.hourly_rate,
+      per_km_rate: v.per_km_rate,
+      created_at: v.created_at,
+      updated_at: v.updated_at,
+      first_name: v.driver?.user?.first_name ?? null,
+      last_name: v.driver?.user?.last_name ?? null,
+    }));
+
+    res.json({ success: true, data: flattened });
+  } catch (error) {
+    console.error('Database error:', error);
+    res.status(500).json({ success: false, message: 'Database error' });
+  }
 });
 
 module.exports = router;

@@ -6,9 +6,8 @@ const compression = require('compression');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const morgan = require('morgan');
-const { testConnection } = require('./config/database');
+const { testPrismaConnection } = require('./config/prisma');
 const { validateEnv } = require('./utils/env');
-const { testPrismaConnection, prisma } = require('./config/prisma');
 
 const { NotFoundError } = require('./utils/AppError');
 const errorHandler = require('./middleware/errorHandler');
@@ -183,7 +182,12 @@ const PORT = process.env.PORT || 3000;
 
 // Start server
 const startServer = async () => {
-  await testConnection();
+  const dbResult = await testPrismaConnection();
+  if (dbResult.success) {
+    console.log(dbResult.message);
+  } else {
+    console.warn(dbResult.message);
+  }
 
   app.listen(PORT, '0.0.0.0', () => {
     // eslint-disable-next-line no-console

@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { query, run, get } = require('../config/database');
+const { prisma } = require('../config/prisma');
 const { protect } = require('../middleware/auth');
 const { body, validationResult } = require('express-validator');
 
@@ -9,8 +9,11 @@ const { body, validationResult } = require('express-validator');
 // @access  Private (Driver)
 router.get('/available-jobs', protect, async (req, res) => {
   try {
-    // Get driver details
-    const driver = await get('SELECT * FROM drivers WHERE user_id = ?', [req.user.user_id]);
+    // Get driver details via Prisma
+    const driver = await prisma.driver.findFirst({
+      where: { user_id: req.user.user_id },
+      select: { driver_id: true },
+    });
     
     if (!driver) {
       return res.status(403).json({
@@ -19,12 +22,14 @@ router.get('/available-jobs', protect, async (req, res) => {
       });
     }
 
-    // Get available bookings that need a driver
-    // Filter by driver's available vehicle types
-    const vehicles = await query(
-      'SELECT * FROM transport_vehicles WHERE driver_id = ? AND is_available = 1',
-      [driver.driver_id]
-    );
+    // Get available vehicles that belong to driver
+    const vehicles = await prisma.transportVehicle.findMany({
+      where: {
+        driver_id: driver.driver_id,
+        is_available: true,
+      },
+      select: { vehicle_type: true },
+    });
 
     const vehicleTypes = vehicles.map(v => v.vehicle_type);
 
@@ -36,25 +41,89 @@ router.get('/available-jobs', protect, async (req, res) => {
       });
     }
 
-    const placeholders = vehicleTypes.map(() => '?').join(',');
+    // Get available bookings matching driver's vehicle types
+    const jobs = await prisma.booking.findMany({
+      where: {
+        status: 'pending',
+        vehicle_type_required: { in: vehicleTypes },
+      },
+      include: {
+        user: {
+          select: {
+            first_name: true,
+            last_name: true,
+            phone: true,
+          },
+        },
+        vehicle: {
+          select: {
+            vehicle_id: true,
+            vehicle_number: true,
+            vehicle_name: true,
+            vehicle_type: true,
+            capacity_kg: true,
+            per_km_rate: true,
+          },
+        },
+      },
+      orderBy: [
+        { pickup_date: 'asc' },
+        { pickup_time: 'asc' },
+      ],
+    });
 
-    const jobs = await query(
-      `SELECT b.*, 
-        u.first_name as customer_first_name, u.last_name as customer_last_name, u.phone as customer_phone,
-        tv.vehicle_id, tv.vehicle_number, tv.vehicle_name, tv.vehicle_type, tv.capacity_kg, tv.per_km_rate
-       FROM bookings b
-       JOIN users u ON b.user_id = u.user_id
-       LEFT JOIN transport_vehicles tv ON b.vehicle_id = tv.vehicle_id
-       WHERE b.status = 'pending' 
-       AND b.vehicle_type_required IN (${placeholders})
-       ORDER BY b.pickup_date ASC, b.pickup_time ASC`,
-      vehicleTypes
-    );
+    // Flatten to match original SQL response format
+    const flattened = jobs.map((b) => ({
+      booking_id: b.booking_id,
+      booking_reference: b.booking_reference,
+      booking_number: b.booking_number,
+      user_id: b.user_id,
+      driver_id: b.driver_id,
+      vehicle_id: b.vehicle_id,
+      pickup_location: b.pickup_location,
+      pickup_address: b.pickup_address,
+      pickup_city: b.pickup_city,
+      pickup_state: b.pickup_state,
+      pickup_pincode: b.pickup_pincode,
+      pickup_date: b.pickup_date,
+      pickup_time: b.pickup_time,
+      drop_location: b.drop_location,
+      drop_address: b.drop_address,
+      drop_city: b.drop_city,
+      drop_state: b.drop_state,
+      drop_pincode: b.drop_pincode,
+      goods_description: b.goods_description,
+      goods_type: b.goods_type,
+      goods_weight_kg: b.goods_weight_kg,
+      goods_volume: b.goods_volume,
+      number_of_items: b.number_of_items,
+      fragile: b.fragile,
+      vehicle_type_required: b.vehicle_type_required,
+      estimated_distance_km: b.estimated_distance_km,
+      estimated_price: b.estimated_price,
+      final_price: b.final_price,
+      status: b.status,
+      created_at: b.created_at,
+      updated_at: b.updated_at,
+      confirmed_at: b.confirmed_at,
+      driver_assigned_at: b.driver_assigned_at,
+      pickup_completed_at: b.pickup_completed_at,
+      delivered_at: b.delivered_at,
+      customer_first_name: b.user?.first_name ?? null,
+      customer_last_name: b.user?.last_name ?? null,
+      customer_phone: b.user?.phone ?? null,
+      vehicle_id: b.vehicle?.vehicle_id ?? null,
+      vehicle_number: b.vehicle?.vehicle_number ?? null,
+      vehicle_name: b.vehicle?.vehicle_name ?? null,
+      vehicle_type: b.vehicle?.vehicle_type ?? null,
+      capacity_kg: b.vehicle?.capacity_kg ?? null,
+      per_km_rate: b.vehicle?.per_km_rate ?? null,
+    }));
 
     res.json({
       success: true,
-      data: jobs,
-      count: jobs.length
+      data: flattened,
+      count: flattened.length,
     });
   } catch (error) {
     console.error('Get available jobs error:', error);
@@ -70,11 +139,13 @@ router.get('/available-jobs', protect, async (req, res) => {
 // @access  Private (Driver)
 router.post('/accept-job/:bookingId', protect, async (req, res) => {
   try {
-    const bookingId = req.params.bookingId;
+    const bookingId = parseInt(req.params.bookingId);
     const { vehicle_id } = req.body;
 
-    // Get driver details
-    const driver = await get('SELECT * FROM drivers WHERE user_id = ?', [req.user.user_id]);
+    // Get driver details via Prisma
+    const driver = await prisma.driver.findFirst({
+      where: { user_id: req.user.user_id },
+    });
     
     if (!driver) {
       return res.status(403).json({
@@ -84,10 +155,12 @@ router.post('/accept-job/:bookingId', protect, async (req, res) => {
     }
 
     // Check if vehicle belongs to driver
-    const vehicle = await get(
-      'SELECT * FROM transport_vehicles WHERE vehicle_id = ? AND driver_id = ?',
-      [vehicle_id, driver.driver_id]
-    );
+    const vehicle = await prisma.transportVehicle.findFirst({
+      where: {
+        vehicle_id: parseInt(vehicle_id),
+        driver_id: driver.driver_id,
+      },
+    });
 
     if (!vehicle) {
       return res.status(400).json({
@@ -97,7 +170,9 @@ router.post('/accept-job/:bookingId', protect, async (req, res) => {
     }
 
     // Check booking exists and is pending
-    const booking = await get('SELECT * FROM bookings WHERE booking_id = ?', [bookingId]);
+    const booking = await prisma.booking.findUnique({
+      where: { booking_id: bookingId },
+    });
 
     if (!booking) {
       return res.status(404).json({
@@ -113,43 +188,73 @@ router.post('/accept-job/:bookingId', protect, async (req, res) => {
       });
     }
 
-    // Update booking status
-    await run(
-      `UPDATE bookings SET 
-        driver_id = ?, 
-        vehicle_id = ?, 
-        status = 'confirmed',
-        driver_assigned_at = CURRENT_TIMESTAMP,
-        updated_at = CURRENT_TIMESTAMP 
-       WHERE booking_id = ?`,
-      [driver.driver_id, vehicle_id, bookingId]
-    );
+    // Estimate delivery hours based on distance
+    const estimatedHours = Math.round((booking.estimated_distance_km || 0) / 40);
 
-    // Update delivery status
-    await run(
-      `UPDATE deliveries SET 
-        driver_id = ?, 
-        vehicle_id = ?,
-        current_status = 'driver_assigned',
-        status_description = 'Driver assigned to pickup',
-        estimated_pickup_time = ?,
-        estimated_delivery_time = datetime(?, '+' || ? || ' hours'),
-        delivery_otp = ?,
-        updated_at = CURRENT_TIMESTAMP 
-       WHERE booking_id = ?`,
-      [
-        driver.driver_id, vehicle_id,
-        booking.pickup_date || CURRENT_TIMESTAMP,
-        booking.pickup_date || CURRENT_TIMESTAMP,
-        ROUND(booking.estimated_distance_km / 40), // Estimate 40km/hour
-        Math.floor(100000 + Math.random() * 900000).toString(),
-        bookingId
-      ]
-    );
+    // Perform all updates in a transaction
+    await prisma.$transaction(async (tx) => {
+      // Update booking
+      await tx.booking.update({
+        where: { booking_id: bookingId },
+        data: {
+          driver_id: driver.driver_id,
+          vehicle_id: parseInt(vehicle_id),
+          status: 'confirmed',
+          driver_assigned_at: new Date(),
+        },
+      });
 
-    // Make driver and vehicle unavailable
-    await run('UPDATE drivers SET is_available = 0 WHERE driver_id = ?', [driver.driver_id]);
-    await run('UPDATE transport_vehicles SET is_available = 0, current_status = ? WHERE vehicle_id = ?', ['on_trip', vehicle_id]);
+      // Update or create delivery record
+      const existingDelivery = await tx.delivery.findUnique({
+        where: { booking_id: bookingId },
+      });
+
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+      if (existingDelivery) {
+        await tx.delivery.update({
+          where: { booking_id: bookingId },
+          data: {
+            driver_id: driver.driver_id,
+            vehicle_id: parseInt(vehicle_id),
+            current_status: 'driver_assigned',
+            status_description: 'Driver assigned to pickup',
+            estimated_pickup_time: booking.pickup_date ? new Date(booking.pickup_date) : new Date(),
+            estimated_delivery_time: booking.pickup_date
+              ? new Date(new Date(booking.pickup_date).getTime() + estimatedHours * 60 * 60 * 1000)
+              : new Date(Date.now() + estimatedHours * 60 * 60 * 1000),
+            delivery_otp: otp,
+          },
+        });
+      } else {
+        await tx.delivery.create({
+          data: {
+            booking_id: bookingId,
+            driver_id: driver.driver_id,
+            vehicle_id: parseInt(vehicle_id),
+            current_status: 'driver_assigned',
+            status_description: 'Driver assigned to pickup',
+            estimated_pickup_time: booking.pickup_date ? new Date(booking.pickup_date) : new Date(),
+            estimated_delivery_time: booking.pickup_date
+              ? new Date(new Date(booking.pickup_date).getTime() + estimatedHours * 60 * 60 * 1000)
+              : new Date(Date.now() + estimatedHours * 60 * 60 * 1000),
+            delivery_otp: otp,
+          },
+        });
+      }
+
+      // Make driver unavailable
+      await tx.driver.update({
+        where: { driver_id: driver.driver_id },
+        data: { is_available: false },
+      });
+
+      // Make vehicle unavailable
+      await tx.transportVehicle.update({
+        where: { vehicle_id: parseInt(vehicle_id) },
+        data: { is_available: false, current_status: 'on_trip' },
+      });
+    });
 
     res.json({
       success: true,
@@ -157,7 +262,7 @@ router.post('/accept-job/:bookingId', protect, async (req, res) => {
       data: {
         booking_id: bookingId,
         driver_id: driver.driver_id,
-        vehicle_id: vehicle_id,
+        vehicle_id: parseInt(vehicle_id),
         status: 'confirmed'
       }
     });
@@ -175,8 +280,11 @@ router.post('/accept-job/:bookingId', protect, async (req, res) => {
 // @access  Private (Driver)
 router.get('/my-jobs', protect, async (req, res) => {
   try {
-    // Get driver details
-    const driver = await get('SELECT * FROM drivers WHERE user_id = ?', [req.user.user_id]);
+    // Get driver details via Prisma
+    const driver = await prisma.driver.findFirst({
+      where: { user_id: req.user.user_id },
+      select: { driver_id: true },
+    });
     
     if (!driver) {
       return res.status(403).json({
@@ -185,31 +293,107 @@ router.get('/my-jobs', protect, async (req, res) => {
       });
     }
 
-    const jobs = await query(
-      `SELECT b.*, 
-        u.first_name as customer_first_name, u.last_name as customer_last_name, u.phone as customer_phone, u.address as customer_address,
-        tv.vehicle_number, tv.vehicle_name, tv.vehicle_type, tv.vehicle_make, tv.vehicle_model,
-        del.current_status, del.status_description, del.estimated_pickup_time, del.estimated_delivery_time,
-        del.actual_pickup_time, del.actual_delivery_time, del.delivery_otp
-       FROM bookings b
-       JOIN users u ON b.user_id = u.user_id
-       JOIN transport_vehicles tv ON b.vehicle_id = tv.vehicle_id
-       JOIN deliveries del ON b.booking_id = del.booking_id
-       WHERE b.driver_id = ?
-       ORDER BY 
-         CASE b.status 
-           WHEN 'confirmed' THEN 1 
-           WHEN 'pickup_completed' THEN 2 
-           WHEN 'in_transit' THEN 3 
-           ELSE 4 
-         END`,
-      [driver.driver_id]
-    );
+    const jobs = await prisma.booking.findMany({
+      where: { driver_id: driver.driver_id },
+      include: {
+        user: {
+          select: {
+            first_name: true,
+            last_name: true,
+            phone: true,
+            address: true,
+          },
+        },
+        vehicle: {
+          select: {
+            vehicle_number: true,
+            vehicle_name: true,
+            vehicle_type: true,
+            vehicle_make: true,
+            vehicle_model: true,
+          },
+        },
+        delivery: {
+          select: {
+            current_status: true,
+            status_description: true,
+            estimated_pickup_time: true,
+            estimated_delivery_time: true,
+            actual_pickup_time: true,
+            actual_delivery_time: true,
+            delivery_otp: true,
+          },
+        },
+      },
+    });
+
+    // Sort: confirmed first, then pickup_completed, then in_transit, then others
+    const statusOrder = { 'confirmed': 1, 'pickup_completed': 2, 'in_transit': 3 };
+    const sorted = [...jobs].sort((a, b) => {
+      const aOrder = statusOrder[a.status] || 4;
+      const bOrder = statusOrder[b.status] || 4;
+      return aOrder - bOrder;
+    });
+
+    // Flatten to match original SQL response format
+    const flattened = sorted.map((b) => ({
+      booking_id: b.booking_id,
+      booking_reference: b.booking_reference,
+      booking_number: b.booking_number,
+      user_id: b.user_id,
+      driver_id: b.driver_id,
+      vehicle_id: b.vehicle_id,
+      pickup_location: b.pickup_location,
+      pickup_address: b.pickup_address,
+      pickup_city: b.pickup_city,
+      pickup_state: b.pickup_state,
+      pickup_pincode: b.pickup_pincode,
+      pickup_date: b.pickup_date,
+      pickup_time: b.pickup_time,
+      drop_location: b.drop_location,
+      drop_address: b.drop_address,
+      drop_city: b.drop_city,
+      drop_state: b.drop_state,
+      drop_pincode: b.drop_pincode,
+      goods_description: b.goods_description,
+      goods_type: b.goods_type,
+      goods_weight_kg: b.goods_weight_kg,
+      goods_volume: b.goods_volume,
+      number_of_items: b.number_of_items,
+      fragile: b.fragile,
+      vehicle_type_required: b.vehicle_type_required,
+      estimated_distance_km: b.estimated_distance_km,
+      estimated_price: b.estimated_price,
+      final_price: b.final_price,
+      status: b.status,
+      created_at: b.created_at,
+      updated_at: b.updated_at,
+      confirmed_at: b.confirmed_at,
+      driver_assigned_at: b.driver_assigned_at,
+      pickup_completed_at: b.pickup_completed_at,
+      delivered_at: b.delivered_at,
+      customer_first_name: b.user?.first_name ?? null,
+      customer_last_name: b.user?.last_name ?? null,
+      customer_phone: b.user?.phone ?? null,
+      customer_address: b.user?.address ?? null,
+      vehicle_number: b.vehicle?.vehicle_number ?? null,
+      vehicle_name: b.vehicle?.vehicle_name ?? null,
+      vehicle_type: b.vehicle?.vehicle_type ?? null,
+      vehicle_make: b.vehicle?.vehicle_make ?? null,
+      vehicle_model: b.vehicle?.vehicle_model ?? null,
+      current_status: b.delivery?.current_status ?? null,
+      status_description: b.delivery?.status_description ?? null,
+      estimated_pickup_time: b.delivery?.estimated_pickup_time ?? null,
+      estimated_delivery_time: b.delivery?.estimated_delivery_time ?? null,
+      actual_pickup_time: b.delivery?.actual_pickup_time ?? null,
+      actual_delivery_time: b.delivery?.actual_delivery_time ?? null,
+      delivery_otp: b.delivery?.delivery_otp ?? null,
+    }));
 
     res.json({
       success: true,
-      data: jobs,
-      count: jobs.length
+      data: flattened,
+      count: flattened.length,
     });
   } catch (error) {
     console.error('Get my jobs error:', error);
@@ -235,11 +419,13 @@ router.put('/update-status/:bookingId', protect, [
       });
     }
 
-    const bookingId = req.params.bookingId;
+    const bookingId = parseInt(req.params.bookingId);
     const { status, notes } = req.body;
 
-    // Get driver details
-    const driver = await get('SELECT * FROM drivers WHERE user_id = ?', [req.user.user_id]);
+    // Get driver details via Prisma
+    const driver = await prisma.driver.findFirst({
+      where: { user_id: req.user.user_id },
+    });
     
     if (!driver) {
       return res.status(403).json({
@@ -249,10 +435,12 @@ router.put('/update-status/:bookingId', protect, [
     }
 
     // Check booking belongs to driver
-    const booking = await get(
-      'SELECT * FROM bookings WHERE booking_id = ? AND driver_id = ?',
-      [bookingId, driver.driver_id]
-    );
+    const booking = await prisma.booking.findFirst({
+      where: {
+        booking_id: bookingId,
+        driver_id: driver.driver_id,
+      },
+    });
 
     if (!booking) {
       return res.status(404).json({
@@ -264,7 +452,6 @@ router.put('/update-status/:bookingId', protect, [
     let bookingStatus = '';
     let deliveryStatus = '';
     let statusDescription = '';
-    let timestamp = 'CURRENT_TIMESTAMP';
 
     switch (status) {
       case 'pickup_completed':
@@ -284,37 +471,58 @@ router.put('/update-status/:bookingId', protect, [
         break;
     }
 
-    // Update booking
-    if (status === 'delivered') {
-      await run(
-        `UPDATE bookings SET status = ?, delivered_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE booking_id = ?`,
-        [bookingStatus, bookingId]
-      );
-    } else {
-      await run(
-        `UPDATE bookings SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE booking_id = ?`,
-        [bookingStatus, bookingId]
-      );
-    }
+    // Perform updates in a transaction
+    await prisma.$transaction(async (tx) => {
+      // Update booking
+      const bookingUpdateData = {
+        status: bookingStatus,
+      };
+      if (status === 'delivered') {
+        bookingUpdateData.delivered_at = new Date();
+      }
+      await tx.booking.update({
+        where: { booking_id: bookingId },
+        data: bookingUpdateData,
+      });
 
-    // Update delivery
-    await run(
-      `UPDATE deliveries SET 
-        current_status = ?, 
-        status_description = ?,
-        ${status === 'pickup_completed' ? 'actual_pickup_time = CURRENT_TIMESTAMP,' : ''}
-        ${status === 'delivered' ? 'actual_delivery_time = CURRENT_TIMESTAMP,' : ''}
-        delivery_notes = COALESCE(?, delivery_notes),
-        updated_at = CURRENT_TIMESTAMP 
-       WHERE booking_id = ?`,
-      [deliveryStatus, statusDescription, notes || null, bookingId]
-    );
+      // Update delivery
+      const deliveryUpdateData = {
+        current_status: deliveryStatus,
+        status_description: statusDescription,
+        delivery_notes: notes || undefined,
+      };
+      if (status === 'pickup_completed') {
+        deliveryUpdateData.actual_pickup_time = new Date();
+      }
+      if (status === 'delivered') {
+        deliveryUpdateData.actual_delivery_time = new Date();
+      }
+      await tx.delivery.update({
+        where: { booking_id: bookingId },
+        data: deliveryUpdateData,
+      });
 
-    // If delivered, make driver and vehicle available again
-    if (status === 'delivered') {
-      await run('UPDATE drivers SET is_available = 1, total_deliveries = total_deliveries + 1 WHERE driver_id = ?', [driver.driver_id]);
-      await run('UPDATE transport_vehicles SET is_available = 1, current_status = ? WHERE vehicle_id = ?', ['available', booking.vehicle_id]);
-    }
+      // If delivered, make driver and vehicle available again
+      if (status === 'delivered') {
+        await tx.driver.update({
+          where: { driver_id: driver.driver_id },
+          data: {
+            is_available: true,
+            total_deliveries: { increment: 1 },
+          },
+        });
+
+        if (booking.vehicle_id) {
+          await tx.transportVehicle.update({
+            where: { vehicle_id: booking.vehicle_id },
+            data: {
+              is_available: true,
+              current_status: 'available',
+            },
+          });
+        }
+      }
+    });
 
     res.json({
       success: true,
@@ -339,8 +547,11 @@ router.put('/update-status/:bookingId', protect, [
 // @access  Private (Driver)
 router.get('/my-vehicles', protect, async (req, res) => {
   try {
-    // Get driver details
-    const driver = await get('SELECT * FROM drivers WHERE user_id = ?', [req.user.user_id]);
+    // Get driver details via Prisma
+    const driver = await prisma.driver.findFirst({
+      where: { user_id: req.user.user_id },
+      select: { driver_id: true },
+    });
     
     if (!driver) {
       return res.status(403).json({
@@ -349,15 +560,15 @@ router.get('/my-vehicles', protect, async (req, res) => {
       });
     }
 
-    const vehicles = await query(
-      'SELECT * FROM transport_vehicles WHERE driver_id = ? ORDER BY vehicle_id DESC',
-      [driver.driver_id]
-    );
+    const vehicles = await prisma.transportVehicle.findMany({
+      where: { driver_id: driver.driver_id },
+      orderBy: { vehicle_id: 'desc' },
+    });
 
     res.json({
       success: true,
       data: vehicles,
-      count: vehicles.length
+      count: vehicles.length,
     });
   } catch (error) {
     console.error('Get vehicles error:', error);
@@ -396,8 +607,11 @@ router.post('/register-vehicle', protect, [
       });
     }
 
-    // Get driver details
-    const driver = await get('SELECT * FROM drivers WHERE user_id = ?', [req.user.user_id]);
+    // Get driver details via Prisma
+    const driver = await prisma.driver.findFirst({
+      where: { user_id: req.user.user_id },
+      select: { driver_id: true },
+    });
     
     if (!driver) {
       return res.status(403).json({
@@ -414,10 +628,10 @@ router.post('/register-vehicle', protect, [
     } = req.body;
 
     // Check if vehicle number already exists
-    const existingVehicle = await get(
-      'SELECT vehicle_id FROM transport_vehicles WHERE vehicle_number = ?',
-      [vehicle_number]
-    );
+    const existingVehicle = await prisma.transportVehicle.findUnique({
+      where: { vehicle_number: vehicle_number },
+      select: { vehicle_id: true },
+    });
 
     if (existingVehicle) {
       return res.status(400).json({
@@ -426,32 +640,41 @@ router.post('/register-vehicle', protect, [
       });
     }
 
-    // Insert vehicle
-    const result = await run(
-      `INSERT INTO transport_vehicles (
-        driver_id, vehicle_number, vehicle_type, vehicle_name, capacity_kg, capacity_volume,
-        vehicle_make, vehicle_model, manufacturing_year, registration_date,
-        insurance_number, insurance_expiry, permit_number, permit_expiry,
-        pollution_certificate, pollution_expiry, base_location, hourly_rate, per_km_rate,
-        is_available, current_status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        driver.driver_id, vehicle_number, vehicle_type, vehicle_name, capacity_kg, capacity_volume || null,
-        vehicle_make, vehicle_model, manufacturing_year, registration_date,
-        insurance_number, insurance_expiry, permit_number, permit_expiry,
-        pollution_certificate || null, pollution_expiry || null, base_location, hourly_rate || null, per_km_rate,
-        1, 'available'
-      ]
-    );
+    // Create vehicle via Prisma
+    const newVehicle = await prisma.transportVehicle.create({
+      data: {
+        driver_id: driver.driver_id,
+        vehicle_number,
+        vehicle_type,
+        vehicle_name,
+        capacity_kg: parseFloat(capacity_kg),
+        capacity_volume: capacity_volume ? parseFloat(capacity_volume) : null,
+        vehicle_make,
+        vehicle_model,
+        manufacturing_year: parseInt(manufacturing_year),
+        registration_date,
+        insurance_number,
+        insurance_expiry,
+        permit_number,
+        permit_expiry,
+        pollution_certificate: pollution_certificate || null,
+        pollution_expiry: pollution_expiry || null,
+        base_location,
+        hourly_rate: hourly_rate ? parseFloat(hourly_rate) : null,
+        per_km_rate: parseFloat(per_km_rate),
+        is_available: true,
+        current_status: 'available',
+      },
+    });
 
     res.status(201).json({
       success: true,
       message: 'Vehicle registered successfully',
       data: {
-        vehicle_id: result.lastID,
+        vehicle_id: newVehicle.vehicle_id,
         vehicle_number,
-        vehicle_type
-      }
+        vehicle_type,
+      },
     });
   } catch (error) {
     console.error('Register vehicle error:', error);
@@ -467,8 +690,10 @@ router.post('/register-vehicle', protect, [
 // @access  Private (Driver)
 router.get('/stats', protect, async (req, res) => {
   try {
-    // Get driver details
-    const driver = await get('SELECT * FROM drivers WHERE user_id = ?', [req.user.user_id]);
+    // Get driver details via Prisma
+    const driver = await prisma.driver.findFirst({
+      where: { user_id: req.user.user_id },
+    });
     
     if (!driver) {
       return res.status(403).json({
@@ -477,37 +702,43 @@ router.get('/stats', protect, async (req, res) => {
       });
     }
 
-    // Get stats
-    const totalJobs = await get(
-      'SELECT COUNT(*) as count FROM bookings WHERE driver_id = ?',
-      [driver.driver_id]
-    );
+    // Get stats using Prisma aggregations
+    const totalJobs = await prisma.booking.count({
+      where: { driver_id: driver.driver_id },
+    });
 
-    const completedJobs = await get(
-      'SELECT COUNT(*) as count FROM bookings WHERE driver_id = ? AND status IN (?, ?, ?)',
-      [driver.driver_id, 'delivered', 'completed']
-    );
+    const completedJobs = await prisma.booking.count({
+      where: {
+        driver_id: driver.driver_id,
+        status: { in: ['delivered', 'completed'] },
+      },
+    });
 
-    const earnings = await get(
-      'SELECT SUM(final_price) as total FROM bookings WHERE driver_id = ? AND status IN (?, ?)',
-      [driver.driver_id, 'delivered', 'completed']
-    );
+    const earningsAgg = await prisma.booking.aggregate({
+      where: {
+        driver_id: driver.driver_id,
+        status: { in: ['delivered', 'completed'] },
+      },
+      _sum: { final_price: true },
+    });
 
-    const activeJobs = await get(
-      'SELECT COUNT(*) as count FROM bookings WHERE driver_id = ? AND status IN (?, ?, ?)',
-      [driver.driver_id, 'confirmed', 'pickup_completed', 'in_transit']
-    );
+    const activeJobs = await prisma.booking.count({
+      where: {
+        driver_id: driver.driver_id,
+        status: { in: ['confirmed', 'pickup_completed', 'in_transit'] },
+      },
+    });
 
     res.json({
       success: true,
       data: {
         total_deliveries: driver.total_deliveries,
         rating: driver.rating,
-        completed_jobs: completedJobs.count,
-        total_earnings: earnings.total || 0,
-        active_jobs: activeJobs.count,
-        is_available: driver.is_available
-      }
+        completed_jobs: completedJobs,
+        total_earnings: earningsAgg._sum.final_price || 0,
+        active_jobs: activeJobs,
+        is_available: driver.is_available,
+      },
     });
   } catch (error) {
     console.error('Get driver stats error:', error);

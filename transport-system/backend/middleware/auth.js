@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-const { get } = require('../config/database');
+const { prisma } = require('../config/prisma');
 
 // Protect routes - verify JWT token (for users and drivers)
 const protect = async (req, res, next) => {
@@ -13,11 +13,16 @@ const protect = async (req, res, next) => {
       
       // Check if it's an admin token (has type: 'admin') or user token
       if (decoded.type === 'admin') {
-        // Get admin from token
-        const admin = await get(
-          'SELECT admin_id as user_id, full_name as first_name, email, role FROM admins WHERE admin_id = ?',
-          [decoded.id]
-        );
+        // Get admin from token via Prisma
+        const admin = await prisma.admin.findUnique({
+          where: { admin_id: decoded.id },
+          select: {
+            admin_id: true,
+            full_name: true,
+            email: true,
+            role: true,
+          },
+        });
 
         if (!admin) {
           return res.status(401).json({
@@ -26,15 +31,26 @@ const protect = async (req, res, next) => {
           });
         }
 
-        req.user = admin;
-        req.user.role = admin.role; // Use the admin role (super_admin, admin, operator)
+        req.user = {
+          user_id: admin.admin_id,
+          first_name: admin.full_name,
+          email: admin.email,
+          role: admin.role,
+        };
         next();
       } else {
-        // Get user from token
-        const user = await get(
-          'SELECT user_id, first_name, last_name, email, phone, role FROM users WHERE user_id = ?',
-          [decoded.id]
-        );
+        // Get user from token via Prisma
+        const user = await prisma.user.findUnique({
+          where: { user_id: decoded.id },
+          select: {
+            user_id: true,
+            first_name: true,
+            last_name: true,
+            email: true,
+            phone: true,
+            role: true,
+          },
+        });
 
         if (!user) {
           return res.status(401).json({

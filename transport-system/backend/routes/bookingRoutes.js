@@ -1,6 +1,5 @@
 const express = require('express');
 const router = express.Router();
-const { query, run, get } = require('../config/database');
 const { prisma } = require('../config/prisma');
 
 // Legacy helpers for backward compatible request/response fields
@@ -184,35 +183,102 @@ router.post('/create', protect, [
 // @access  Private
 router.get('/user/:id', protect, async (req, res) => {
   try {
-    const userId = req.params.id;
+    const userId = parseInt(req.params.id);
 
     // Verify user can view these bookings
-    if (req.user.user_id !== parseInt(userId) && req.user.role !== 'admin') {
+    if (req.user.user_id !== userId && req.user.role !== 'admin') {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to view these bookings'
       });
     }
 
-    const bookings = await query(
-      `SELECT b.*, 
-        u.first_name as customer_first_name, u.last_name as customer_last_name, u.phone as customer_phone,
-        d.first_name as driver_first_name, d.last_name as driver_last_name, d.phone as driver_phone,
-        tv.vehicle_number, tv.vehicle_type, tv.vehicle_name
-       FROM bookings b
-       LEFT JOIN users u ON b.user_id = u.user_id
-       LEFT JOIN drivers dr ON b.driver_id = dr.driver_id
-       LEFT JOIN users d ON dr.user_id = d.user_id
-       LEFT JOIN transport_vehicles tv ON b.vehicle_id = tv.vehicle_id
-       WHERE b.user_id = ?
-       ORDER BY b.created_at DESC`,
-      [userId]
-    );
+    const bookings = await prisma.booking.findMany({
+      where: { user_id: userId },
+      include: {
+        user: {
+          select: {
+            first_name: true,
+            last_name: true,
+            phone: true,
+          },
+        },
+        driver: {
+          select: {
+            license_number: true,
+            rating: true,
+            total_deliveries: true,
+            user: {
+              select: {
+                first_name: true,
+                last_name: true,
+                phone: true,
+              },
+            },
+          },
+        },
+        vehicle: {
+          select: {
+            vehicle_number: true,
+            vehicle_type: true,
+            vehicle_name: true,
+          },
+        },
+      },
+      orderBy: { created_at: 'desc' },
+    });
+
+    const flattened = bookings.map((b) => ({
+      booking_id: b.booking_id,
+      booking_reference: b.booking_reference,
+      booking_number: b.booking_number,
+      user_id: b.user_id,
+      driver_id: b.driver_id,
+      vehicle_id: b.vehicle_id,
+      pickup_location: b.pickup_location,
+      pickup_address: b.pickup_address,
+      pickup_city: b.pickup_city,
+      pickup_state: b.pickup_state,
+      pickup_pincode: b.pickup_pincode,
+      pickup_date: b.pickup_date,
+      pickup_time: b.pickup_time,
+      drop_location: b.drop_location,
+      drop_address: b.drop_address,
+      drop_city: b.drop_city,
+      drop_state: b.drop_state,
+      drop_pincode: b.drop_pincode,
+      goods_description: b.goods_description,
+      goods_type: b.goods_type,
+      goods_weight_kg: b.goods_weight_kg,
+      goods_volume: b.goods_volume,
+      number_of_items: b.number_of_items,
+      fragile: b.fragile,
+      vehicle_type_required: b.vehicle_type_required,
+      estimated_distance_km: b.estimated_distance_km,
+      estimated_price: b.estimated_price,
+      final_price: b.final_price,
+      status: b.status,
+      created_at: b.created_at,
+      updated_at: b.updated_at,
+      confirmed_at: b.confirmed_at,
+      driver_assigned_at: b.driver_assigned_at,
+      pickup_completed_at: b.pickup_completed_at,
+      delivered_at: b.delivered_at,
+      customer_first_name: b.user?.first_name ?? null,
+      customer_last_name: b.user?.last_name ?? null,
+      customer_phone: b.user?.phone ?? null,
+      driver_first_name: b.driver?.user?.first_name ?? null,
+      driver_last_name: b.driver?.user?.last_name ?? null,
+      driver_phone: b.driver?.user?.phone ?? null,
+      vehicle_number: b.vehicle?.vehicle_number ?? null,
+      vehicle_type: b.vehicle?.vehicle_type ?? null,
+      vehicle_name: b.vehicle?.vehicle_name ?? null,
+    }));
 
     res.json({
       success: true,
-      data: bookings,
-      count: bookings.length
+      data: flattened,
+      count: flattened.length,
     });
   } catch (error) {
     console.error('Get user bookings error:', error);
@@ -228,22 +294,73 @@ router.get('/user/:id', protect, async (req, res) => {
 // @access  Private
 router.get('/my-bookings', protect, async (req, res) => {
   try {
-    const bookings = await query(
-      `SELECT b.*, 
-        tv.vehicle_number, tv.vehicle_type, tv.vehicle_name,
-        d.current_status, d.status_description
-       FROM bookings b
-       LEFT JOIN transport_vehicles tv ON b.vehicle_id = tv.vehicle_id
-       LEFT JOIN deliveries d ON b.booking_id = d.booking_id
-       WHERE b.user_id = ?
-       ORDER BY b.created_at DESC`,
-      [req.user.user_id]
-    );
+    const bookings = await prisma.booking.findMany({
+      where: { user_id: req.user.user_id },
+      include: {
+        vehicle: {
+          select: {
+            vehicle_number: true,
+            vehicle_type: true,
+            vehicle_name: true,
+          },
+        },
+        delivery: {
+          select: {
+            current_status: true,
+            status_description: true,
+          },
+        },
+      },
+      orderBy: { created_at: 'desc' },
+    });
+
+    const flattened = bookings.map((b) => ({
+      booking_id: b.booking_id,
+      booking_reference: b.booking_reference,
+      booking_number: b.booking_number,
+      user_id: b.user_id,
+      driver_id: b.driver_id,
+      vehicle_id: b.vehicle_id,
+      pickup_location: b.pickup_location,
+      pickup_address: b.pickup_address,
+      pickup_city: b.pickup_city,
+      pickup_state: b.pickup_state,
+      pickup_pincode: b.pickup_pincode,
+      pickup_date: b.pickup_date,
+      pickup_time: b.pickup_time,
+      drop_location: b.drop_location,
+      drop_address: b.drop_address,
+      drop_city: b.drop_city,
+      drop_state: b.drop_state,
+      drop_pincode: b.drop_pincode,
+      goods_description: b.goods_description,
+      goods_type: b.goods_type,
+      goods_weight_kg: b.goods_weight_kg,
+      goods_volume: b.goods_volume,
+      number_of_items: b.number_of_items,
+      fragile: b.fragile,
+      vehicle_type_required: b.vehicle_type_required,
+      estimated_distance_km: b.estimated_distance_km,
+      estimated_price: b.estimated_price,
+      final_price: b.final_price,
+      status: b.status,
+      created_at: b.created_at,
+      updated_at: b.updated_at,
+      confirmed_at: b.confirmed_at,
+      driver_assigned_at: b.driver_assigned_at,
+      pickup_completed_at: b.pickup_completed_at,
+      delivered_at: b.delivered_at,
+      vehicle_number: b.vehicle?.vehicle_number ?? null,
+      vehicle_type: b.vehicle?.vehicle_type ?? null,
+      vehicle_name: b.vehicle?.vehicle_name ?? null,
+      current_status: b.delivery?.current_status ?? null,
+      status_description: b.delivery?.status_description ?? null,
+    }));
 
     res.json({
       success: true,
-      data: bookings,
-      count: bookings.length
+      data: flattened,
+      count: flattened.length,
     });
   } catch (error) {
     console.error('Get my bookings error:', error);
@@ -415,9 +532,11 @@ router.get('/:id', protect, async (req, res) => {
 // @access  Private
 router.put('/:id/cancel', protect, async (req, res) => {
   try {
-    const bookingId = req.params.id;
+    const bookingId = parseInt(req.params.id);
 
-    const booking = await get('SELECT * FROM bookings WHERE booking_id = ?', [bookingId]);
+    const booking = await prisma.booking.findUnique({
+      where: { booking_id: bookingId },
+    });
 
     if (!booking) {
       return res.status(404).json({
@@ -442,30 +561,43 @@ router.put('/:id/cancel', protect, async (req, res) => {
       });
     }
 
-    // Update booking status
-    await run(
-      'UPDATE bookings SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE booking_id = ?',
-      ['cancelled', bookingId]
-    );
+    // Perform cancellation in a transaction
+    await prisma.$transaction(async (tx) => {
+      // Update booking status
+      await tx.booking.update({
+        where: { booking_id: bookingId },
+        data: { status: 'cancelled' },
+      });
 
-    // Update delivery status
-    await run(
-      'UPDATE deliveries SET current_status = ?, status_description = ?, updated_at = CURRENT_TIMESTAMP WHERE booking_id = ?',
-      ['booking_confirmed', 'Booking cancelled by customer', bookingId]
-    );
+      // Update delivery status
+      const existingDelivery = await tx.delivery.findUnique({
+        where: { booking_id: bookingId },
+      });
+      if (existingDelivery) {
+        await tx.delivery.update({
+          where: { booking_id: bookingId },
+          data: {
+            current_status: 'booking_confirmed',
+            status_description: 'Booking cancelled by customer',
+          },
+        });
+      }
 
-    // If driver was assigned, make driver available again
-    if (booking.driver_id) {
-      await run(
-        'UPDATE drivers SET is_available = 1 WHERE driver_id = ?',
-        [booking.driver_id]
-      );
-      
-      await run(
-        'UPDATE transport_vehicles SET is_available = 1, current_status = ? WHERE vehicle_id = ?',
-        ['available', booking.vehicle_id]
-      );
-    }
+      // If driver was assigned, make driver available again
+      if (booking.driver_id) {
+        await tx.driver.update({
+          where: { driver_id: booking.driver_id },
+          data: { is_available: true },
+        });
+
+        if (booking.vehicle_id) {
+          await tx.transportVehicle.update({
+            where: { vehicle_id: booking.vehicle_id },
+            data: { is_available: true, current_status: 'available' },
+          });
+        }
+      }
+    });
 
     res.json({
       success: true,

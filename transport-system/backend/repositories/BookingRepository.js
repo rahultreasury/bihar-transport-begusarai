@@ -2,13 +2,11 @@
  * BookingRepository
  * Database-only repository for interacting with the `bookings` table.
  *
- * Notes:
- * - Uses the sqlite connection exported from ../config/database.js.
- * - Parameterized SQL only.
- * - No business logic, validation, or HTTP/Express dependencies.
+ * Uses Prisma Client for all database operations.
+ * Accepts an optional Prisma transaction client (`tx`) for interactive transactions.
  */
 
-const { query, run, get } = require('../config/database');
+const { prisma } = require('../config/prisma');
 
 /**
  * @typedef {Object} BookingSearchFilters
@@ -18,8 +16,8 @@ const { query, run, get } = require('../config/database');
  * @property {string=} bookingReference
  * @property {string=} pickupCity
  * @property {string=} dropCity
- * @property {string=} dateFrom - ISO date (YYYY-MM-DD) or sqlite-compatible date
- * @property {string=} dateTo - ISO date (YYYY-MM-DD) or sqlite-compatible date
+ * @property {string=} dateFrom - ISO date (YYYY-MM-DD)
+ * @property {string=} dateTo - ISO date (YYYY-MM-DD)
  */
 
 class BookingRepository {
@@ -47,67 +45,52 @@ class BookingRepository {
    * @param {number=} data.goods_weight_kg
    * @param {number=} data.goods_volume
    * @param {number=} data.number_of_items
-   * @param {number|boolean=} data.fragile
+   * @param {boolean=} data.fragile
    * @param {string} data.vehicle_type_required
    * @param {number=} data.estimated_distance_km
    * @param {number=} data.estimated_price
    * @param {number=} data.final_price
    * @param {string=} data.status
    * @param {string=} data.booking_number
+   * @param {object=} tx - Prisma transaction client
    * @returns {Promise<{booking_id:number}>}
    */
   async create(data, tx = null) {
-    const fields = [
-      'booking_reference',
-      'booking_number',
-      'user_id',
-      'driver_id',
-      'vehicle_id',
-      'pickup_location',
-      'pickup_address',
-      'pickup_city',
-      'pickup_state',
-      'pickup_pincode',
-      'pickup_date',
-      'pickup_time',
-      'drop_location',
-      'drop_address',
-      'drop_city',
-      'drop_state',
-      'drop_pincode',
-      'goods_description',
-      'goods_type',
-      'goods_weight_kg',
-      'goods_volume',
-      'number_of_items',
-      'fragile',
-      'vehicle_type_required',
-      'estimated_distance_km',
-      'estimated_price',
-      'final_price',
-      'status'
-    ];
-
-    // Build insert list using only provided keys (keeps backward compatibility).
-    const keys = [];
-    const values = [];
-    const placeholders = [];
-
-    for (const k of fields) {
-      if (Object.prototype.hasOwnProperty.call(data, k)) {
-        keys.push(k);
-        values.push(data[k]);
-        placeholders.push('?');
-      }
-    }
-
-    if (keys.length === 0) throw new Error('BookingRepository.create: no fields provided');
-
-    const sql = `INSERT INTO bookings (${keys.join(', ')}) VALUES (${placeholders.join(', ')})`;
+    const client = tx || prisma;
     try {
-      const runner = tx?.run ?? run;
-      const result = await runner(sql, values);
-      return { booking_id: result.lastID };
+      const booking = await client.booking.create({
+        data: {
+          booking_reference: data.booking_reference,
+          booking_number: data.booking_number,
+          user_id: data.user_id,
+          driver_id: data.driver_id || null,
+          vehicle_id: data.vehicle_id || null,
+          pickup_location: data.pickup_location,
+          pickup_address: data.pickup_address || null,
+          pickup_city: data.pickup_city,
+          pickup_state: data.pickup_state || 'Bihar',
+          pickup_pincode: data.pickup_pincode || null,
+          pickup_date: data.pickup_date,
+          pickup_time: data.pickup_time,
+          drop_location: data.drop_location,
+          drop_address: data.drop_address || null,
+          drop_city: data.drop_city,
+          drop_state: data.drop_state || 'Bihar',
+          drop_pincode: data.drop_pincode || null,
+          goods_description: data.goods_description,
+          goods_type: data.goods_type || null,
+          goods_weight_kg: data.goods_weight_kg != null ? Number(data.goods_weight_kg) : null,
+          goods_volume: data.goods_volume != null ? Number(data.goods_volume) : null,
+          number_of_items: data.number_of_items != null ? Number(data.number_of_items) : 1,
+          fragile: data.fragile == null ? false : Boolean(data.fragile),
+          vehicle_type_required: data.vehicle_type_required,
+          estimated_distance_km: data.estimated_distance_km != null ? Number(data.estimated_distance_km) : null,
+          estimated_price: data.estimated_price != null ? Number(data.estimated_price) : null,
+          final_price: data.final_price != null ? Number(data.final_price) : null,
+          status: data.status || 'pending',
+        },
+      });
+      return { booking_id: booking.booking_id };
     } catch (err) {
       throw err;
     }
@@ -116,15 +99,15 @@ class BookingRepository {
   /**
    * Get a booking by numeric primary key.
    * @param {number} bookingId
+   * @param {object=} tx - Prisma transaction client
    * @returns {Promise<Object|null>}
    */
   async findById(bookingId, tx = null) {
+    const client = tx || prisma;
     try {
-      const getter = tx?.get ?? get;
-      return await getter(
-        'SELECT booking_id, booking_reference, booking_number, user_id, driver_id, vehicle_id, pickup_location, pickup_address, pickup_city, pickup_state, pickup_pincode, pickup_date, pickup_time, drop_location, drop_address, drop_city, drop_state, drop_pincode, goods_description, goods_type, goods_weight_kg, goods_volume, number_of_items, fragile, vehicle_type_required, estimated_distance_km, estimated_price, final_price, status, created_at, updated_at, confirmed_at, driver_assigned_at, pickup_completed_at, delivered_at FROM bookings WHERE booking_id = ?',
-        [bookingId]
-      );
+      return await client.booking.findUnique({
+        where: { booking_id: bookingId },
+      });
     } catch (err) {
       throw err;
     }
@@ -133,15 +116,15 @@ class BookingRepository {
   /**
    * Get a booking by booking_reference.
    * @param {string} bookingReference
+   * @param {object=} tx - Prisma transaction client
    * @returns {Promise<Object|null>}
    */
   async findByReference(bookingReference, tx = null) {
+    const client = tx || prisma;
     try {
-      const getter = tx?.get ?? get;
-      return await getter(
-        'SELECT booking_id, booking_reference, booking_number, user_id, driver_id, vehicle_id, pickup_location, pickup_address, pickup_city, pickup_state, pickup_pincode, pickup_date, pickup_time, drop_location, drop_address, drop_city, drop_state, drop_pincode, goods_description, goods_type, goods_weight_kg, goods_volume, number_of_items, fragile, vehicle_type_required, estimated_distance_km, estimated_price, final_price, status, created_at, updated_at, confirmed_at, driver_assigned_at, pickup_completed_at, delivered_at FROM bookings WHERE booking_reference = ?',
-        [bookingReference]
-      );
+      return await client.booking.findUnique({
+        where: { booking_reference: bookingReference },
+      });
     } catch (err) {
       throw err;
     }
@@ -151,9 +134,11 @@ class BookingRepository {
    * Update a booking row by id.
    * @param {number} bookingId
    * @param {Object} data - partial fields to update
+   * @param {object=} tx - Prisma transaction client
    * @returns {Promise<{changes:number}>}
    */
   async update(bookingId, data, tx = null) {
+    const client = tx || prisma;
     const input = data || {};
     const allowedFields = [
       'pickup_address',
@@ -178,26 +163,27 @@ class BookingRepository {
       'driver_id',
       'vehicle_id',
       'booking_reference',
-      'booking_number'
+      'booking_number',
     ];
 
-    const keys = Object.keys(input).filter(k => allowedFields.includes(k));
+    // Build update payload with only allowed fields that are present
+    const updateData = {};
+    for (const key of allowedFields) {
+      if (Object.prototype.hasOwnProperty.call(input, key)) {
+        updateData[key] = input[key];
+      }
+    }
 
-    // Ignore unknown fields to preserve repository contracts.
-    if (keys.length === 0) {
+    if (Object.keys(updateData).length === 0) {
       throw new Error('BookingRepository.update: no allowed fields provided');
     }
 
-    const setClause = keys.map(k => `${k} = ?`).join(', ');
-    const values = keys.map(k => input[k]);
-
-    const sql = `UPDATE bookings SET ${setClause} WHERE booking_id = ?`;
-    values.push(bookingId);
-
     try {
-      const runner = tx?.run ?? run;
-      const result = await runner(sql, values);
-      return { changes: result.changes };
+      const result = await client.booking.update({
+        where: { booking_id: bookingId },
+        data: updateData,
+      });
+      return { changes: result ? 1 : 0 };
     } catch (err) {
       throw err;
     }
@@ -209,57 +195,48 @@ class BookingRepository {
    * @returns {Promise<Object[]>}
    */
   async search(filters = {}) {
-    const safeFilters = filters || {};
-    let where = '1=1';
-    const params = [];
+    const where = {};
+    const filter = filters || {};
 
-
-    if (filters.status) {
-      where += ' AND status = ?';
-      params.push(filters.status);
+    if (filter.status) {
+      where.status = filter.status;
     }
-    if (filters.userId) {
-      where += ' AND user_id = ?';
-      params.push(filters.userId);
+    if (filter.userId) {
+      where.user_id = filter.userId;
     }
-    if (filters.driverId) {
-      where += ' AND driver_id = ?';
-      params.push(filters.driverId);
+    if (filter.driverId) {
+      where.driver_id = filter.driverId;
     }
-    if (filters.bookingReference) {
-      where += ' AND booking_reference = ?';
-      params.push(filters.bookingReference);
+    if (filter.bookingReference) {
+      where.booking_reference = filter.bookingReference;
     }
-    if (filters.pickupCity) {
-      where += ' AND pickup_city LIKE ?';
-      params.push(`%${filters.pickupCity}%`);
+    if (filter.pickupCity) {
+      where.pickup_city = { contains: filter.pickupCity };
     }
-    if (filters.dropCity) {
-      where += ' AND drop_city LIKE ?';
-      params.push(`%${filters.dropCity}%`);
+    if (filter.dropCity) {
+      where.drop_city = { contains: filter.dropCity };
     }
-    if (filters.dateFrom) {
-      where += ' AND DATE(pickup_date) >= DATE(?)';
-      params.push(filters.dateFrom);
-    }
-    if (filters.dateTo) {
-      where += ' AND DATE(pickup_date) <= DATE(?)';
-      params.push(filters.dateTo);
+    if (filter.dateFrom || filter.dateTo) {
+      where.pickup_date = {};
+      if (filter.dateFrom) {
+        where.pickup_date.gte = filter.dateFrom;
+      }
+      if (filter.dateTo) {
+        where.pickup_date.lte = filter.dateTo;
+      }
     }
 
     const maxLimit = 100;
-    const limit = Math.min(Number(filters.limit ?? 50), maxLimit);
-    const offset = Math.max(Number(filters.offset ?? 0), 0);
-
-    const sql = `SELECT booking_id, booking_reference, booking_number, user_id, driver_id, vehicle_id, pickup_location, pickup_address, pickup_city, pickup_state, pickup_pincode, pickup_date, pickup_time, drop_location, drop_address, drop_city, drop_state, drop_pincode, goods_description, goods_type, goods_weight_kg, goods_volume, number_of_items, fragile, vehicle_type_required, estimated_distance_km, estimated_price, final_price, status, created_at, updated_at, confirmed_at, driver_assigned_at, pickup_completed_at, delivered_at
-                 FROM bookings
-                 WHERE ${where}
-                 ORDER BY created_at DESC
-                 LIMIT ? OFFSET ?`;
+    const limit = Math.min(Number(filter.limit ?? 50), maxLimit);
+    const offset = Math.max(Number(filter.offset ?? 0), 0);
 
     try {
-      const runner = tx?.query ?? query;
-      return await runner(sql, [...params, limit, offset]);
+      return await prisma.booking.findMany({
+        where,
+        orderBy: { created_at: 'desc' },
+        take: limit,
+        skip: offset,
+      });
     } catch (err) {
       throw err;
     }
@@ -273,10 +250,11 @@ class BookingRepository {
    */
   async list(limit = 20, offset = 0) {
     try {
-      return await query(
-        'SELECT booking_id, booking_reference, booking_number, user_id, driver_id, vehicle_id, pickup_location, pickup_address, pickup_city, pickup_state, pickup_pincode, pickup_date, pickup_time, drop_location, drop_address, drop_city, drop_state, drop_pincode, goods_description, goods_type, goods_weight_kg, goods_volume, number_of_items, fragile, vehicle_type_required, estimated_distance_km, estimated_price, final_price, status, created_at, updated_at, confirmed_at, driver_assigned_at, pickup_completed_at, delivered_at FROM bookings ORDER BY created_at DESC LIMIT ? OFFSET ?',
-        [limit, offset]
-      );
+      return await prisma.booking.findMany({
+        orderBy: { created_at: 'desc' },
+        take: limit,
+        skip: offset,
+      });
     } catch (err) {
       throw err;
     }
@@ -284,15 +262,16 @@ class BookingRepository {
 
   /**
    * Delete a booking by id.
-   * Note: existing DB uses deliveries.booking_id as UNIQUE, and routes delete deliveries first.
-   * Repository does NOT enforce any ordering; callers can manage ordering if needed.
+   * Prisma cascade will handle related records.
    * @param {number} bookingId
    * @returns {Promise<{changes:number}>}
    */
   async delete(bookingId) {
     try {
-      const result = await run('DELETE FROM bookings WHERE booking_id = ?', [bookingId]);
-      return { changes: result.changes };
+      await prisma.booking.delete({
+        where: { booking_id: bookingId },
+      });
+      return { changes: 1 };
     } catch (err) {
       throw err;
     }

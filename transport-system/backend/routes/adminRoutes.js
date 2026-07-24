@@ -1,6 +1,5 @@
 const express = require('express');
 const router = express.Router();
-const { query, run, get, transaction } = require('../config/database');
 const { protect } = require('../middleware/auth');
 const { prisma } = require('../config/prisma');
 
@@ -20,59 +19,121 @@ router.get('/dashboard', protect, async (req, res) => {
     const totalUsers = await prisma.user.count({
       where: { role: 'customer' }
     });
-    const totalDrivers = await get('SELECT COUNT(*) as count FROM drivers', []);
-    const totalVehicles = await get('SELECT COUNT(*) as count FROM transport_vehicles', []);
-    const totalBookings = await get('SELECT COUNT(*) as count FROM bookings', []);
+    const totalDrivers = await prisma.driver.count();
+    const totalVehicles = await prisma.transportVehicle.count();
+    const totalBookings = await prisma.booking.count();
 
     // Get booking stats
-    const pendingBookings = await get('SELECT COUNT(*) as count FROM bookings WHERE status = ?', ['pending']);
-    const activeDeliveries = await get('SELECT COUNT(*) as count FROM bookings WHERE status IN (?, ?, ?)', ['confirmed', 'in_transit', 'pickup_completed']);
-    const completedDeliveries = await get('SELECT COUNT(*) as count FROM bookings WHERE status IN (?, ?)', ['delivered', 'completed']);
+    const pendingBookings = await prisma.booking.count({
+      where: { status: 'pending' }
+    });
+    const activeDeliveries = await prisma.booking.count({
+      where: { status: { in: ['confirmed', 'in_transit', 'pickup_completed'] } }
+    });
+    const completedDeliveries = await prisma.booking.count({
+      where: { status: { in: ['delivered', 'completed'] } }
+    });
 
     // Get revenue stats
-    const totalRevenue = await get('SELECT SUM(final_price) as total FROM bookings WHERE status IN (?, ?)', ['delivered', 'completed']);
-    const todayRevenue = await get(
-      `SELECT SUM(final_price) as total FROM bookings 
-       WHERE status IN (?, ?) AND DATE(delivered_at) = DATE('now')`,
-      ['delivered', 'completed']
-    );
+    const revenueAgg = await prisma.booking.aggregate({
+      where: { status: { in: ['delivered', 'completed'] } },
+      _sum: { final_price: true },
+    });
 
-    // Get recent bookings
-    const recentBookings = await query(
-      `SELECT b.booking_id, b.booking_reference, b.pickup_city, b.drop_city, b.status, b.final_price, b.created_at,
-        u.first_name, u.last_name, u.phone
-       FROM bookings b
-       JOIN users u ON b.user_id = u.user_id
-       ORDER BY b.created_at DESC
-       LIMIT 10`
-    );
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
 
-    // Get available drivers
-    const availableDrivers = await query(
-      `SELECT d.*, u.first_name, u.last_name, u.phone
-       FROM drivers d
-       JOIN users u ON d.user_id = u.user_id
-       WHERE d.is_available = 1
-       LIMIT 10`
-    );
+    const todayRevenueAgg = await prisma.booking.aggregate({
+      where: {
+        status: { in: ['delivered', 'completed'] },
+        delivered_at: { gte: todayStart, lte: todayEnd },
+      },
+      _sum: { final_price: true },
+    });
+
+    // Get recent bookings with user info
+    const recentBookingsRaw = await prisma.booking.findMany({
+      take: 10,
+      orderBy: { created_at: 'desc' },
+      include: {
+        user: {
+          select: {
+            first_name: true,
+            last_name: true,
+            phone: true,
+          },
+        },
+      },
+    });
+
+    const recentBookings = recentBookingsRaw.map((b) => ({
+      booking_id: b.booking_id,
+      booking_reference: b.booking_reference,
+      pickup_city: b.pickup_city,
+      drop_city: b.drop_city,
+      status: b.status,
+      final_price: b.final_price,
+      created_at: b.created_at,
+      first_name: b.user?.first_name ?? null,
+      last_name: b.user?.last_name ?? null,
+      phone: b.user?.phone ?? null,
+    }));
+
+    // Get available drivers with user info
+    const availableDriversRaw = await prisma.driver.findMany({
+      where: { is_available: true },
+      take: 10,
+      include: {
+        user: {
+          select: {
+            first_name: true,
+            last_name: true,
+            phone: true,
+          },
+        },
+      },
+    });
+
+    const availableDrivers = availableDriversRaw.map((d) => ({
+      driver_id: d.driver_id,
+      user_id: d.user_id,
+      license_number: d.license_number,
+      license_expiry: d.license_expiry,
+      aadhar_number: d.aadhar_number,
+      date_of_birth: d.date_of_birth,
+      gender: d.gender,
+      experience_years: d.experience_years,
+      profile_image: d.profile_image,
+      is_available: d.is_available,
+      is_verified: d.is_verified,
+      rating: d.rating,
+      total_deliveries: d.total_deliveries,
+      created_at: d.created_at,
+      updated_at: d.updated_at,
+      first_name: d.user?.first_name ?? null,
+      last_name: d.user?.last_name ?? null,
+      phone: d.user?.phone ?? null,
+    }));
 
     res.json({
       success: true,
       data: {
         stats: {
           totalUsers,
-          totalDrivers: totalDrivers.count,
-          totalVehicles: totalVehicles.count,
-          totalBookings: totalBookings.count,
-          pendingBookings: pendingBookings.count,
-          activeDeliveries: activeDeliveries.count,
-          completedDeliveries: completedDeliveries.count,
-          totalRevenue: totalRevenue.total || 0,
-          todayRevenue: todayRevenue.total || 0
+          totalDrivers,
+          totalVehicles,
+          totalBookings,
+          pendingBookings,
+          activeDeliveries,
+          completedDeliveries,
+          totalRevenue: revenueAgg._sum.final_price || 0,
+          todayRevenue: todayRevenueAgg._sum.final_price || 0,
         },
         recentBookings,
-        availableDrivers
-      }
+        availableDrivers,
+      },
     });
   } catch (error) {
     console.error('Get dashboard error:', error);
@@ -167,44 +228,79 @@ router.get('/drivers', protect, async (req, res) => {
     }
 
     const { page = 1, limit = 20, status = '' } = req.query;
-    const offset = (page - 1) * limit;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const take = parseInt(limit);
 
-    let whereClause = '';
-    let params = [];
-
+    // Build Prisma where clause
+    const where = {};
     if (status === 'available') {
-      whereClause = 'WHERE d.is_available = 1';
+      where.is_available = true;
     } else if (status === 'busy') {
-      whereClause = 'WHERE d.is_available = 0';
+      where.is_available = false;
     }
 
-    const drivers = await query(
-      `SELECT d.*, u.first_name, u.last_name, u.email, u.phone, u.address, u.city
-       FROM drivers d
-       JOIN users u ON d.user_id = u.user_id
-       ${whereClause}
-       ORDER BY d.created_at DESC
-       LIMIT ? OFFSET ?`,
-      [...params, parseInt(limit), offset]
-    );
+    const [drivers, total] = await Promise.all([
+      prisma.driver.findMany({
+        where,
+        include: {
+          user: {
+            select: {
+              first_name: true,
+              last_name: true,
+              email: true,
+              phone: true,
+              address: true,
+              city: true,
+            },
+          },
+        },
+        orderBy: { created_at: 'desc' },
+        skip,
+        take,
+      }),
+      prisma.driver.count({ where }),
+    ]);
 
-    const total = await get('SELECT COUNT(*) as count FROM drivers', []);
+    // Flatten Prisma result to match original SQL response format
+    const flattened = drivers.map((d) => ({
+      driver_id: d.driver_id,
+      user_id: d.user_id,
+      license_number: d.license_number,
+      license_expiry: d.license_expiry,
+      aadhar_number: d.aadhar_number,
+      date_of_birth: d.date_of_birth,
+      gender: d.gender,
+      experience_years: d.experience_years,
+      profile_image: d.profile_image,
+      is_available: d.is_available,
+      is_verified: d.is_verified,
+      rating: d.rating,
+      total_deliveries: d.total_deliveries,
+      created_at: d.created_at,
+      updated_at: d.updated_at,
+      first_name: d.user.first_name,
+      last_name: d.user.last_name,
+      email: d.user.email,
+      phone: d.user.phone,
+      address: d.user.address,
+      city: d.user.city,
+    }));
 
     res.json({
       success: true,
-      data: drivers,
+      data: flattened,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
-        total: total.count,
-        pages: Math.ceil(total.count / limit)
-      }
+        total: total,
+        pages: Math.ceil(total / parseInt(limit)),
+      },
     });
   } catch (error) {
     console.error('Get drivers error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error'
+      message: 'Server error',
     });
   }
 });
@@ -222,44 +318,83 @@ router.get('/vehicles', protect, async (req, res) => {
     }
 
     const { page = 1, limit = 20, type = '' } = req.query;
-    const offset = (page - 1) * limit;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const take = parseInt(limit);
 
-    let whereClause = '';
-    let params = [];
-
+    // Build Prisma where clause
+    const where = {};
     if (type) {
-      whereClause = 'WHERE vehicle_type = ?';
-      params.push(type);
+      where.vehicle_type = type;
     }
 
-    const vehicles = await query(
-      `SELECT tv.*, u.first_name as owner_name, u.phone as owner_phone
-       FROM transport_vehicles tv
-       LEFT JOIN drivers d ON tv.driver_id = d.driver_id
-       LEFT JOIN users u ON d.user_id = u.user_id
-       ${whereClause}
-       ORDER BY tv.created_at DESC
-       LIMIT ? OFFSET ?`,
-      [...params, parseInt(limit), offset]
-    );
+    const [vehicles, total] = await Promise.all([
+      prisma.transportVehicle.findMany({
+        where,
+        include: {
+          driver: {
+            include: {
+              user: {
+                select: {
+                  first_name: true,
+                  phone: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: { created_at: 'desc' },
+        skip,
+        take,
+      }),
+      prisma.transportVehicle.count({ where }),
+    ]);
 
-    const total = await get('SELECT COUNT(*) as count FROM transport_vehicles', []);
+    // Flatten Prisma result to match original SQL response format
+    const flattened = vehicles.map((v) => ({
+      vehicle_id: v.vehicle_id,
+      driver_id: v.driver_id,
+      vehicle_number: v.vehicle_number,
+      vehicle_type: v.vehicle_type,
+      vehicle_name: v.vehicle_name,
+      capacity_kg: v.capacity_kg,
+      capacity_volume: v.capacity_volume,
+      vehicle_make: v.vehicle_make,
+      vehicle_model: v.vehicle_model,
+      manufacturing_year: v.manufacturing_year,
+      registration_date: v.registration_date,
+      insurance_number: v.insurance_number,
+      insurance_expiry: v.insurance_expiry,
+      permit_number: v.permit_number,
+      permit_expiry: v.permit_expiry,
+      pollution_certificate: v.pollution_certificate,
+      pollution_expiry: v.pollution_expiry,
+      is_available: v.is_available,
+      is_verified: v.is_verified,
+      current_status: v.current_status,
+      base_location: v.base_location,
+      hourly_rate: v.hourly_rate,
+      per_km_rate: v.per_km_rate,
+      created_at: v.created_at,
+      updated_at: v.updated_at,
+      owner_name: v.driver?.user?.first_name ?? null,
+      owner_phone: v.driver?.user?.phone ?? null,
+    }));
 
     res.json({
       success: true,
-      data: vehicles,
+      data: flattened,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
-        total: total.count,
-        pages: Math.ceil(total.count / limit)
-      }
+        total: total,
+        pages: Math.ceil(total / parseInt(limit)),
+      },
     });
   } catch (error) {
     console.error('Get vehicles error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error'
+      message: 'Server error',
     });
   }
 });
@@ -401,19 +536,35 @@ router.put('/drivers/:id/verify', protect, async (req, res) => {
       });
     }
 
-    const driverId = req.params.id;
+    const driverId = parseInt(req.params.id);
 
-    await run('UPDATE drivers SET is_verified = 1 WHERE driver_id = ?', [driverId]);
+    // Verify driver exists before updating
+    const existing = await prisma.driver.findUnique({
+      where: { driver_id: driverId },
+      select: { driver_id: true },
+    });
+
+    if (!existing) {
+      return res.status(404).json({
+        success: false,
+        message: 'Driver not found',
+      });
+    }
+
+    await prisma.driver.update({
+      where: { driver_id: driverId },
+      data: { is_verified: true },
+    });
 
     res.json({
       success: true,
-      message: 'Driver verified successfully'
+      message: 'Driver verified successfully',
     });
   } catch (error) {
     console.error('Verify driver error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error'
+      message: 'Server error',
     });
   }
 });
@@ -430,19 +581,35 @@ router.put('/vehicles/:id/verify', protect, async (req, res) => {
       });
     }
 
-    const vehicleId = req.params.id;
+    const vehicleId = parseInt(req.params.id);
 
-    await run('UPDATE transport_vehicles SET is_verified = 1 WHERE vehicle_id = ?', [vehicleId]);
+    // Verify vehicle exists before updating
+    const existing = await prisma.transportVehicle.findUnique({
+      where: { vehicle_id: vehicleId },
+      select: { vehicle_id: true },
+    });
+
+    if (!existing) {
+      return res.status(404).json({
+        success: false,
+        message: 'Vehicle not found',
+      });
+    }
+
+    await prisma.transportVehicle.update({
+      where: { vehicle_id: vehicleId },
+      data: { is_verified: true },
+    });
 
     res.json({
       success: true,
-      message: 'Vehicle verified successfully'
+      message: 'Vehicle verified successfully',
     });
   } catch (error) {
     console.error('Verify vehicle error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error'
+      message: 'Server error',
     });
   }
 });
@@ -623,10 +790,8 @@ router.put('/bookings/:id', protect, async (req, res) => {
       });
     }
 
-    const bookingId = req.params.id;
+    const bookingId = parseInt(req.params.id);
 
-    // Only allow editing a limited safe subset.
-    // This prevents accidental schema-breaking writes.
     const {
       pickup_address,
       drop_address,
@@ -643,43 +808,31 @@ router.put('/bookings/:id', protect, async (req, res) => {
       final_price
     } = req.body || {};
 
-    const updateSql = `UPDATE bookings SET
-      pickup_address = COALESCE(?, pickup_address),
-      drop_address = COALESCE(?, drop_address),
-      pickup_city = COALESCE(?, pickup_city),
-      drop_city = COALESCE(?, drop_city),
-      goods_description = COALESCE(?, goods_description),
-      goods_type = COALESCE(?, goods_type),
-      goods_weight_kg = COALESCE(?, goods_weight_kg),
-      number_of_items = COALESCE(?, number_of_items),
-      fragile = COALESCE(?, fragile),
-      vehicle_type_required = COALESCE(?, vehicle_type_required),
-      estimated_distance_km = COALESCE(?, estimated_distance_km),
-      estimated_price = COALESCE(?, estimated_price),
-      final_price = COALESCE(?, final_price)
-    WHERE booking_id = ?`;
+    // Build update data, only including provided fields
+    const updateData = {};
+    if (pickup_address !== undefined) updateData.pickup_address = pickup_address;
+    if (drop_address !== undefined) updateData.drop_address = drop_address;
+    if (pickup_city !== undefined) updateData.pickup_city = pickup_city;
+    if (drop_city !== undefined) updateData.drop_city = drop_city;
+    if (goods_description !== undefined) updateData.goods_description = goods_description;
+    if (goods_type !== undefined) updateData.goods_type = goods_type;
+    if (goods_weight_kg !== undefined) updateData.goods_weight_kg = goods_weight_kg ? parseFloat(goods_weight_kg) : null;
+    if (number_of_items !== undefined) updateData.number_of_items = number_of_items ? parseInt(number_of_items) : null;
+    if (fragile !== undefined) updateData.fragile = fragile ? true : false;
+    if (vehicle_type_required !== undefined) updateData.vehicle_type_required = vehicle_type_required;
+    if (estimated_distance_km !== undefined) updateData.estimated_distance_km = estimated_distance_km ? parseFloat(estimated_distance_km) : null;
+    if (estimated_price !== undefined) updateData.estimated_price = estimated_price ? parseFloat(estimated_price) : null;
+    if (final_price !== undefined) updateData.final_price = final_price ? parseFloat(final_price) : null;
 
-    const result = await run(updateSql, [
-      pickup_address ?? null,
-      drop_address ?? null,
-      pickup_city ?? null,
-      drop_city ?? null,
-      goods_description ?? null,
-      goods_type ?? null,
-      goods_weight_kg ?? null,
-      number_of_items ?? null,
-      typeof fragile === 'boolean' ? (fragile ? 1 : 0) : fragile ?? null,
-      vehicle_type_required ?? null,
-      estimated_distance_km ?? null,
-      estimated_price ?? null,
-      final_price ?? null,
-      bookingId,
-    ]);
+    await prisma.booking.update({
+      where: { booking_id: bookingId },
+      data: updateData,
+    });
 
     res.json({
       success: true,
       message: 'Booking updated successfully',
-      data: { booking_id: bookingId, changes: result.changes }
+      data: { booking_id: bookingId },
     });
   } catch (error) {
     console.error('Update booking error:', error);
@@ -702,16 +855,18 @@ router.delete('/bookings/:id', protect, async (req, res) => {
       });
     }
 
-    const bookingId = req.params.id;
+    const bookingId = parseInt(req.params.id);
 
-    // Delete delivery record first if exists (to avoid FK issues in some SQLite setups)
-    await run('DELETE FROM deliveries WHERE booking_id = ?', [bookingId]);
-    const result = await run('DELETE FROM bookings WHERE booking_id = ?', [bookingId]);
+    // Prisma cascading deletes will handle related records
+    // (BookingEvent, BookingAssignment, Delivery are set to onDelete: Cascade)
+    await prisma.booking.delete({
+      where: { booking_id: bookingId },
+    });
 
     res.json({
       success: true,
       message: 'Booking deleted successfully',
-      data: { booking_id: bookingId, changes: result.changes }
+      data: { booking_id: bookingId },
     });
   } catch (error) {
     console.error('Delete booking error:', error);
@@ -734,7 +889,7 @@ router.patch('/bookings/:id/status', protect, async (req, res) => {
       });
     }
 
-    const bookingId = req.params.id;
+    const bookingId = parseInt(req.params.id);
     const { status } = req.body || {};
 
     if (!status) {
@@ -763,7 +918,10 @@ router.patch('/bookings/:id/status', protect, async (req, res) => {
       });
     }
 
-    await run('UPDATE bookings SET status = ? WHERE booking_id = ?', [status, bookingId]);
+    await prisma.booking.update({
+      where: { booking_id: bookingId },
+      data: { status },
+    });
 
     res.json({
       success: true,
@@ -796,7 +954,7 @@ router.post('/bookings/:id/assign-driver', protect, async (req, res) => {
       });
     }
 
-    const bookingId = req.params.id;
+    const bookingId = parseInt(req.params.id);
     const { driver_id } = req.body || {};
 
     if (!driver_id) {
@@ -806,8 +964,17 @@ router.post('/bookings/:id/assign-driver', protect, async (req, res) => {
       });
     }
 
+    const parsedDriverId = parseInt(driver_id);
+
     // Validate booking exists
-    const booking = await get('SELECT * FROM bookings WHERE booking_id = ?', [bookingId]);
+    const booking = await prisma.booking.findUnique({
+      where: { booking_id: bookingId },
+      select: {
+        booking_id: true,
+        driver_id: true,
+        status: true,
+      },
+    });
     if (!booking) {
       return res.status(404).json({
         success: false,
@@ -832,13 +999,18 @@ router.post('/bookings/:id/assign-driver', protect, async (req, res) => {
     }
 
     // Validate driver exists and is available
-    const driver = await get(
-      `SELECT d.*, u.first_name, u.last_name, u.phone
-       FROM drivers d
-       JOIN users u ON d.user_id = u.user_id
-       WHERE d.driver_id = ?`,
-      [driver_id]
-    );
+    const driver = await prisma.driver.findUnique({
+      where: { driver_id: parsedDriverId },
+      include: {
+        user: {
+          select: {
+            first_name: true,
+            last_name: true,
+            phone: true,
+          },
+        },
+      },
+    });
     if (!driver) {
       return res.status(404).json({
         success: false,
@@ -853,11 +1025,13 @@ router.post('/bookings/:id/assign-driver', protect, async (req, res) => {
     }
 
     // Check driver is not already assigned to another active booking
-    const activeBooking = await get(
-      `SELECT booking_id FROM bookings
-       WHERE driver_id = ? AND status NOT IN ('cancelled', 'completed', 'delivered')`,
-      [driver_id]
-    );
+    const activeBooking = await prisma.booking.findFirst({
+      where: {
+        driver_id: parsedDriverId,
+        status: { notIn: ['cancelled', 'completed', 'delivered'] },
+      },
+      select: { booking_id: true },
+    });
     if (activeBooking) {
       return res.status(400).json({
         success: false,
@@ -865,46 +1039,48 @@ router.post('/bookings/:id/assign-driver', protect, async (req, res) => {
       });
     }
 
-    // Execute assignment within a transaction
-    await transaction(async (tx) => {
+    // Execute assignment within a Prisma interactive transaction
+    await prisma.$transaction(async (tx) => {
       // 1. Update booking: set driver_id, status, driver_assigned_at
-      await tx.run(
-        `UPDATE bookings SET
-           driver_id = ?,
-           status = 'driver_assigned',
-           driver_assigned_at = CURRENT_TIMESTAMP
-         WHERE booking_id = ?`,
-        [driver_id, bookingId]
-      );
+      await tx.booking.update({
+        where: { booking_id: bookingId },
+        data: {
+          driver_id: parsedDriverId,
+          status: 'driver_assigned',
+          driver_assigned_at: new Date(),
+        },
+      });
 
       // 2. Mark driver as unavailable
-      await tx.run(
-        'UPDATE drivers SET is_available = 0 WHERE driver_id = ?',
-        [driver_id]
-      );
+      await tx.driver.update({
+        where: { driver_id: parsedDriverId },
+        data: { is_available: false },
+      });
 
       // 3. Insert booking_assignment record
-      await tx.run(
-        `INSERT INTO booking_assignments
-           (booking_id, assigned_driver_id, assigned_by_admin_id, assignment_status)
-         VALUES (?, ?, ?, 'active')`,
-        [bookingId, driver_id, req.user.user_id]
-      );
+      await tx.bookingAssignment.create({
+        data: {
+          booking_id: bookingId,
+          assigned_driver_id: parsedDriverId,
+          assigned_by_admin_id: req.user.user_id,
+          assignment_status: 'active',
+        },
+      });
 
       // 4. Update delivery record if exists
-      const delivery = await tx.get(
-        'SELECT delivery_id FROM deliveries WHERE booking_id = ?',
-        [bookingId]
-      );
+      const delivery = await tx.delivery.findUnique({
+        where: { booking_id: bookingId },
+        select: { delivery_id: true },
+      });
       if (delivery) {
-        await tx.run(
-          `UPDATE deliveries SET
-             driver_id = ?,
-             current_status = 'driver_assigned',
-             status_description = 'Driver assigned to booking'
-           WHERE booking_id = ?`,
-          [driver_id, bookingId]
-        );
+        await tx.delivery.update({
+          where: { booking_id: bookingId },
+          data: {
+            driver_id: parsedDriverId,
+            current_status: 'driver_assigned',
+            status_description: 'Driver assigned to booking',
+          },
+        });
       }
     });
 
@@ -912,10 +1088,10 @@ router.post('/bookings/:id/assign-driver', protect, async (req, res) => {
       success: true,
       message: 'Driver assigned successfully',
       data: {
-        booking_id: parseInt(bookingId),
-        driver_id: parseInt(driver_id),
-        driver_name: `${driver.first_name} ${driver.last_name}`,
-        driver_phone: driver.phone,
+        booking_id: bookingId,
+        driver_id: parsedDriverId,
+        driver_name: `${driver.user.first_name} ${driver.user.last_name}`,
+        driver_phone: driver.user.phone,
         status: 'driver_assigned'
       }
     });
@@ -947,7 +1123,7 @@ router.post('/bookings/:id/assign-vehicle', protect, async (req, res) => {
       });
     }
 
-    const bookingId = req.params.id;
+    const bookingId = parseInt(req.params.id);
     const { vehicle_id } = req.body || {};
 
     if (!vehicle_id) {
@@ -957,8 +1133,17 @@ router.post('/bookings/:id/assign-vehicle', protect, async (req, res) => {
       });
     }
 
+    const parsedVehicleId = parseInt(vehicle_id);
+
     // Validate booking exists
-    const booking = await get('SELECT * FROM bookings WHERE booking_id = ?', [bookingId]);
+    const booking = await prisma.booking.findUnique({
+      where: { booking_id: bookingId },
+      select: {
+        booking_id: true,
+        vehicle_id: true,
+        status: true,
+      },
+    });
     if (!booking) {
       return res.status(404).json({
         success: false,
@@ -983,10 +1168,16 @@ router.post('/bookings/:id/assign-vehicle', protect, async (req, res) => {
     }
 
     // Validate vehicle exists and is available
-    const vehicle = await get(
-      'SELECT * FROM transport_vehicles WHERE vehicle_id = ?',
-      [vehicle_id]
-    );
+    const vehicle = await prisma.transportVehicle.findUnique({
+      where: { vehicle_id: parsedVehicleId },
+      select: {
+        vehicle_id: true,
+        is_available: true,
+        vehicle_name: true,
+        vehicle_number: true,
+        vehicle_type: true,
+      },
+    });
     if (!vehicle) {
       return res.status(404).json({
         success: false,
@@ -1001,11 +1192,13 @@ router.post('/bookings/:id/assign-vehicle', protect, async (req, res) => {
     }
 
     // Check vehicle is not already assigned to another active booking
-    const activeBooking = await get(
-      `SELECT booking_id FROM bookings
-       WHERE vehicle_id = ? AND status NOT IN ('cancelled', 'completed', 'delivered')`,
-      [vehicle_id]
-    );
+    const activeBooking = await prisma.booking.findFirst({
+      where: {
+        vehicle_id: parsedVehicleId,
+        status: { notIn: ['cancelled', 'completed', 'delivered'] },
+      },
+      select: { booking_id: true },
+    });
     if (activeBooking) {
       return res.status(400).json({
         success: false,
@@ -1013,50 +1206,52 @@ router.post('/bookings/:id/assign-vehicle', protect, async (req, res) => {
       });
     }
 
-    // Execute assignment within a transaction
-    await transaction(async (tx) => {
+    // Execute assignment within a Prisma interactive transaction
+    await prisma.$transaction(async (tx) => {
       // 1. Update booking: set vehicle_id
-      await tx.run(
-        `UPDATE bookings SET vehicle_id = ? WHERE booking_id = ?`,
-        [vehicle_id, bookingId]
-      );
+      await tx.booking.update({
+        where: { booking_id: bookingId },
+        data: { vehicle_id: parsedVehicleId },
+      });
 
       // 2. Mark vehicle as unavailable
-      await tx.run(
-        "UPDATE transport_vehicles SET is_available = 0, current_status = 'on_trip' WHERE vehicle_id = ?",
-        [vehicle_id]
-      );
+      await tx.transportVehicle.update({
+        where: { vehicle_id: parsedVehicleId },
+        data: { is_available: false, current_status: 'on_trip' },
+      });
 
       // 3. Upsert booking_assignment with vehicle_id
       // Check if a booking_assignment record already exists (e.g., from driver assignment)
-      const existingAssignment = await tx.get(
-        'SELECT booking_assignment_id FROM booking_assignments WHERE booking_id = ?',
-        [bookingId]
-      );
+      const existingAssignment = await tx.bookingAssignment.findFirst({
+        where: { booking_id: bookingId },
+        select: { booking_assignment_id: true },
+      });
       if (existingAssignment) {
-        await tx.run(
-          'UPDATE booking_assignments SET assigned_vehicle_id = ? WHERE booking_id = ?',
-          [vehicle_id, bookingId]
-        );
+        await tx.bookingAssignment.update({
+          where: { booking_assignment_id: existingAssignment.booking_assignment_id },
+          data: { assigned_vehicle_id: parsedVehicleId },
+        });
       } else {
-        await tx.run(
-          `INSERT INTO booking_assignments
-             (booking_id, assigned_vehicle_id, assigned_by_admin_id, assignment_status)
-           VALUES (?, ?, ?, 'active')`,
-          [bookingId, vehicle_id, req.user.user_id]
-        );
+        await tx.bookingAssignment.create({
+          data: {
+            booking_id: bookingId,
+            assigned_vehicle_id: parsedVehicleId,
+            assigned_by_admin_id: req.user.user_id,
+            assignment_status: 'active',
+          },
+        });
       }
 
       // 4. Update delivery record if exists
-      const delivery = await tx.get(
-        'SELECT delivery_id FROM deliveries WHERE booking_id = ?',
-        [bookingId]
-      );
+      const delivery = await tx.delivery.findUnique({
+        where: { booking_id: bookingId },
+        select: { delivery_id: true },
+      });
       if (delivery) {
-        await tx.run(
-          'UPDATE deliveries SET vehicle_id = ? WHERE booking_id = ?',
-          [vehicle_id, bookingId]
-        );
+        await tx.delivery.update({
+          where: { booking_id: bookingId },
+          data: { vehicle_id: parsedVehicleId },
+        });
       }
     });
 
@@ -1064,19 +1259,19 @@ router.post('/bookings/:id/assign-vehicle', protect, async (req, res) => {
       success: true,
       message: 'Vehicle assigned successfully',
       data: {
-        booking_id: parseInt(bookingId),
-        vehicle_id: parseInt(vehicle_id),
+        booking_id: bookingId,
+        vehicle_id: parsedVehicleId,
         vehicle_name: vehicle.vehicle_name,
         vehicle_number: vehicle.vehicle_number,
-        vehicle_type: vehicle.vehicle_type
-      }
+        vehicle_type: vehicle.vehicle_type,
+      },
     });
 
   } catch (error) {
     console.error('Assign vehicle error:', error);
     res.status(500).json({
       success: false,
-      message: error.message || 'Server error assigning vehicle'
+      message: error.message || 'Server error assigning vehicle',
     });
   }
 });

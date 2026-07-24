@@ -1,6 +1,5 @@
 const express = require('express');
 const router = express.Router();
-const { db } = require('../config/database');
 
 // Search challans by vehicle number
 router.get('/search/:vehicleNumber', (req, res) => {
