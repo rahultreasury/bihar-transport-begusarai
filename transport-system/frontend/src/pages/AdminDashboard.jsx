@@ -163,13 +163,13 @@ function AdminDashboard() {
       activeKey={activeKey}
       onNav={(k) => setActiveKey(k)}
     >
-      <div className="space-y-6">
-        <div className="flex items-end justify-between">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">Admin Dashboard</h1>
-            <p className="text-sm text-muted mt-1">Welcome, {user?.full_name || user?.first_name || 'Admin'}.</p>
+      <div className="w-full max-w-full min-w-0 space-y-4 lg:space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2">
+          <div className="min-w-0">
+            <h1 className="text-xl lg:text-3xl font-bold tracking-tight">Admin Dashboard</h1>
+            <p className="text-xs lg:text-sm text-muted mt-1 truncate">Welcome, {user?.full_name || user?.first_name || 'Admin'}.</p>
           </div>
-          <div className="hidden md:flex items-center gap-3">
+          <div className="hidden md:flex items-center gap-3 shrink-0">
             <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl px-4 py-2">
               <div className="text-xs text-muted">Ops Mode</div>
               <div className="text-sm font-semibold">Enterprise</div>

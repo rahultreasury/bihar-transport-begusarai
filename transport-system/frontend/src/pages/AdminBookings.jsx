@@ -229,11 +229,10 @@ function AdminBookings() {
       key: 'booking_reference',
       header: 'Booking #',
       sortable: true,
-      width: 140,
       render: (r) => (
         <button
           onClick={() => openDrawer(r.booking_id)}
-          className="text-amber-600 dark:text-amber-400 font-semibold hover:underline text-left"
+          className="text-amber-600 dark:text-amber-400 font-semibold hover:underline text-left whitespace-nowrap"
           aria-label={`View booking ${r.booking_reference}`}
         >
           {r.booking_reference}
@@ -243,11 +242,10 @@ function AdminBookings() {
     {
       key: 'customer',
       header: 'Customer',
-      width: 170,
       render: (r) => {
         const name = `${r.customer_first_name || ''} ${r.customer_last_name || ''}`.trim();
         return (
-          <div>
+          <div className="whitespace-nowrap">
             <div className="font-medium text-text">{name || '—'}</div>
             <div className="text-[11px] text-muted">{r.customer_phone || '—'}</div>
           </div>
@@ -257,11 +255,10 @@ function AdminBookings() {
     {
       key: 'route',
       header: 'Route',
-      width: 180,
       render: (r) => (
-        <div className="flex items-center gap-1.5 text-sm">
+        <div className="flex items-center gap-1 text-sm whitespace-nowrap">
           <span className="font-medium">{r.pickup_city || '—'}</span>
-          <svg className="w-3.5 h-3.5 text-muted shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="w-3 h-3 text-muted shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
           </svg>
           <span className="font-medium">{r.drop_city || '—'}</span>
@@ -271,46 +268,32 @@ function AdminBookings() {
     {
       key: 'goods_type',
       header: 'Goods',
-      width: 120,
       render: (r) => (
-        <span className="text-sm text-muted">{r.goods_type || '—'}</span>
+        <span className="text-sm text-muted whitespace-nowrap">{r.goods_type || '—'}</span>
       )
     },
     {
       key: 'vehicle_number',
       header: 'Vehicle',
-      width: 130,
       render: (r) => (
-        <div>
+        <div className="whitespace-nowrap">
           <div className="text-sm font-medium">{r.vehicle_number || '—'}</div>
           {r.vehicle_name && <div className="text-[10px] text-muted">{r.vehicle_name}</div>}
         </div>
       )
     },
     {
-      key: 'driver',
-      header: 'Driver',
-      width: 100,
-      render: (r) => (
-        <span className="text-sm text-muted">
-          {r.driver_user_id ? `#${r.driver_user_id}` : '—'}
-        </span>
-      )
-    },
-    {
       key: 'status',
       header: 'Status',
       sortable: true,
-      width: 120,
       render: (r) => <StatusBadge status={r.status} size="sm" />
     },
     {
       key: 'final_price',
       header: 'Price',
       sortable: true,
-      width: 100,
       render: (r) => (
-        <span className="font-semibold text-sm">
+        <span className="font-semibold text-sm whitespace-nowrap">
           {r.final_price != null ? `₹${Number(r.final_price).toLocaleString()}` : '—'}
         </span>
       )
@@ -319,9 +302,8 @@ function AdminBookings() {
       key: 'created_at',
       header: 'Created',
       sortable: true,
-      width: 120,
       render: (r) => (
-        <span className="text-sm text-muted">
+        <span className="text-sm text-muted whitespace-nowrap">
           {r.created_at ? new Date(r.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
         </span>
       )
@@ -329,7 +311,6 @@ function AdminBookings() {
     {
       key: 'actions',
       header: 'Actions',
-      width: 160,
       render: (r) => (
         <div className="flex items-center gap-1">
           <button

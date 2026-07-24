@@ -1,10 +1,6 @@
 // ============================================================
-// Bihar Transport Begusarai - Prisma Schema (Phase 1)
+// Bihar Transport Begusarai - Prisma Schema (Phase 2)
 // Target Database: PostgreSQL
-// Source: SQLite schema from config/database.js
-// ============================================================
-// This schema is a 1:1 mapping of the existing SQLite schema.
-// It is NOT yet used by the application. SQLite remains active.
 // ============================================================
 
 generator client {
@@ -111,33 +107,93 @@ model User {
 
 // --- Drivers ---
 model Driver {
-  driver_id        Int       @id @default(autoincrement())
-  user_id          Int
-  license_number   String    @unique
-  license_expiry   String    // Stored as TEXT in SQLite; kept as String for now
-  aadhar_number    String?   @unique
-  date_of_birth    String?
-  gender           String?
-  experience_years Int?      @default(0)
-  profile_image    String?
-  is_available     Boolean?  @default(true)
-  is_verified      Boolean?  @default(false)
-  rating           Float?    @default(0)
-  total_deliveries Int?      @default(0)
-  created_at       DateTime? @default(now())
-  updated_at       DateTime? @default(now())
+  driver_id         Int       @id @default(autoincrement())
+  driver_code       String    @unique    // Auto-generated: DRV000001
+  user_id           Int
+  driver_name       String
+  mobile            String
+  alternate_mobile  String?
+  address           String?
+  city              String?
+  state             String?   @default("Bihar")
+  pincode           String?
+  license_number    String    @unique
+  license_expiry    String
+  license_class     String?   // Vehicle type / license class (e.g. HTV, LMV)
+  joining_date      String?
+  status            String?   @default("available") // available, on_trip, inactive
+  profile_image     String?
+  is_available      Boolean?  @default(true)
+  is_verified       Boolean?  @default(false)
+  rating            Float?    @default(0)
+  total_deliveries  Int?      @default(0)
+  total_advance     Float?    @default(0)  // Total advance given
+  total_paid        Float?    @default(0)  // Total amount paid
+  total_expenses    Float?    @default(0)  // Total expenses
+  current_balance   Float?    @default(0)  // Running balance
+  created_at        DateTime? @default(now())
+  updated_at        DateTime? @default(now())
 
   // Relations
-  user                 User               @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+  user                 User                @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
   transportVehicles    TransportVehicle[]
   bookings             Booking[]
   deliveries           Delivery[]
   bookingAssignments   BookingAssignment[] @relation("assigned_driver")
+  transactions         DriverTransaction[]
+  timelineEvents       DriverTimeline[]
 
+  @@index([driver_code], name: "idx_drivers_code")
   @@index([user_id], name: "idx_drivers_user")
   @@index([license_number], name: "idx_drivers_license")
-  @@index([is_available], name: "idx_drivers_available")
+  @@index([status], name: "idx_drivers_status")
   @@map("drivers")
+}
+
+// --- Driver Financial Transactions (Ledger) ---
+model DriverTransaction {
+  transaction_id   Int       @id @default(autoincrement())
+  driver_id        Int
+  transaction_type String    // advance, trip_payment, fuel_expense, toll_expense, other_expense, recovery
+  amount           Float
+  balance_before   Float
+  balance_after    Float
+  description      String?
+  reference_type   String?   // booking, vehicle, etc.
+  reference_id     Int?
+  payment_mode     String?   // cash, bank, upi, etc.
+  transaction_date DateTime? @default(now())
+  recorded_by      Int?      // admin_id
+  notes            String?
+  created_at       DateTime? @default(now())
+
+  // Relations
+  driver Driver @relation(fields: [driver_id], references: [driver_id], onDelete: Cascade)
+
+  @@index([driver_id], name: "idx_driver_tx_driver")
+  @@index([transaction_type], name: "idx_driver_tx_type")
+  @@index([transaction_date], name: "idx_driver_tx_date")
+  @@map("driver_transactions")
+}
+
+// --- Driver Timeline / Activity Log ---
+model DriverTimeline {
+  event_id      Int       @id @default(autoincrement())
+  driver_id     Int
+  event_type    String    // driver_created, vehicle_assigned, trip_started, trip_completed, advance_given, fuel_added, payment_recorded, status_changed
+  description   String
+  reference_type String?  // booking, vehicle, transaction
+  reference_id  Int?
+  metadata      String?   // JSON payload for additional context
+  created_at    DateTime? @default(now())
+
+  // Relations
+  driver Driver @relation(fields: [driver_id], references: [driver_id], onDelete: Cascade)
+
+  @@index([driver_id], name: "idx_driver_timeline_driver")
+  @@index([event_type], name: "idx_driver_timeline_event")
+  @@index([created_at], name: "idx_driver_timeline_date")
+  @@map("driver_timeline")
 }
 
 // --- Transport Vehicles ---

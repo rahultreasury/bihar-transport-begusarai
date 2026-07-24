@@ -19,10 +19,10 @@ const BookingFilters = React.memo(function BookingFilters({
   const searchInputRef = useRef(null);
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 w-full max-w-full">
       {/* Search + Filter Toggle Row */}
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1 max-w-md">
+      <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+        <div className="relative flex-1 min-w-[200px] max-w-full lg:max-w-md">
           <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
             <svg className="w-4 h-4 text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />

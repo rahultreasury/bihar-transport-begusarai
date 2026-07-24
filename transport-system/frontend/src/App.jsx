@@ -24,6 +24,8 @@ const TrackBooking = lazy(() => import('./pages/TrackBooking'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const AdminBookings = lazy(() => import('./pages/AdminBookings'));
 const AdminLogin = lazy(() => import('./pages/AdminLogin'));
+const AdminDrivers = lazy(() => import('./pages/AdminDrivers'));
+const AdminDriverProfile = lazy(() => import('./pages/AdminDriverProfile'));
 const VehicleSearch = lazy(() => import('./pages/VehicleSearch'));
 const LicenseSearch = lazy(() => import('./pages/LicenseSearch'));
 const ChallanSearch = lazy(() => import('./pages/ChallanSearch'));
@@ -134,6 +136,22 @@ function App() {
                 element={
                   user?.role === 'admin' || user?.role === 'super_admin' 
                     ? <Suspense fallback={<PageLoader label="Loading Bookings..." />}><AdminBookings /></Suspense>
+                    : <Navigate to="/" />
+                } 
+              />
+              <Route 
+                path="/admin/drivers" 
+                element={
+                  user?.role === 'admin' || user?.role === 'super_admin' 
+                    ? <Suspense fallback={<PageLoader label="Loading Drivers..." />}><AdminDrivers /></Suspense>
+                    : <Navigate to="/" />
+                } 
+              />
+              <Route 
+                path="/admin/drivers/:id" 
+                element={
+                  user?.role === 'admin' || user?.role === 'super_admin' 
+                    ? <Suspense fallback={<PageLoader label="Loading Driver Profile..." />}><AdminDriverProfile /></Suspense>
                     : <Navigate to="/" />
                 } 
               />

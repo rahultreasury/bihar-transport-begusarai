@@ -54,6 +54,7 @@ const mapsRoutes = require('./routes/maps');
 const bookingMvpRoutes = require('./routes/bookingMvpRoutes');
 const webhookRoutes = require('./routes/webhookRoutes');
 const testEmailRoutes = require('./routes/testEmailRoutes');
+const driverManagementRoutes = require('./routes/driverManagementRoutes');
 const emailService = require('./services/emailService');
 
 const app = express();
@@ -132,6 +133,9 @@ app.use('/api/licenses', bookingLimiter, licenseRoutes);
 app.use('/api/challans', bookingLimiter, challanRoutes);
 app.use('/api/appointments', bookingLimiter, appointmentRoutes);
 app.use('/api', mapsRoutes);
+
+// Driver Management Routes (admin-limited and admin-checked internally)
+app.use('/api/admin/drivers', adminLimiter, driverManagementRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

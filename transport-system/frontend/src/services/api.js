@@ -89,7 +89,22 @@ export const adminAPI = {
   toggleUserStatus: (id, isActive) => api.put(`/admin/users/${id}/status`, { is_active: isActive }),
   assignDriver: (bookingId, driverId) => api.post(`/admin/bookings/${bookingId}/assign-driver`, { driver_id: driverId }),
   getAvailableDrivers: () => api.get('/admin/drivers', { params: { status: 'available', limit: 100 } }),
-  assignVehicle: (bookingId, vehicleId) => api.post(`/admin/bookings/${bookingId}/assign-vehicle`, { vehicle_id: vehicleId })
+  assignVehicle: (bookingId, vehicleId) => api.post(`/admin/bookings/${bookingId}/assign-vehicle`, { vehicle_id: vehicleId }),
+
+  // Driver Management Module
+  getDriverStats: () => api.get('/admin/drivers/stats'),
+  getDriver: (id) => api.get(`/admin/drivers/${id}`),
+  createDriver: (data) => api.post('/admin/drivers', data),
+  updateDriver: (id, data) => api.put(`/admin/drivers/${id}`, data),
+  deleteDriver: (id) => api.delete(`/admin/drivers/${id}`),
+  toggleDriverStatus: (id, status) => api.patch(`/admin/drivers/${id}/status`, { status }),
+  getDriverTrips: (id, params) => api.get(`/admin/drivers/${id}/trips`, { params }),
+  getDriverFinance: (id, params) => api.get(`/admin/drivers/${id}/finance`, { params }),
+  addDriverAdvance: (id, data) => api.post(`/admin/drivers/${id}/advance`, data),
+  addDriverPayment: (id, data) => api.post(`/admin/drivers/${id}/payment`, data),
+  addDriverExpense: (id, data) => api.post(`/admin/drivers/${id}/expense`, data),
+  getDriverVehicles: (id) => api.get(`/admin/drivers/${id}/vehicles`),
+  getDriverTimeline: (id) => api.get(`/admin/drivers/${id}/timeline`),
 };
 
 // Delivery APIs

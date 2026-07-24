@@ -60,15 +60,15 @@ function PremiumTable({
   return (
     <div
       ref={tableRef}
-      className="rounded-2xl border border-border/60 overflow-hidden"
+      className="rounded-2xl border border-border/60 overflow-hidden w-full max-w-full"
       tabIndex={0}
       onKeyDown={onKeyDown}
       role="grid"
       aria-label="Data table"
       aria-multiselectable={!!hasSelection}
     >
-      <div className="overflow-x-auto">
-        <table className="min-w-full text-sm">
+      <div className="overflow-x-auto w-full max-w-full">
+        <table className="w-full text-sm min-w-0" style={{ tableLayout: 'auto' }}>
           {/* Sticky Header */}
           <thead className="bg-tableHead sticky top-0 z-10">
             <tr>
