@@ -2,8 +2,8 @@ const express = require('express');
 const { body, validationResult } = require('express-validator');
 const bcrypt = require('bcryptjs');
 
-const { query, run, get, transaction } = require('../config/database');
 const { sendBookingNotification } = require('../services/emailService');
+const { prisma } = require('../config/prisma');
 
 const router = express.Router();
 
@@ -57,6 +57,7 @@ router.post('/booking', validateMvpBooking, async (req, res) => {
   }
 
   try {
+    console.log("STEP 1 - Request reached");
     if (process.env.NODE_ENV === 'development') {
       console.log('[booking][incoming]', {
         pickup: req.body.pickup,
@@ -76,102 +77,85 @@ router.post('/booking', validateMvpBooking, async (req, res) => {
 const mobile = req.body.mobile;
     const placeholderEmail = `guest_${mobile}@btb.local`;
 
-    // Lookup or create guest user
+    // Lookup or create guest user (Prisma/PostgreSQL)
     let user;
-    user = await get('SELECT user_id FROM users WHERE phone = ?', [mobile]);
+    user = await prisma.user.findFirst({
+      where: { phone: mobile },
+      select: { user_id: true }
+    });
     if (!user) {
       const salt = await bcrypt.genSalt(10);
       const password_hash = await bcrypt.hash(`guest_${mobile}`, salt);
-      const result = await run(
-        `INSERT INTO users (first_name, last_name, email, phone, password_hash, role)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        ['Guest', 'Customer', placeholderEmail, mobile, password_hash, 'customer']
-      );
-      user = { user_id: result.lastID };
+      const newUser = await prisma.user.create({
+        data: {
+          first_name: 'Guest',
+          last_name: 'Customer',
+          email: placeholderEmail,
+          phone: mobile,
+          password_hash,
+          role: 'customer',
+          is_active: true,
+        },
+        select: { user_id: true }
+      });
+      user = { user_id: newUser.user_id };
     }
 
-    // Booking reference will be generated after INSERT using the auto-generated booking_id.
-
-    // Insert booking into SQLite
     const estimated_distance_km = Number(req.body.distance);
     const estimated_price = Number(req.body.price);
 
-    const bookingSql = `INSERT INTO bookings (
-        booking_reference,
-        user_id,
-        pickup_location,
-        pickup_address,
-        pickup_city,
-        pickup_state,
-        pickup_pincode,
-        pickup_date,
-        pickup_time,
-        drop_location,
-        drop_address,
-        drop_city,
-        drop_state,
-        drop_pincode,
-        goods_description,
-        goods_type,
-        goods_weight_kg,
-        goods_volume,
-        number_of_items,
-        fragile,
-        vehicle_type_required,
-        estimated_distance_km,
-        estimated_price,
-        final_price,
-        status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) `;
+    console.log("STEP 2 - Before Prisma transaction");
+    const { booking_id, booking_reference } = await prisma.$transaction(async (tx) => {
+      const booking = await tx.booking.create({
+        data: {
+          booking_reference: 'TEMP',
+          user_id: user.user_id,
+          pickup_location: req.body.pickup,
+          pickup_address: null,
+          pickup_city: req.body.pickup,
+          pickup_state: 'Bihar',
+          pickup_pincode: null,
+          pickup_date: req.body.pickupDate || null,
+          pickup_time: req.body.pickupTime || '00:00:00',
+          drop_location: req.body.drop,
+          drop_address: null,
+          drop_city: req.body.drop,
+          drop_state: 'Bihar',
+          drop_pincode: null,
+          goods_description: req.body.goodsType,
+          goods_type: req.body.goodsType,
+          goods_weight_kg: null,
+          goods_volume: null,
+          number_of_items: 1,
+          fragile: false,
+          vehicle_type_required: req.body.vehicle,
+          estimated_distance_km,
+          estimated_price,
+          final_price: estimated_price,
+          status: 'pending',
+        },
+      });
 
-const bookingValues = [
-      'TEMP', // placeholder — will be updated after INSERT with real booking_reference
-      user.user_id,
-      req.body.pickup,
-      null,
-      req.body.pickup,
-      'Bihar',
-      null,
-      req.body.pickupDate || null,
-      req.body.pickupTime || '00:00:00',
-      req.body.drop,
-      null,
-      req.body.drop,
-      'Bihar',
-      null,
-      req.body.goodsType,
-      req.body.goodsType,
-      null,
-      null,
-      1,
-      0,
-      req.body.vehicle,
-      estimated_distance_km,
-      estimated_price,
-      estimated_price,
-      'pending',
-    ];
-
-    if (process.env.NODE_ENV === 'development') {
-      const columnsList = (bookingSql.match(/INSERT INTO bookings \([\s\S]*?\) VALUES/) || [''])[0];
-      const columnsCount = (bookingSql.match(/\n\s*[A-Za-z_][A-Za-z0-9_]*\s*,?/g) || []).length;
-      const placeholdersCount = (bookingSql.match(/\?/g) || []).length;
-      console.log('[booking][debug]', { columnsCount, placeholdersCount, valuesCount: bookingValues.length });
-    }
-
-const { booking_id, booking_reference } = await transaction(async (tx) => {
-      const bookingResult = await tx.run(bookingSql, bookingValues);
-      const bid = bookingResult.lastID;
       const year = new Date().getFullYear();
-      const ref = `BTB${year}${String(bid).padStart(5, '0')}`;
-      await tx.run('UPDATE bookings SET booking_reference = ? WHERE booking_id = ?', [ref, bid]);
-      await tx.run(
-        'INSERT INTO deliveries (booking_id, current_status, status_description) VALUES (?, ?, ?)',
-        [bid, 'booking_confirmed', 'Booking confirmed, waiting for driver assignment']
-      );
-      return { booking_id: bid, booking_reference: ref };
+      const ref = `BTB${year}${String(booking.booking_id).padStart(5, '0')}`;
+
+      await tx.booking.update({
+        where: { booking_id: booking.booking_id },
+        data: { booking_reference: ref },
+      });
+
+      await tx.delivery.create({
+        data: {
+          booking_id: booking.booking_id,
+          current_status: 'booking_confirmed',
+          status_description: 'Booking confirmed, waiting for driver assignment',
+        },
+      });
+
+      return { booking_id: booking.booking_id, booking_reference: ref };
     });
 
+    console.log("STEP 3 - Prisma transaction successful");
     console.log('Booking saved with id:', booking_id);
 
     const bookingPayload = {
@@ -202,6 +186,7 @@ const { booking_id, booking_reference } = await transaction(async (tx) => {
 
   } catch (err) {
     // Do not expose stack traces
+    console.error("PRISMA ERROR:", err);
     console.error('[booking][error]', err);
 
     return res.status(500).json({

@@ -8,6 +8,7 @@ const rateLimit = require('express-rate-limit');
 const morgan = require('morgan');
 const { testConnection } = require('./config/database');
 const { validateEnv } = require('./utils/env');
+const { testPrismaConnection, prisma } = require('./config/prisma');
 
 const { NotFoundError } = require('./utils/AppError');
 const errorHandler = require('./middleware/errorHandler');
@@ -136,6 +137,32 @@ app.use('/api', mapsRoutes);
 // Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({ success: true, status: 'ok', message: 'Bihar Transport Begusarai API is running', data: null, timestamp: new Date().toISOString() });
+});
+
+// PostgreSQL health check via Prisma (Phase 4.1)
+app.get('/api/health/db', async (req, res, next) => {
+  try {
+    const result = await testPrismaConnection();
+    if (result.success) {
+      res.json({
+        success: true,
+        status: 'ok',
+        message: result.message,
+        data: result.data,
+        timestamp: new Date().toISOString(),
+      });
+    } else {
+      res.status(503).json({
+        success: false,
+        status: 'error',
+        message: result.message,
+        data: null,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  } catch (err) {
+    next(err);
+  }
 });
 
 // WhatsApp Webhook Events

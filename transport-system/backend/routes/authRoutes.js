@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const { query, run, get } = require('../config/database');
 const { generateToken, protect } = require('../middleware/auth');
 const { body, validationResult } = require('express-validator');
+const { prisma } = require('../config/prisma');
 
 // @route   POST /api/auth/signup
 // @desc    Register a new user (customer)
@@ -26,11 +27,16 @@ router.post('/signup', [
 
     const { first_name, last_name, email, phone, password, address, city, state, pincode } = req.body;
 
-    // Check if user exists
-    const existingUser = await get(
-      'SELECT user_id FROM users WHERE email = ? OR phone = ?',
-      [email, phone]
-    );
+    // Check if user exists (Prisma/PostgreSQL)
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: email },
+          { phone: phone }
+        ]
+      },
+      select: { user_id: true }
+    });
 
     if (existingUser) {
       return res.status(400).json({
@@ -43,19 +49,31 @@ router.post('/signup', [
     const salt = await bcrypt.genSalt(10);
     const password_hash = await bcrypt.hash(password, salt);
 
-    // Insert user
-    const result = await run(
-      'INSERT INTO users (first_name, last_name, email, phone, password_hash, address, city, state, pincode, role) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [first_name, last_name, email, phone, password_hash, address || null, city || 'Bihar', state || 'Bihar', pincode || null, 'customer']
-    );
+    // Insert user (Prisma/PostgreSQL)
+    const newUser = await prisma.user.create({
+      data: {
+        first_name,
+        last_name,
+        email,
+        phone,
+        password_hash,
+        address: address || null,
+        city: city || 'Bihar',
+        state: state || 'Bihar',
+        pincode: pincode || null,
+        role: 'customer',
+        is_active: true,
+      },
+      select: { user_id: true }
+    });
 
-    const token = generateToken(result.lastID);
+    const token = generateToken(newUser.user_id);
 
     res.status(201).json({
       success: true,
       message: 'User registered successfully',
       data: {
-        user_id: result.lastID,
+        user_id: newUser.user_id,
         first_name,
         last_name,
         email,
@@ -99,11 +117,16 @@ router.post('/driver-signup', [
 
     const { first_name, last_name, email, phone, password, license_number, license_expiry, aadhar_number, date_of_birth, gender, address, city, experience_years } = req.body;
 
-    // Check if user exists
-    const existingUser = await get(
-      'SELECT user_id FROM users WHERE email = ? OR phone = ?',
-      [email, phone]
-    );
+    // Check if user exists (Prisma/PostgreSQL)
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: email },
+          { phone: phone }
+        ]
+      },
+      select: { user_id: true }
+    });
 
     if (existingUser) {
       return res.status(400).json({
@@ -116,15 +139,26 @@ router.post('/driver-signup', [
     const salt = await bcrypt.genSalt(10);
     const password_hash = await bcrypt.hash(password, salt);
 
-    // Insert user as driver
-    const userResult = await run(
-      'INSERT INTO users (first_name, last_name, email, phone, password_hash, address, city, state, role) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [first_name, last_name, email, phone, password_hash, address || null, city || 'Bihar', 'Bihar', 'driver']
-    );
+    // Insert user as driver (Prisma/PostgreSQL)
+    const newUser = await prisma.user.create({
+      data: {
+        first_name,
+        last_name,
+        email,
+        phone,
+        password_hash,
+        address: address || null,
+        city: city || 'Bihar',
+        state: 'Bihar',
+        role: 'driver',
+        is_active: true,
+      },
+      select: { user_id: true }
+    });
 
-    const user_id = userResult.lastID;
+    const user_id = newUser.user_id;
 
-    // Insert driver details
+    // Insert driver details (still uses SQLite — drivers module not migrated yet)
     await run(
       'INSERT INTO drivers (user_id, license_number, license_expiry, aadhar_number, date_of_birth, gender, experience_years) VALUES (?, ?, ?, ?, ?, ?, ?)',
       [user_id, license_number, license_expiry, aadhar_number, date_of_birth, gender, experience_years || 0]
@@ -172,8 +206,10 @@ router.post('/login', [
 
     const { email, password } = req.body;
 
-    // Find user
-    const user = await get('SELECT * FROM users WHERE email = ?', [email]);
+    // Find user (Prisma/PostgreSQL)
+    const user = await prisma.user.findUnique({
+      where: { email: email }
+    });
 
     if (!user) {
       return res.status(401).json({
@@ -201,7 +237,7 @@ router.post('/login', [
 
     const token = generateToken(user.user_id);
 
-    // Get driver details if user is driver
+    // Get driver details if user is driver (still uses SQLite)
     let driverData = null;
     if (user.role === 'driver') {
       driverData = await get('SELECT * FROM drivers WHERE user_id = ?', [user.user_id]);
@@ -237,10 +273,22 @@ router.post('/login', [
 // @access  Private
 router.get('/me', protect, async (req, res) => {
   try {
-    const user = await get(
-      'SELECT user_id, first_name, last_name, email, phone, address, city, state, pincode, role, created_at FROM users WHERE user_id = ?',
-      [req.user.user_id]
-    );
+    const user = await prisma.user.findUnique({
+      where: { user_id: req.user.user_id },
+      select: {
+        user_id: true,
+        first_name: true,
+        last_name: true,
+        email: true,
+        phone: true,
+        address: true,
+        city: true,
+        state: true,
+        pincode: true,
+        role: true,
+        created_at: true,
+      }
+    });
 
     if (!user) {
       return res.status(404).json({
@@ -249,7 +297,7 @@ router.get('/me', protect, async (req, res) => {
       });
     }
 
-    // Get driver details if user is driver
+    // Get driver details if user is driver (still uses SQLite)
     let driverData = null;
     if (user.role === 'driver') {
       driverData = await get('SELECT * FROM drivers WHERE user_id = ?', [user.user_id]);
@@ -278,10 +326,19 @@ router.put('/profile', protect, async (req, res) => {
   try {
     const { first_name, last_name, phone, address, city, state, pincode } = req.body;
 
-    await run(
-      'UPDATE users SET first_name = ?, last_name = ?, phone = ?, address = ?, city = ?, state = ?, pincode = ? WHERE user_id = ?',
-      [first_name, last_name, phone, address, city, state, pincode, req.user.user_id]
-    );
+    // Update user (Prisma/PostgreSQL)
+    await prisma.user.update({
+      where: { user_id: req.user.user_id },
+      data: {
+        first_name,
+        last_name,
+        phone,
+        address,
+        city,
+        state,
+        pincode,
+      }
+    });
 
     res.json({
       success: true,
@@ -314,8 +371,10 @@ router.post('/admin-login', [
 
     const { email, password } = req.body;
 
-    // Find admin
-    const admin = await get('SELECT * FROM admins WHERE email = ?', [email]);
+    // Find admin (Prisma/PostgreSQL)
+    const admin = await prisma.admin.findUnique({
+      where: { email: email }
+    });
 
     if (!admin) {
       return res.status(401).json({

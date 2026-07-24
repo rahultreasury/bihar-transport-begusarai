@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { query, run, get, transaction } = require('../config/database');
 const { protect } = require('../middleware/auth');
+const { prisma } = require('../config/prisma');
 
 // @route   GET /api/admin/dashboard
 // @desc    Get admin dashboard stats
@@ -16,7 +17,9 @@ router.get('/dashboard', protect, async (req, res) => {
     }
 
     // Get total counts
-    const totalUsers = await get('SELECT COUNT(*) as count FROM users WHERE role = ?', ['customer']);
+    const totalUsers = await prisma.user.count({
+      where: { role: 'customer' }
+    });
     const totalDrivers = await get('SELECT COUNT(*) as count FROM drivers', []);
     const totalVehicles = await get('SELECT COUNT(*) as count FROM transport_vehicles', []);
     const totalBookings = await get('SELECT COUNT(*) as count FROM bookings', []);
@@ -57,7 +60,7 @@ router.get('/dashboard', protect, async (req, res) => {
       success: true,
       data: {
         stats: {
-          totalUsers: totalUsers.count,
+          totalUsers,
           totalDrivers: totalDrivers.count,
           totalVehicles: totalVehicles.count,
           totalBookings: totalBookings.count,
@@ -93,29 +96,44 @@ router.get('/users', protect, async (req, res) => {
     }
 
     const { page = 1, limit = 20, search = '' } = req.query;
-    const offset = (page - 1) * limit;
+    const skip = (page - 1) * limit;
+    const take = parseInt(limit);
 
-    let whereClause = "WHERE role = 'customer'";
-    let params = [];
+    // Build Prisma where clause
+    const where = {
+      role: 'customer',
+    };
 
     if (search) {
-      whereClause += " AND (first_name LIKE ? OR last_name LIKE ? OR email LIKE ? OR phone LIKE ?)";
-      const searchTerm = `%${search}%`;
-      params.push(searchTerm, searchTerm, searchTerm, searchTerm);
+      where.OR = [
+        { first_name: { contains: search } },
+        { last_name: { contains: search } },
+        { email: { contains: search } },
+        { phone: { contains: search } },
+      ];
     }
 
-    const users = await query(
-      `SELECT user_id, first_name, last_name, email, phone, address, city, state, is_active, created_at 
-       FROM users ${whereClause} 
-       ORDER BY created_at DESC 
-       LIMIT ? OFFSET ?`,
-      [...params, parseInt(limit), offset]
-    );
-
-    const total = await get(
-      `SELECT COUNT(*) as count FROM users WHERE role = 'customer'`,
-      []
-    );
+    const [users, total] = await Promise.all([
+      prisma.user.findMany({
+        where,
+        select: {
+          user_id: true,
+          first_name: true,
+          last_name: true,
+          email: true,
+          phone: true,
+          address: true,
+          city: true,
+          state: true,
+          is_active: true,
+          created_at: true,
+        },
+        orderBy: { created_at: 'desc' },
+        skip,
+        take,
+      }),
+      prisma.user.count({ where }),
+    ]);
 
     res.json({
       success: true,
@@ -123,8 +141,8 @@ router.get('/users', protect, async (req, res) => {
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
-        total: total.count,
-        pages: Math.ceil(total.count / limit)
+        total: total,
+        pages: Math.ceil(total / parseInt(limit))
       }
     });
   } catch (error) {
@@ -382,10 +400,13 @@ router.put('/users/:id/status', protect, async (req, res) => {
       });
     }
 
-    const userId = req.params.id;
+    const userId = parseInt(req.params.id);
     const { is_active } = req.body;
 
-    await run('UPDATE users SET is_active = ? WHERE user_id = ?', [is_active ? 1 : 0, userId]);
+    await prisma.user.update({
+      where: { user_id: userId },
+      data: { is_active: is_active ? true : false }
+    });
 
     res.json({
       success: true,

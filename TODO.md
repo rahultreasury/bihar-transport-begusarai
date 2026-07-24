@@ -1,94 +1,40 @@
-# Prisma / PostgreSQL Setup — Phase 1
+# Phase 4.2 — Booking Creation → PostgreSQL via Prisma ✅ COMPLETED
 
-## Completed ✓
+## Scope
+Migrate ONLY booking creation flow (2 endpoints) from SQLite to Prisma/PostgreSQL.
 
-### Phase 1: Prisma Configuration (PostgreSQL)
-- [x] Analyzed complete SQLite schema from `database.js` (8 tables)
-- [x] Identified all tables, primary keys, foreign keys, indexes, and relationships
-- [x] Installed Prisma v5.22.0 and @prisma/client v5.22.0
-- [x] Added `DATABASE_URL` placeholder to `.env`
-- [x] Created `prisma/schema.prisma` with exact 1:1 mapping of SQLite schema
-- [x] Defined 8 enums for string-type enum fields
-- [x] Preserved all indexes (18 total)
-- [x] Preserved edge columns: `booking_number`, `pollution_certificate`, `pollution_expiry`
-- [x] Prisma schema validates successfully (`prisma validate` ✅)
-- [x] Prisma Client generates successfully (`prisma generate` ✅)
-- [x] SQLite remains the active production database
-- [x] No migrations run, no data imported, no production code modified
+## Files Modified
 
-### Verification
-- [x] Schema compiles — PASS
-- [x] Client generates — PASS
-- [x] SQLite connection preserved — PASS
-- [x] Application continues to use SQLite — PASS
-- [x] No routes/controllers/services/frontend modified — PASS
+### 1. `transport-system/backend/routes/bookingMvpRoutes.js` — POST /api/booking
+- [x] Removed unused SQLite `{ query, run, get, transaction }` import
+- [x] Replaced SQLite `transaction()` block with Prisma `$transaction()` for booking + delivery creation
+- [x] Preserved booking_reference format: `BTB{year}{zero-padded-id}`
+- [x] Preserved response: `{ success, bookingReference, message }` with status 201
+- [x] Preserved email notification (fire-and-forget)
+- [x] Prisma transaction rolls back completely on failure
 
----
+### 2. `transport-system/backend/routes/bookingRoutes.js` — POST /api/bookings/create
+- [x] Added `const { prisma } = require('../config/prisma');` import
+- [x] Replaced SQLite `run()` for booking + delivery with Prisma `$transaction()`
+- [x] Preserved booking_reference format: `BTB-{timestamp}{random}`
+- [x] Preserved response: `{ success, message, data: { booking_id, booking_reference, ... } }` with status 201
+- [x] Validated all field mappings match Prisma schema types (Boolean vs Int, null handling)
+- [x] Prisma transaction rolls back completely on failure
 
-# SEO Resource Pages Implementation
+## Verification Results
+- Server starts successfully
+- Both route modules load without errors
+- Ready for manual testing
 
-## Completed ✓
+## SQLite Queries Removed
+1. `bookingMvpRoutes.js`: Removed raw SQL insert template string, parameters array, debug block, and `transaction()` callback with `tx.run()` calls
+2. `bookingRoutes.js`: Removed `run()` for booking INSERT and `run()` for delivery INSERT
 
-### Phase 1: Data Layer
-- [x] `states.js` — All 28 Indian states with full SEO metadata, FAQ, service descriptions
-- [x] `cities.js` — Top 100+ Indian cities with industry data, keywords, nearby cities
-- [x] `routes.js` — 196 transport routes with distance, estimated hours, state info
-- [x] `vehicles.js` — Vehicle types with pricing data
-- [x] `index.js` — Central resource export hub
+## Prisma Queries Added
+1. `bookingMvpRoutes.js`: `prisma.$transaction()` containing `tx.booking.create()`, `tx.booking.update()`, `tx.delivery.create()`
+2. `bookingRoutes.js`: `prisma.$transaction()` containing `tx.booking.create()`, `tx.delivery.create()`
 
-### Phase 2: Shared Components
-- [x] `SEOHead.jsx` — Portable SEO meta tag injector (react-helmet-async)
-- [x] `StateCard.jsx` — Reusable state card component
-- [x] `CityCard.jsx` — Reusable city card component
-- [x] `RouteCard.jsx` — Reusable route card with pricing estimates
-
-### Phase 3: Dynamic Pages
-- [x] `ServicesListing.jsx` — `/transport-services` — Browse all 28 states
-- [x] `StatePage.jsx` — `/transport-services/:stateSlug` — Full state page with highlights, services, cities, routes, FAQ, JSON-LD
-- [x] `CityPage.jsx` — `/cities/:citySlug` — City page with industries, routes, nearby cities
-- [x] `RoutePage.jsx` — `/routes/:routeSlug` — Route detail with pricing table, related routes
-
-### Phase 4: Integration
-- [x] `main.jsx` — Already wrapped with HelmetProvider
-- [x] `App.jsx` — Added lazy imports and route definitions for all resource pages
-
-### Phase 5: Verification
-- [x] Build passes (`✓ built in 3.25s`)
-- [x] Code-split chunks generated (CityPage: 5.72kB, StatePage: 6.99kB, RoutePage: 7.34kB)
-- [x] Data chunks properly separated (states: 29.64kB, cities: 30.76kB)
-- [x] No existing functionality modified
-
-## Architecture
-
-```
-src/
-├── data/resources/
-│   ├── index.js          # Central export hub
-│   ├── states.js         # 28 states with SEO metadata
-│   ├── cities.js         # 100+ cities with SEO metadata
-│   ├── routes.js         # 196 transport routes
-│   └── vehicles.js       # Vehicle pricing data
-├── components/
-│   ├── seo/
-│   │   └── SEOHead.jsx   # Reusable SEO meta tag injector
-│   └── resources/
-│       ├── StateCard.jsx  # State card component
-│       ├── CityCard.jsx   # City card component
-│       └── RouteCard.jsx  # Route card with pricing estimates
-└── pages/resources/
-    ├── ServicesListing.jsx  # /transport-services
-    ├── StatePage.jsx        # /transport-services/:stateSlug
-    ├── CityPage.jsx         # /cities/:citySlug
-    └── RoutePage.jsx        # /routes/:routeSlug
-```
-
-## SEO Features
-- Meta titles, descriptions, keywords per page
-- Open Graph / Twitter Card support
-- JSON-LD structured data (StatePage)
-- Canonical URLs
-- Breadcrumb navigation
-- Proper heading hierarchy (h1 → h2 → h3)
-- Descriptive aria-labels on interactive elements
-- Optimized for long-tail search queries
+## PASS/FAIL
+- [ ] PASS — Verified after manual testing
+- [ ] FAIL — Report issues
 

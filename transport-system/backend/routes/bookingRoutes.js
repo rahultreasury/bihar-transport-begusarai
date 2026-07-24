@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { query, run, get } = require('../config/database');
+const { prisma } = require('../config/prisma');
 
 // Legacy helpers for backward compatible request/response fields
 const generateBookingRef = () => {
@@ -114,33 +115,54 @@ router.post('/create', protect, [
     // Generate booking reference
     const booking_reference = generateBookingRef();
 
-    // Insert booking
-    const result = await run(
-      `INSERT INTO bookings (
-        booking_reference, user_id, pickup_location, pickup_address, pickup_city, pickup_state, pickup_pincode,
-        pickup_date, pickup_time, drop_location, drop_address, drop_city, drop_state, drop_pincode,
-        goods_description, goods_type, goods_weight_kg, goods_volume, number_of_items, fragile,
-        vehicle_type_required, estimated_distance_km, estimated_price, final_price, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        booking_reference, req.user.user_id, pickup_location, pickup_address, pickup_city, pickup_state || 'Bihar', pickup_pincode,
-        pickup_date, pickup_time, drop_location, drop_address, drop_city, drop_state || 'Bihar', drop_pincode,
-        goods_description, goods_type, goods_weight_kg, goods_volume, number_of_items || 1, fragile ? 1 : 0,
-        vehicle_type_required, estimated_distance_km, estimated_price, estimated_price, 'pending'
-      ]
-    );
+    // Insert booking and delivery into PostgreSQL via Prisma transaction
+    const result = await prisma.$transaction(async (tx) => {
+      const booking = await tx.booking.create({
+        data: {
+          booking_reference,
+          user_id: req.user.user_id,
+          pickup_location,
+          pickup_address: pickup_address || null,
+          pickup_city,
+          pickup_state: pickup_state || 'Bihar',
+          pickup_pincode: pickup_pincode || null,
+          pickup_date,
+          pickup_time,
+          drop_location,
+          drop_address: drop_address || null,
+          drop_city,
+          drop_state: drop_state || 'Bihar',
+          drop_pincode: drop_pincode || null,
+          goods_description,
+          goods_type: goods_type || null,
+          goods_weight_kg: goods_weight_kg ? Number(goods_weight_kg) : null,
+          goods_volume: goods_volume ? Number(goods_volume) : null,
+          number_of_items: number_of_items || 1,
+          fragile: fragile ? true : false,
+          vehicle_type_required,
+          estimated_distance_km,
+          estimated_price,
+          final_price: estimated_price,
+          status: 'pending',
+        },
+      });
 
-    // Create delivery record
-    await run(
-      'INSERT INTO deliveries (booking_id, current_status, status_description) VALUES (?, ?, ?)',
-      [result.lastID, 'booking_confirmed', 'Booking confirmed, waiting for driver assignment']
-    );
+      await tx.delivery.create({
+        data: {
+          booking_id: booking.booking_id,
+          current_status: 'booking_confirmed',
+          status_description: 'Booking confirmed, waiting for driver assignment',
+        },
+      });
+
+      return booking;
+    });
 
     res.status(201).json({
       success: true,
       message: 'Booking created successfully',
       data: {
-        booking_id: result.lastID,
+        booking_id: result.booking_id,
         booking_reference,
         estimated_distance_km,
         estimated_price,
