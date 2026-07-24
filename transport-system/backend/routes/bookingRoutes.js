@@ -120,6 +120,7 @@ router.post('/create', protect, [
       const booking = await tx.booking.create({
         data: {
           booking_reference,
+          booking_number: booking_reference,
           user_id: req.user.user_id,
           pickup_location,
           pickup_address: pickup_address || null,

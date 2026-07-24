@@ -57,7 +57,6 @@ router.post('/booking', validateMvpBooking, async (req, res) => {
   }
 
   try {
-    console.log("STEP 1 - Request reached");
     if (process.env.NODE_ENV === 'development') {
       console.log('[booking][incoming]', {
         pickup: req.body.pickup,
@@ -104,7 +103,6 @@ const mobile = req.body.mobile;
     const estimated_distance_km = Number(req.body.distance);
     const estimated_price = Number(req.body.price);
 
-    console.log("STEP 2 - Before Prisma transaction");
     const { booking_id, booking_reference } = await prisma.$transaction(async (tx) => {
       const booking = await tx.booking.create({
         data: {
@@ -141,7 +139,7 @@ const mobile = req.body.mobile;
 
       await tx.booking.update({
         where: { booking_id: booking.booking_id },
-        data: { booking_reference: ref },
+        data: { booking_reference: ref, booking_number: ref },
       });
 
       await tx.delivery.create({
@@ -155,7 +153,6 @@ const mobile = req.body.mobile;
       return { booking_id: booking.booking_id, booking_reference: ref };
     });
 
-    console.log("STEP 3 - Prisma transaction successful");
     console.log('Booking saved with id:', booking_id);
 
     const bookingPayload = {
@@ -186,7 +183,6 @@ const mobile = req.body.mobile;
 
   } catch (err) {
     // Do not expose stack traces
-    console.error("PRISMA ERROR:", err);
     console.error('[booking][error]', err);
 
     return res.status(500).json({
