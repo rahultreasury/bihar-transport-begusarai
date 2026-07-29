@@ -55,9 +55,9 @@ const blogPosts = [
   },
   {
     id: 6,
-    title: 'Bihar Transport Begusarai: 25+ Years of Logistics Excellence',
+    title: 'Bihar Transport: 25+ Years of Logistics Excellence',
     excerpt: 'The story of Bihar Transport — from a small local business to a trusted Pan India logistics partner serving thousands of customers.',
-    slug: 'bihar-transport-begusarai-history',
+    slug: 'bihar-transport-history',
     date: '2023-12-15',
     category: 'Company',
     readTime: '5 min read',
@@ -69,8 +69,8 @@ export default function Blog() {
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
     itemListElement: [
-      { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://bihartransport.com/' },
-      { '@type': 'ListItem', position: 2, name: 'Blog', item: 'https://bihartransport.com/blog' },
+      { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://bihartransport.in/' },
+      { '@type': 'ListItem', position: 2, name: 'Blog', item: 'https://bihartransport.in/blog' },
     ],
   };
 
@@ -79,7 +79,7 @@ export default function Blog() {
     '@type': 'Blog',
     name: 'Bihar Transport Blog',
     description: 'Transport and logistics guides, tips, and industry insights from Bihar Transport.',
-    url: 'https://bihartransport.com/blog',
+    url: 'https://bihartransport.in/blog',
   };
 
   return (
@@ -88,7 +88,7 @@ export default function Blog() {
         title="Transport & Logistics Blog"
         description="Expert guides, tips, and insights on goods transport, truck booking, logistics across India. Stay updated with Bihar Transport Blog."
         keywords="transport blog, logistics blog, goods transport tips, truck booking guide, Bihar Transport blog"
-        canonical="https://bihartransport.com/blog"
+        canonical="https://bihartransport.in/blog"
         schema={[breadcrumbSchema, blogSchema]}
       />
 

@@ -1,6 +1,8 @@
 // ============================================================
-// Bihar Transport Begusarai - Prisma Schema (Phase 2)
+// Bihar Transport Begusarai - Prisma Schema (Phase 3)
 // Target Database: PostgreSQL
+// Includes Transport Partner Module (Partners, Trucks, Ledger,
+// Payments, Settlements, Documents, Driver Assignments)
 // ============================================================
 
 generator client {
@@ -75,6 +77,55 @@ enum AssignmentStatus {
 }
 
 // ============================================================
+// PARTNER MODULE ENUMS
+// ============================================================
+
+enum PartnerStatus {
+  active
+  inactive
+  suspended
+}
+
+enum TruckStatus {
+  available
+  on_trip
+  maintenance
+  off_road
+}
+
+enum LedgerTransactionType {
+  booking_income
+  commission
+  fuel_advance
+  driver_advance
+  toll
+  repair
+  penalty
+  bonus
+  cash
+  online_transfer
+  other_expense
+}
+
+enum SettlementStatus {
+  pending
+  paid
+  partially_paid
+  cancelled
+  locked
+}
+
+enum PartnerDocumentType {
+  gst
+  pan
+  aadhaar
+  rc
+  insurance
+  bank_details
+  other
+}
+
+// ============================================================
 // TABLES
 // ============================================================
 
@@ -117,8 +168,9 @@ model Driver {
   city              String?
   state             String?   @default("Bihar")
   pincode           String?
-  license_number    String    @unique
-  license_expiry    String
+  partner_id        Int?                  // Current partner assignment (nullable for unassigned drivers)
+  license_number    String?
+  license_expiry    String?
   license_class     String?   // Vehicle type / license class (e.g. HTV, LMV)
   joining_date      String?
   status            String?   @default("available") // available, on_trip, inactive
@@ -131,22 +183,30 @@ model Driver {
   total_paid        Float?    @default(0)  // Total amount paid
   total_expenses    Float?    @default(0)  // Total expenses
   current_balance   Float?    @default(0)  // Running balance
+  performance_rating Float?   @default(0)  // Partner's performance rating
   created_at        DateTime? @default(now())
   updated_at        DateTime? @default(now())
 
   // Relations
   user                 User                @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+  currentPartner       Partner?            @relation("current_partner_drivers", fields: [partner_id], references: [partner_id], onDelete: SetNull)
   transportVehicles    TransportVehicle[]
   bookings             Booking[]
   deliveries           Delivery[]
   bookingAssignments   BookingAssignment[] @relation("assigned_driver")
   transactions         DriverTransaction[]
   timelineEvents       DriverTimeline[]
+  driverAssignments    DriverAssignment[]  @relation("assigned_driver_history")
 
   @@index([driver_code], name: "idx_drivers_code")
   @@index([user_id], name: "idx_drivers_user")
+  @@index([partner_id], name: "idx_drivers_partner")
   @@index([license_number], name: "idx_drivers_license")
   @@index([status], name: "idx_drivers_status")
+  @@index([mobile], name: "idx_drivers_mobile")
+  @@index([alternate_mobile], name: "idx_drivers_alt_mobile")
+  @@index([city], name: "idx_drivers_city")
+  @@index([state], name: "idx_drivers_state")
   @@map("drivers")
 }
 
@@ -196,15 +256,17 @@ model DriverTimeline {
   @@map("driver_timeline")
 }
 
-// --- Transport Vehicles ---
+// --- Transport Vehicles (kept for backward compatibility, linked to partners) ---
 model TransportVehicle {
   vehicle_id           Int           @id @default(autoincrement())
   driver_id            Int?
+  partner_id           Int?          // Owner partner (who owns this truck)
   vehicle_number       String        @unique
   vehicle_type         String        // ENUM stored as TEXT in SQLite
   vehicle_name         String?
   capacity_kg          Float?
   capacity_volume      Float?
+  body_type            String?       // Open body, closed body, container, etc.
   vehicle_make         String?
   vehicle_model        String?
   manufacturing_year   Int?
@@ -225,12 +287,14 @@ model TransportVehicle {
   updated_at           DateTime?     @default(now())
 
   // Relations
-  driver              Driver?     @relation(fields: [driver_id], references: [driver_id], onDelete: SetNull)
+  driver              Driver?         @relation(fields: [driver_id], references: [driver_id], onDelete: SetNull)
+  ownerPartner        Partner?        @relation("partner_vehicles", fields: [partner_id], references: [partner_id], onDelete: SetNull)
   bookings            Booking[]
   deliveries          Delivery[]
   bookingAssignments  BookingAssignment[] @relation("assigned_vehicle")
 
   @@index([driver_id], name: "idx_vehicles_driver")
+  @@index([partner_id], name: "idx_vehicles_partner")
   @@index([vehicle_number], name: "idx_vehicles_number")
   @@index([vehicle_type], name: "idx_vehicles_type")
   @@index([is_available], name: "idx_vehicles_available")
@@ -245,6 +309,23 @@ model Booking {
   user_id               Int
   driver_id             Int?
   vehicle_id            Int?
+  partner_id            Int?                  // Assigned transport partner
+
+  // Snapshot data (immutable - preserves historical accuracy)
+  partner_name_snapshot   String?             // Partner name at time of booking
+  driver_name_snapshot    String?             // Driver name at time of booking
+  truck_number_snapshot   String?             // Truck number at time of booking
+  mobile_snapshot         String?             // Contact mobile at time of booking
+
+  // Commission fields
+  commission_percentage Float?    @default(0) // Commission % for this booking
+  commission_amount     Float?    @default(0) // Calculated commission amount
+  commission_type       String?   @default("percentage") // "percentage" or "fixed"
+
+  // Settlement fields
+  settlement_status     String?   @default("pending") // pending, settled, locked
+  settlement_id         Int?                          // FK to settlement
+
   pickup_location       String
   pickup_address        String?
   pickup_city           String
@@ -275,20 +356,25 @@ model Booking {
   pickup_completed_at   DateTime?
   delivered_at          DateTime?
 
-  // Relations
+// Relations
   user               User              @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
   driver             Driver?           @relation(fields: [driver_id], references: [driver_id], onDelete: SetNull)
   vehicle            TransportVehicle? @relation(fields: [vehicle_id], references: [vehicle_id], onDelete: SetNull)
+  partner            Partner?          @relation(fields: [partner_id], references: [partner_id], onDelete: SetNull)
+  bookingSettlement  Settlement?       @relation(fields: [settlement_id], references: [settlement_id], onDelete: SetNull)
   delivery           Delivery?
   bookingEvents      BookingEvent[]
   bookingAssignments BookingAssignment[]
+  ledgerEntries      PartnerLedger[] @relation("ledger_entries")
 
   @@index([user_id], name: "idx_bookings_user")
   @@index([driver_id], name: "idx_bookings_driver")
+  @@index([partner_id], name: "idx_bookings_partner")
   @@index([booking_reference], name: "idx_bookings_reference")
   @@index([status], name: "idx_bookings_status")
   @@index([pickup_date], name: "idx_bookings_date")
   @@index([booking_number], name: "idx_bookings_booking_number")
+  @@index([settlement_id], name: "idx_bookings_settlement")
   @@map("bookings")
 }
 
@@ -380,8 +466,206 @@ model BookingAssignment {
 
   @@index([booking_id], name: "idx_booking_assignments_booking_id")
   @@index([assigned_driver_id], name: "idx_booking_assignments_driver_id")
-  @@index([assigned_vehicle_id], name: "idx_booking_assignments_vehicle_id")
+@@index([assigned_vehicle_id], name: "idx_booking_assignments_vehicle_id")
   @@index([created_at], name: "idx_booking_assignments_created_at")
   @@map("booking_assignments")
+}
+
+// ============================================================
+// TRANSPORT PARTNER MODULE
+// ============================================================
+
+// --- Transport Partners ---
+model Partner {
+  partner_id        Int          @id @default(autoincrement())
+  partner_code      String       @unique    // Auto-generated: PRT000001
+  partner_name      String
+  owner_name        String
+  company_name      String?
+  mobile            String
+  alternate_mobile  String?
+  city              String?
+  state             String?      @default("Bihar")
+  gst_number        String?
+  pan_number        String?
+  bank_account      String?
+  bank_ifsc         String?
+  bank_name         String?
+  upi_id            String?
+  address           String?
+  status            PartnerStatus @default(active)
+  notes             String?
+  commission_percentage Float?   @default(10) // Default 10% commission
+  commission_type   String?      @default("percentage") // "percentage" or "fixed"
+  fixed_commission  Float?       @default(0) // Fixed commission amount if type is "fixed"
+  is_active         Boolean?     @default(true)
+  created_at        DateTime?    @default(now())
+  updated_at        DateTime?    @default(now())
+  deleted_at        DateTime?    // Soft delete
+
+  // Relations
+  trucks            TransportVehicle[]  @relation("partner_vehicles")
+  drivers           Driver[]            @relation("current_partner_drivers")
+  bookings          Booking[]
+  ledgerEntries     PartnerLedger[]
+  payments          PartnerPayment[]
+  settlements       Settlement[]
+  documents         PartnerDocument[]
+  driverAssignments DriverAssignment[]  @relation("partner_assignments")
+
+  @@index([partner_code], name: "idx_partner_code")
+  @@index([mobile], name: "idx_partner_mobile")
+  @@index([status], name: "idx_partner_status")
+  @@index([city], name: "idx_partner_city")
+  @@index([state], name: "idx_partner_state")
+  @@index([is_active], name: "idx_partner_active")
+  @@map("partners")
+}
+
+// --- Partner Driver Assignments (history) ---
+model DriverAssignment {
+  assignment_id     Int       @id @default(autoincrement())
+  driver_id         Int
+  partner_id        Int
+  assigned_by       Int?      // Admin ID who assigned
+  assigned_at       DateTime? @default(now())
+  unassigned_at     DateTime? // When driver was removed from this partner
+  status            String?   @default("active") // active, inactive
+  notes             String?
+  created_at        DateTime? @default(now())
+
+  // Relations
+  driver  Driver  @relation("assigned_driver_history", fields: [driver_id], references: [driver_id], onDelete: Cascade)
+  partner Partner @relation("partner_assignments", fields: [partner_id], references: [partner_id], onDelete: Cascade)
+
+  @@index([driver_id], name: "idx_drv_assign_driver")
+  @@index([partner_id], name: "idx_drv_assign_partner")
+  @@index([status], name: "idx_drv_assign_status")
+  @@map("driver_assignments")
+}
+
+// --- Partner Ledger (immutable accounting) ---
+model PartnerLedger {
+  ledger_id         Int                  @id @default(autoincrement())
+  partner_id        Int
+  booking_id        Int?                 // Optional link to booking
+  transaction_id    String               @unique // Auto-generated: LED-YYYYMMDD-XXXXX
+  transaction_type  LedgerTransactionType
+  date              DateTime?            @default(now())
+  description       String?
+  debit             Float?               @default(0)
+  credit            Float?               @default(0)
+  running_balance   Float                @default(0) // Calculated running balance
+  payment_mode      String?              // cash, bank, upi, cheque
+  remarks           String?
+  reference_number  String?              // Cheque number, transaction ref, etc.
+  created_by        Int?                 // Admin ID who created this entry
+  is_reversal       Boolean?             @default(false) // True if this is a reversal entry
+  reversal_of       String?              // transaction_id of the original entry being reversed
+  created_at        DateTime?             @default(now())
+
+// Relations
+  partner Partner @relation(fields: [partner_id], references: [partner_id], onDelete: Cascade)
+  booking Booking? @relation("ledger_entries", fields: [booking_id], references: [booking_id], onDelete: SetNull)
+
+  @@index([partner_id], name: "idx_ledger_partner")
+  @@index([booking_id], name: "idx_ledger_booking")
+  @@index([transaction_type], name: "idx_ledger_type")
+  @@index([date], name: "idx_ledger_date")
+  @@index([transaction_id], name: "idx_ledger_txn_id")
+  @@index([created_at], name: "idx_ledger_created")
+  @@map("partner_ledger")
+}
+
+// --- Partner Payments ---
+model PartnerPayment {
+  payment_id        Int       @id @default(autoincrement())
+  payment_number    String    @unique    // Auto-generated: PAY-YYYYMMDD-XXXXX
+  partner_id        Int
+  amount            Float
+  payment_method    String    // cash, bank_transfer, upi, cheque
+  reference_number  String?   // Transaction ref, cheque number, UPI ref
+  date              DateTime? @default(now())
+  created_by        Int?      // Admin ID
+  status            String?   @default("pending") // pending, paid, partially_paid, cancelled
+  remarks           String?
+  settlement_id     Int?      // Optional link to settlement
+  created_at        DateTime? @default(now())
+  updated_at        DateTime? @default(now())
+
+  // Relations
+  partner    Partner    @relation(fields: [partner_id], references: [partner_id], onDelete: Cascade)
+  settlement Settlement? @relation(fields: [settlement_id], references: [settlement_id], onDelete: SetNull)
+
+  @@index([partner_id], name: "idx_payment_partner")
+  @@index([payment_number], name: "idx_payment_number")
+  @@index([status], name: "idx_payment_status")
+  @@index([date], name: "idx_payment_date")
+  @@map("partner_payments")
+}
+
+// --- Monthly Settlements ---
+model Settlement {
+  settlement_id     Int              @id @default(autoincrement())
+  settlement_number String           @unique // Auto-generated: STL-YYYYMM-XXXXX
+  partner_id        Int
+  month             Int              // 1-12
+  year              Int              // e.g. 2026
+  total_bookings    Int?             @default(0)
+  gross_revenue     Float?           @default(0)
+  commission        Float?           @default(0)
+  fuel_advance      Float?           @default(0)
+  driver_advance    Float?           @default(0)
+  repair_amount     Float?           @default(0)
+  toll_amount       Float?           @default(0)
+  penalty_amount    Float?           @default(0)
+  bonus_amount      Float?           @default(0)
+  other_expenses    Float?           @default(0)
+  net_payable       Float?           @default(0) // gross_revenue - commission - all advances
+  amount_paid       Float?           @default(0)
+  balance_due       Float?           @default(0)
+  status            SettlementStatus @default(pending)
+  locked_at         DateTime?        // When settlement was locked
+  settled_at        DateTime?        // When fully settled
+  notes             String?
+  pdf_url           String?          // Path to generated PDF
+  created_at        DateTime?        @default(now())
+  updated_at        DateTime?        @default(now())
+
+  // Relations
+  partner  Partner          @relation(fields: [partner_id], references: [partner_id], onDelete: Cascade)
+  bookings Booking[]
+  payments PartnerPayment[]
+
+  @@index([partner_id], name: "idx_settlement_partner")
+  @@index([settlement_number], name: "idx_settlement_number")
+  @@index([month, year], name: "idx_settlement_month_year")
+  @@index([status], name: "idx_settlement_status")
+  @@map("settlements")
+}
+
+// --- Partner Documents ---
+model PartnerDocument {
+  document_id   Int                  @id @default(autoincrement())
+  partner_id    Int
+  document_type PartnerDocumentType
+  document_name String
+  file_url      String
+  file_size     Int?                 // Size in bytes
+  mime_type     String?
+  expiry_date   DateTime?            // For insurance, RC, etc.
+  is_verified   Boolean?             @default(false)
+  notes         String?
+  uploaded_by   Int?                 // Admin ID
+  created_at    DateTime?            @default(now())
+  updated_at    DateTime?            @default(now())
+
+  // Relations
+  partner Partner @relation(fields: [partner_id], references: [partner_id], onDelete: Cascade)
+
+  @@index([partner_id], name: "idx_doc_partner")
+  @@index([document_type], name: "idx_doc_type")
+  @@index([expiry_date], name: "idx_doc_expiry")
+  @@map("partner_documents")
 }
 

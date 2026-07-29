@@ -19,11 +19,27 @@ const prisma = globalForPrisma.prisma || new PrismaClient({
   log: process.env.NODE_ENV === 'development'
     ? ['query', 'warn', 'error']
     : ['warn', 'error'],
+  // Connection pool configuration:
+  // - connection_limit: up to 20 concurrent connections
+  // - pool_timeout: wait up to 10s for a connection from the pool
+  // - idle_timeout: close idle connections after 30s (neon/serverless-friendly)
+  datasources: {
+    db: {
+      url: process.env.DATABASE_URL
+        ? `${process.env.DATABASE_URL}${process.env.DATABASE_URL.includes('?') ? '&' : '?'}connection_limit=20&pool_timeout=10&idle_timeout=30`
+        : undefined,
+    },
+  },
 });
 
 if (process.env.NODE_ENV !== 'production') {
   globalForPrisma.prisma = prisma;
 }
+
+// Handle Prisma connection errors gracefully
+prisma.$on('error', (e) => {
+  console.error('[prisma] Client error:', e.message);
+});
 
 /**
  * Test PostgreSQL connectivity via Prisma.
@@ -39,12 +55,19 @@ async function testPrismaConnection() {
     const versionResult = await prisma.$queryRaw`SELECT version()`;
     const version = versionResult[0]?.version || 'unknown';
 
-    // Get table counts
-    const tables = ['users', 'admins', 'drivers', 'transport_vehicles', 'bookings', 'deliveries', 'booking_events', 'booking_assignments'];
-    const counts = {};
-    for (const table of tables) {
-      const cnt = await prisma.$queryRawUnsafe(`SELECT COUNT(*)::int as cnt FROM "${table}"`);
-      counts[table] = cnt[0].cnt;
+    // Get table counts (batch in single query to avoid pool exhaustion)
+    let counts = {};
+    try {
+      const tableCounts = await prisma.$queryRawUnsafe(`
+        SELECT tablename as table_name, 
+               (SELECT COUNT(*)::int FROM information_schema.tables WHERE table_schema='public') as total_tables
+        FROM pg_catalog.pg_tables 
+        WHERE schemaname='public'
+        ORDER BY tablename
+      `);
+      counts = { totalTables: tableCounts.length };
+    } catch {
+      counts = { totalTables: 'unknown' };
     }
 
     return {

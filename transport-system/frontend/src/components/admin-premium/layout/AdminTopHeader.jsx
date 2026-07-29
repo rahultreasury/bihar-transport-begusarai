@@ -1,12 +1,12 @@
-import { useMemo } from 'react';
-import { useAdminTheme } from '../theme/useAdminTheme';
+import { useMemo, useContext } from 'react';
+import { AuthContext } from '../../../App';
 
 export default function AdminTopHeader() {
-  const { toggleTheme, themeLabel } = useAdminTheme();
+  const { user } = useContext(AuthContext) || {};
+  const adminName = user?.full_name || user?.first_name || 'Admin';
 
   const quickItems = useMemo(
     () => [
-      { label: 'Search', value: '⌘K' },
       { label: 'Notifications', value: '3' },
       { label: 'Support', value: '24/7' }
     ],
@@ -31,16 +31,16 @@ export default function AdminTopHeader() {
             ))}
           </div>
 
-          <button
-            onClick={toggleTheme}
-            className="rounded-xl lg:rounded-2xl border border-border/60 bg-card/40 px-2.5 lg:px-4 py-1.5 lg:py-2 text-xs lg:text-sm font-medium hover:bg-hover/60 transition whitespace-nowrap"
-            aria-label="Toggle theme"
-          >
-            <span className="hidden sm:inline">{themeLabel}</span>
-            <span className="sm:hidden">{themeLabel === 'Dark' ? '🌙' : '☀️'}</span>
-          </button>
-
-          <div className="h-8 w-8 lg:h-10 lg:w-10 rounded-xl lg:rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 shrink-0" />
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted hidden sm:block">{adminName}</span>
+            <div
+              className="h-8 w-8 lg:h-10 lg:w-10 rounded-xl lg:rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 shrink-0 flex items-center justify-center text-white text-sm font-bold"
+              title={adminName}
+              aria-label={`Logged in as ${adminName}`}
+            >
+              {adminName.charAt(0).toUpperCase()}
+            </div>
+          </div>
         </div>
       </div>
     </header>

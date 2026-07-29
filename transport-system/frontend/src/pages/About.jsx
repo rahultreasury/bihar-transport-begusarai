@@ -61,7 +61,7 @@ function About() {
   ];
 
   const timeline = [
-    { year: '1998', title: 'Company Founded', description: 'Bihar Transport Begusarai was established' },
+    { year: '1998', title: 'Company Founded', description: 'Bihar Transport was established' },
     { year: '2005', title: 'Fleet Expansion', description: 'Expanded to 20+ vehicles' },
     { year: '2010', title: 'Technology Integration', description: 'Introduced GPS tracking system' },
     { year: '2015', title: 'Pan Bihar Coverage', description: 'Services expanded across Bihar' },
@@ -151,7 +151,7 @@ function About() {
               </h2>
               <div className="space-y-6 text-lg text-gray-700 leading-relaxed">
                 <p className="text-xl">
-                  Bihar Transport Begusarai has been a pioneer in the logistics and transportation industry 
+                  Bihar Transport has been a pioneer in the logistics and transportation industry 
                   in Bihar since 1998. Based in Begusarai, we have grown to become one of the most trusted 
                   names in goods transportation across the region.
                 </p>

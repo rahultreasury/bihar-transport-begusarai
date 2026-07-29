@@ -99,11 +99,11 @@ router.post('/driver-signup', [
   body('email').isEmail().withMessage('Valid email is required'),
   body('phone').matches(/^[0-9]{10}$/).withMessage('Valid 10-digit phone required'),
   body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
-  body('license_number').notEmpty().withMessage('License number is required'),
-  body('license_expiry').notEmpty().withMessage('License expiry date is required'),
-  body('aadhar_number').matches(/^[0-9]{12}$/).withMessage('Valid 12-digit Aadhar required'),
-  body('date_of_birth').notEmpty().withMessage('Date of birth is required'),
-  body('gender').isIn(['male', 'female', 'other']).withMessage('Valid gender required')
+  body('aadhar_number').optional({ values: 'falsy' }).matches(/^[0-9]{12}$/).withMessage('Valid 12-digit Aadhar required'),
+  body('date_of_birth').optional({ values: 'falsy' }).notEmpty().withMessage('Date of birth is required'),
+  body('gender').optional({ values: 'falsy' }).isIn(['male', 'female', 'other']).withMessage('Valid gender required'),
+  body('license_number').optional({ values: 'falsy' }).notEmpty().withMessage('License number is required'),
+  body('license_expiry').optional({ values: 'falsy' }).notEmpty().withMessage('License expiry date is required')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -161,11 +161,13 @@ router.post('/driver-signup', [
     await prisma.driver.create({
       data: {
         user_id,
-        license_number,
-        license_expiry,
-        aadhar_number,
-        date_of_birth,
-        gender,
+        driver_name: `${first_name} ${last_name}`,
+        mobile: phone,
+        license_number: license_number || null,
+        license_expiry: license_expiry || null,
+        aadhar_number: aadhar_number || null,
+        date_of_birth: date_of_birth || null,
+        gender: gender || null,
         experience_years: experience_years || 0,
       },
     });

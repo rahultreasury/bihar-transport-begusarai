@@ -2,9 +2,45 @@
  * DriverRepository
  * Database-only repository for driver-related operations.
  * Uses Prisma Client for all database operations.
+ * Simplified for market driver model (brokerage - no employee finance tracking).
  */
 
 const { prisma } = require('../config/prisma');
+
+/**
+ * Retry wrapper for transient Prisma connection errors (e.g., pool exhausted, Closed connection).
+ * Retries up to 3 times with 500ms delay between attempts.
+ * Only retries on PrismaClientKnownRequestError or errors containing 'Closed' in the message.
+ */
+async function withRetry(fn, context = 'operation', maxRetries = 3) {
+  let lastError;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      const isPrismaConnectionError =
+        err?.code === 'P1001' || // Can't reach database
+        err?.code === 'P1002' || // Timed out
+        err?.code === 'P2024' || // Connection pool timeout
+        (err?.message && (
+          err.message.includes('Closed') ||
+          err.message.includes('Can\'t reach database') ||
+          err.message.includes('Connection pool') ||
+          err.message.includes('timed out') ||
+          err.message.includes('already disconnected')
+        ));
+
+      if (isPrismaConnectionError && attempt < maxRetries) {
+        console.warn(`[prisma] ${context} attempt ${attempt}/${maxRetries} failed: ${err.message}. Retrying in 500ms...`);
+        await new Promise(r => setTimeout(r, 500));
+      } else {
+        throw err;
+      }
+    }
+  }
+  throw lastError;
+}
 
 class DriverRepository {
   /**
@@ -36,7 +72,7 @@ class DriverRepository {
   }
 
   /**
-   * Find driver by ID with full relations.
+   * Find driver by ID with relations.
    */
   async findById(driverId, tx = null) {
     const client = tx || prisma;
@@ -73,7 +109,6 @@ class DriverRepository {
         _count: {
           select: {
             bookings: true,
-            transactions: true,
             timelineEvents: true,
           },
         },
@@ -92,6 +127,16 @@ class DriverRepository {
   }
 
   /**
+   * Find driver by mobile number.
+   */
+  async findByMobile(mobile, tx = null) {
+    const client = tx || prisma;
+    return await client.driver.findFirst({
+      where: { mobile: mobile },
+    });
+  }
+
+  /**
    * List drivers with search, filter, sort, pagination.
    */
   async findAll(filters = {}) {
@@ -100,10 +145,15 @@ class DriverRepository {
       limit = 20,
       search = '',
       status = '',
-      vehicleType = '',
-      sortBy = 'created_at',
-      sortOrder = 'desc',
+      sort_by = 'created_at',
+      sort_order = 'desc',
+      sortBy,
+      sortOrder,
     } = filters;
+
+    // Support both camelCase (internal) and snake_case (query params)
+    const effectiveSortBy = sortBy || sort_by || 'created_at';
+    const effectiveSortOrder = sortOrder || sort_order || 'desc';
 
     const skip = (page - 1) * limit;
     const take = parseInt(limit);
@@ -112,11 +162,15 @@ class DriverRepository {
 
     // Search across multiple fields
     if (search) {
+      const searchTerm = String(search).trim();
       where.OR = [
-        { driver_code: { contains: search, mode: 'insensitive' } },
-        { driver_name: { contains: search, mode: 'insensitive' } },
-        { mobile: { contains: search } },
-        { license_number: { contains: search, mode: 'insensitive' } },
+        { driver_code: { contains: searchTerm, mode: 'insensitive' } },
+        { driver_name: { contains: searchTerm, mode: 'insensitive' } },
+        { mobile: { contains: searchTerm } },
+        { alternate_mobile: { contains: searchTerm } },
+        { city: { contains: searchTerm, mode: 'insensitive' } },
+        { state: { contains: searchTerm, mode: 'insensitive' } },
+        { transportVehicles: { some: { vehicle_number: { contains: searchTerm, mode: 'insensitive' } } } },
       ];
     }
 
@@ -125,61 +179,64 @@ class DriverRepository {
       where.status = status;
     }
 
-    // Determine sort field (whitelist allowed fields)
-    const allowedSortFields = ['driver_code', 'driver_name', 'status', 'joining_date', 'created_at', 'total_deliveries', 'current_balance'];
-    const field = allowedSortFields.includes(sortBy) ? sortBy : 'created_at';
-    const order = sortOrder === 'asc' ? 'asc' : 'desc';
+// Determine sort field (whitelist allowed fields)
+    const allowedSortFields = ['driver_code', 'driver_name', 'status', 'created_at', 'total_deliveries'];
+    const field = allowedSortFields.includes(effectiveSortBy) ? effectiveSortBy : 'created_at';
+    const order = effectiveSortOrder === 'asc' ? 'asc' : 'desc';
 
-    const [drivers, total] = await Promise.all([
-      prisma.driver.findMany({
-        where,
-        include: {
-          user: {
-            select: {
-              first_name: true,
-              last_name: true,
-              phone: true,
+    const result = await withRetry(async () => {
+      const [drivers, total] = await Promise.all([
+        prisma.driver.findMany({
+          where,
+          include: {
+            user: {
+              select: {
+                first_name: true,
+                last_name: true,
+                phone: true,
+              },
+            },
+            transportVehicles: {
+              where: { is_available: true },
+              select: {
+                vehicle_id: true,
+                vehicle_number: true,
+                vehicle_name: true,
+                vehicle_type: true,
+              },
+              take: 3,
+              orderBy: { created_at: 'desc' },
+            },
+            bookings: {
+              where: { status: { in: ['confirmed', 'pickup_completed', 'in_transit'] } },
+              select: {
+                booking_id: true,
+                booking_reference: true,
+                pickup_city: true,
+                drop_city: true,
+                status: true,
+                created_at: true,
+              },
+              orderBy: { created_at: 'desc' },
+              take: 1,
             },
           },
-          transportVehicles: {
-            where: { is_available: true },
-            select: {
-              vehicle_id: true,
-              vehicle_number: true,
-              vehicle_name: true,
-              vehicle_type: true,
-            },
-            take: 3,
-            orderBy: { created_at: 'desc' },
-          },
-          bookings: {
-            where: { status: { in: ['confirmed', 'pickup_completed', 'in_transit'] } },
-            select: {
-              booking_id: true,
-              booking_reference: true,
-              pickup_city: true,
-              drop_city: true,
-              status: true,
-              created_at: true,
-            },
-            orderBy: { created_at: 'desc' },
-            take: 1,
-          },
-        },
-        orderBy: { [field]: order },
-        skip,
-        take,
-      }),
-      prisma.driver.count({ where }),
-    ]);
+          orderBy: { [field]: order },
+          skip,
+          take,
+        }),
+        prisma.driver.count({ where }),
+      ]);
+      return { drivers, total };
+    }, 'findAll drivers');
 
     return {
-      drivers,
+      drivers: result.drivers,
       pagination: {
         page: parseInt(page),
         limit: take,
-        total,
-        pages: Math.ceil(total / take),
+        total: result.total,
+        pages: Math.ceil(result.total / take),
       },
     };
   }
@@ -203,20 +260,6 @@ class DriverRepository {
     return await client.driver.delete({
       where: { driver_id: driverId },
     });
-  }
-
-  /**
-   * Get driver status counts for dashboard KPIs.
-   */
-  async getStatusCounts() {
-    const [total, available, onTrip, inactive] = await Promise.all([
-      prisma.driver.count(),
-      prisma.driver.count({ where: { status: 'available' } }),
-      prisma.driver.count({ where: { status: 'on_trip' } }),
-      prisma.driver.count({ where: { status: 'inactive' } }),
-    ]);
-
-    return { total, available, onTrip, inactive };
   }
 
   /**
@@ -285,95 +328,6 @@ class DriverRepository {
   }
 
   /**
-   * Get vehicle assignment history for a driver.
-   */
-  async getVehicleHistory(driverId) {
-    return await prisma.transportVehicle.findMany({
-      where: { driver_id: driverId },
-      orderBy: { created_at: 'desc' },
-    });
-  }
-
-  /**
-   * Get financial transactions (ledger) for a driver.
-   */
-  async getTransactions(driverId, filters = {}) {
-    const { page = 1, limit = 50, type = '', dateFrom = '', dateTo = '' } = filters;
-    const skip = (page - 1) * limit;
-
-    const where = { driver_id: driverId };
-    if (type) {
-      where.transaction_type = type;
-    }
-    if (dateFrom || dateTo) {
-      where.transaction_date = {};
-      if (dateFrom) where.transaction_date.gte = new Date(dateFrom);
-      if (dateTo) where.transaction_date.lte = new Date(dateTo + 'T23:59:59.999Z');
-    }
-
-    const [transactions, total] = await Promise.all([
-      prisma.driverTransaction.findMany({
-        where,
-        orderBy: { transaction_date: 'desc' },
-        skip,
-        take: parseInt(limit),
-      }),
-      prisma.driverTransaction.count({ where }),
-    ]);
-
-    // Get financial summary
-    const advanceAgg = await prisma.driverTransaction.aggregate({
-      where: { driver_id: driverId, transaction_type: 'advance' },
-      _sum: { amount: true },
-    });
-
-    const paymentsAgg = await prisma.driverTransaction.aggregate({
-      where: { driver_id: driverId, transaction_type: 'trip_payment' },
-      _sum: { amount: true },
-    });
-
-    const fuelAgg = await prisma.driverTransaction.aggregate({
-      where: { driver_id: driverId, transaction_type: 'fuel_expense' },
-      _sum: { amount: true },
-    });
-
-    const tollAgg = await prisma.driverTransaction.aggregate({
-      where: { driver_id: driverId, transaction_type: 'toll_expense' },
-      _sum: { amount: true },
-    });
-
-    const otherAgg = await prisma.driverTransaction.aggregate({
-      where: { driver_id: driverId, transaction_type: 'other_expense' },
-      _sum: { amount: true },
-    });
-
-    return {
-      transactions,
-      summary: {
-        totalAdvance: advanceAgg._sum.amount || 0,
-        totalPayments: paymentsAgg._sum.amount || 0,
-        totalFuel: fuelAgg._sum.amount || 0,
-        totalToll: tollAgg._sum.amount || 0,
-        totalOtherExpenses: otherAgg._sum.amount || 0,
-      },
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total,
-        pages: Math.ceil(total / parseInt(limit)),
-      },
-    };
-  }
-
-  /**
-   * Create a financial transaction (ledger entry).
-   */
-  async createTransaction(data, tx = null) {
-    const client = tx || prisma;
-    return await client.driverTransaction.create({ data });
-  }
-
-  /**
    * Get timeline events for a driver.
    */
   async getTimeline(driverId) {
@@ -393,7 +347,7 @@ class DriverRepository {
   }
 
   /**
-   * Get driver count with status breakdowns.
+   * Get driver KPIs for dashboard (simplified - no employee finance).
    */
   async getDashboardStats() {
     const [total, available, onTrip, inactive] = await Promise.all([
@@ -415,28 +369,147 @@ class DriverRepository {
       },
     });
 
-    const advanceAgg = await prisma.driverTransaction.aggregate({
-      where: { transaction_type: 'advance' },
-      _sum: { amount: true },
-    });
-
-    const pendingPayments = await prisma.driver.count({
-      where: {
-        current_balance: { gt: 0 },
-      },
-    });
-
     return {
       total,
       available,
       onTrip,
       inactive,
       todaysTrips,
-      pendingPayments,
-      advanceOutstanding: advanceAgg._sum.amount || 0,
     };
+  }
+
+  /**
+   * Record a transaction for a driver (advance, trip_payment, fuel, toll, recovery, other_expense).
+   */
+  async createTransaction(data) {
+    const driver = await prisma.driver.findUnique({
+      where: { driver_id: data.driver_id },
+      select: { current_balance: true },
+    });
+
+    const balanceBefore = driver?.current_balance || 0;
+    let balanceAfter = balanceBefore;
+
+    const debitTypes = ['advance', 'fuel_expense', 'toll_expense', 'other_expense'];
+    const isDebit = debitTypes.includes(data.transaction_type);
+
+    if (isDebit) {
+      balanceAfter = balanceBefore + parseFloat(data.amount);
+    } else {
+      balanceAfter = balanceBefore - parseFloat(data.amount);
+    }
+
+    const transaction = await prisma.driverTransaction.create({
+      data: {
+        driver_id: data.driver_id,
+        transaction_type: data.transaction_type,
+        amount: parseFloat(data.amount),
+        balance_before: balanceBefore,
+        balance_after: balanceAfter,
+        description: data.description || null,
+        reference_type: data.reference_type || null,
+        reference_id: data.reference_id ? parseInt(data.reference_id) : null,
+        payment_mode: data.payment_mode || 'cash',
+        notes: data.notes || null,
+        recorded_by: data.recorded_by || null,
+      },
+    });
+
+    // Update driver balance
+    await prisma.driver.update({
+      where: { driver_id: data.driver_id },
+      data: { current_balance: balanceAfter },
+    });
+
+    return transaction;
+  }
+
+  /**
+   * Get transactions for a driver.
+   */
+  async getTransactions(driverId, filters = {}) {
+    const { page = 1, limit = 50 } = filters;
+    const skip = (page - 1) * limit;
+
+    const [transactions, total] = await Promise.all([
+      prisma.driverTransaction.findMany({
+        where: { driver_id: driverId },
+        orderBy: { transaction_date: 'desc' },
+        skip,
+        take: parseInt(limit),
+      }),
+      prisma.driverTransaction.count({ where: { driver_id: driverId } }),
+    ]);
+
+    const debitAgg = await prisma.driverTransaction.aggregate({
+      where: { driver_id: driverId, transaction_type: { in: ['advance', 'fuel_expense', 'toll_expense', 'other_expense'] } },
+      _sum: { amount: true },
+    });
+
+    const creditAgg = await prisma.driverTransaction.aggregate({
+      where: { driver_id: driverId, transaction_type: { in: ['trip_payment', 'recovery'] } },
+      _sum: { amount: true },
+    });
+
+    // Get current balance
+    const driver = await prisma.driver.findUnique({
+      where: { driver_id: driverId },
+      select: { current_balance: true },
+    });
+
+    return {
+      transactions,
+      summary: {
+        totalDebit: debitAgg._sum.amount || 0,
+        totalCredit: creditAgg._sum.amount || 0,
+        currentBalance: driver?.current_balance || 0,
+      },
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / parseInt(limit)),
+      },
+    };
+  }
+
+  /**
+   * Assign a vehicle to a driver.
+   */
+  async assignVehicle(driverId, vehicleId) {
+    // Unassign from any previous driver
+    await prisma.transportVehicle.update({
+      where: { vehicle_id: parseInt(vehicleId) },
+      data: { driver_id: parseInt(driverId) },
+    });
+    return { success: true };
+  }
+
+  /**
+   * Get available vehicles for assignment.
+   */
+  async getAvailableVehicles() {
+    return await prisma.transportVehicle.findMany({
+      where: { is_available: true },
+      select: {
+        vehicle_id: true,
+        vehicle_number: true,
+        vehicle_name: true,
+        vehicle_type: true,
+      },
+      orderBy: { created_at: 'desc' },
+    });
+  }
+
+  /**
+   * Soft delete a driver (set as inactive).
+   */
+  async softDelete(driverId) {
+    return await prisma.driver.update({
+      where: { driver_id: driverId },
+      data: { status: 'inactive', is_available: false },
+    });
   }
 }
 
 module.exports = DriverRepository;
-

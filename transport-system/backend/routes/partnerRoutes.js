@@ -1,0 +1,418 @@
+/**
+ * Partner Routes - Admin
+ * Complete CRUD + Dashboard + Trucks + Documents + Driver Assignment
+ */
+
+const express = require('express');
+const router = express.Router();
+const { body, param, validationResult } = require('express-validator');
+const { protect } = require('../middleware/auth');
+const PartnerService = require('../services/PartnerService');
+
+const partnerService = new PartnerService();
+
+// Admin access middleware
+const adminCheck = (req, res, next) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+    return res.status(403).json({ success: false, message: 'Access denied. Admin only.' });
+  }
+  next();
+};
+
+const handleValidation = (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ success: false, errors: errors.array() });
+  }
+  next();
+};
+
+const handleError = (res, error, defaultMsg = 'Server error') => {
+  console.error('Partner route error:', error);
+  if (error.code === 'PARTNER_ALREADY_EXISTS') {
+    return res.status(409).json({ success: false, message: error.message, data: error.data });
+  }
+  if (error.code === 'P2002') {
+    return res.status(400).json({ success: false, message: 'A partner with this mobile already exists' });
+  }
+  res.status(500).json({ success: false, message: error.message || defaultMsg });
+};
+
+// ============================
+// STATS (Dashboard)
+// ============================
+
+router.get('/stats', protect, adminCheck, async (req, res) => {
+  try {
+    const stats = await partnerService.getPartnerStats();
+    res.json({ success: true, data: stats });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+// ============================
+// PARTNER CRUD
+// ============================
+
+// List partners
+router.get('/', protect, adminCheck, async (req, res) => {
+  try {
+    const result = await partnerService.listPartners(req.query);
+    res.json({ success: true, data: result.partners, pagination: result.pagination });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+// Get partner profile
+router.get('/:id', protect, adminCheck, async (req, res) => {
+  try {
+    const partnerId = parseInt(req.params.id);
+    if (isNaN(partnerId)) return res.status(400).json({ success: false, message: 'Invalid partner ID' });
+
+    const partner = await partnerService.getPartnerProfile(partnerId);
+    if (!partner) return res.status(404).json({ success: false, message: 'Partner not found' });
+
+    res.json({ success: true, data: partner });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+// Create partner
+router.post('/', protect, adminCheck, [
+  body('partner_name').trim().notEmpty().withMessage('Partner name is required'),
+  body('owner_name').trim().notEmpty().withMessage('Owner name is required'),
+  body('mobile').trim().notEmpty().withMessage('Mobile number is required')
+    .matches(/^[6-9]\d{9}$/).withMessage('Enter a valid 10-digit mobile number'),
+], handleValidation, async (req, res) => {
+  try {
+    const partner = await partnerService.registerPartner(req.body);
+    res.status(201).json({
+      success: true,
+      message: 'Partner registered successfully',
+      data: { partner_id: partner.partner_id, partner_code: partner.partner_code, partner_name: partner.partner_name },
+    });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+// Update partner
+router.put('/:id', protect, adminCheck, async (req, res) => {
+  try {
+    const partnerId = parseInt(req.params.id);
+    if (isNaN(partnerId)) return res.status(400).json({ success: false, message: 'Invalid partner ID' });
+
+    const partner = await partnerService.updatePartner(partnerId, req.body);
+    res.json({ success: true, message: 'Partner updated successfully', data: partner });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+// Soft delete partner
+router.delete('/:id', protect, adminCheck, async (req, res) => {
+  try {
+    const partnerId = parseInt(req.params.id);
+    if (isNaN(partnerId)) return res.status(400).json({ success: false, message: 'Invalid partner ID' });
+
+    await partnerService.deletePartner(partnerId);
+    res.json({ success: true, message: 'Partner deleted successfully' });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+// Update partner status
+router.patch('/:id/status', protect, adminCheck, [
+  body('status').isIn(['active', 'inactive', 'suspended']).withMessage('Valid status required'),
+], handleValidation, async (req, res) => {
+  try {
+    const partnerId = parseInt(req.params.id);
+    if (isNaN(partnerId)) return res.status(400).json({ success: false, message: 'Invalid partner ID' });
+
+    const partner = await partnerService.toggleStatus(partnerId, req.body.status);
+    res.json({ success: true, message: 'Partner status updated', data: { partner_id: partnerId, status: partner.status } });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+// ============================
+// DASHBOARD
+// ============================
+
+router.get('/:id/dashboard', protect, adminCheck, async (req, res) => {
+  try {
+    const partnerId = parseInt(req.params.id);
+    if (isNaN(partnerId)) return res.status(400).json({ success: false, message: 'Invalid partner ID' });
+
+    const dashboard = await partnerService.getPartnerDashboard(partnerId);
+    if (!dashboard) return res.status(404).json({ success: false, message: 'Partner not found' });
+
+    res.json({ success: true, data: dashboard });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+// ============================
+// TRUCKS
+// ============================
+
+router.get('/:id/trucks', protect, adminCheck, async (req, res) => {
+  try {
+    const partnerId = parseInt(req.params.id);
+    if (isNaN(partnerId)) return res.status(400).json({ success: false, message: 'Invalid partner ID' });
+
+    const trucks = await partnerService.getTrucks(partnerId);
+    res.json({ success: true, data: trucks });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.post('/:id/trucks', protect, adminCheck, [
+  body('vehicle_number').notEmpty().withMessage('Vehicle number is required'),
+  body('vehicle_type').notEmpty().withMessage('Vehicle type is required'),
+], handleValidation, async (req, res) => {
+  try {
+    const partnerId = parseInt(req.params.id);
+    if (isNaN(partnerId)) return res.status(400).json({ success: false, message: 'Invalid partner ID' });
+
+    const truck = await partnerService.addTruck(partnerId, req.body);
+    res.status(201).json({ success: true, message: 'Truck added successfully', data: truck });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.put('/trucks/:truckId', protect, adminCheck, async (req, res) => {
+  try {
+    const truckId = parseInt(req.params.truckId);
+    if (isNaN(truckId)) return res.status(400).json({ success: false, message: 'Invalid truck ID' });
+
+    const truck = await partnerService.updateTruck(truckId, req.body);
+    res.json({ success: true, message: 'Truck updated successfully', data: truck });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.delete('/trucks/:truckId', protect, adminCheck, async (req, res) => {
+  try {
+    const truckId = parseInt(req.params.truckId);
+    if (isNaN(truckId)) return res.status(400).json({ success: false, message: 'Invalid truck ID' });
+
+    await partnerService.removeTruck(truckId);
+    res.json({ success: true, message: 'Truck removed from partner' });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+// ============================
+// LEDGER
+// ============================
+
+router.get('/:id/ledger', protect, adminCheck, async (req, res) => {
+  try {
+    const partnerId = parseInt(req.params.id);
+    if (isNaN(partnerId)) return res.status(400).json({ success: false, message: 'Invalid partner ID' });
+
+    const result = await partnerService.getLedger(partnerId, req.query);
+    res.json({ success: true, data: result.entries, summary: result.summary, pagination: result.pagination });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.post('/:id/ledger', protect, adminCheck, [
+  body('transaction_type').isIn([
+    'booking_income', 'commission', 'fuel_advance', 'driver_advance',
+    'toll', 'repair', 'penalty', 'bonus', 'cash', 'online_transfer', 'other_expense',
+  ]).withMessage('Valid transaction type required'),
+  body('amount').isFloat({ min: 0.01 }).withMessage('Amount must be greater than 0'),
+  body('type').isIn(['debit', 'credit']).withMessage('Type must be debit or credit'),
+], handleValidation, async (req, res) => {
+  try {
+    const partnerId = parseInt(req.params.id);
+    if (isNaN(partnerId)) return res.status(400).json({ success: false, message: 'Invalid partner ID' });
+
+    const entry = await partnerService.recordTransaction(partnerId, {
+      ...req.body,
+      amount: parseFloat(req.body.amount),
+      created_by: req.user.user_id,
+    });
+
+    res.status(201).json({ success: true, message: 'Transaction recorded successfully', data: entry });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.post('/:id/ledger/reversal', protect, adminCheck, [
+  body('original_transaction_id').notEmpty().withMessage('Original transaction ID is required'),
+], handleValidation, async (req, res) => {
+  try {
+    const partnerId = parseInt(req.params.id);
+    if (isNaN(partnerId)) return res.status(400).json({ success: false, message: 'Invalid partner ID' });
+
+    const entry = await partnerService.recordReversal(partnerId, req.body.original_transaction_id, {
+      remarks: req.body.remarks,
+      created_by: req.user.user_id,
+    });
+
+    res.status(201).json({ success: true, message: 'Reversal recorded successfully', data: entry });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+// ============================
+// PAYMENTS
+// ============================
+
+router.get('/:id/payments', protect, adminCheck, async (req, res) => {
+  try {
+    const partnerId = parseInt(req.params.id);
+    if (isNaN(partnerId)) return res.status(400).json({ success: false, message: 'Invalid partner ID' });
+
+    const result = await partnerService.getPayments(partnerId, req.query);
+    res.json({ success: true, data: result.payments, pagination: result.pagination });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.post('/:id/payments', protect, adminCheck, [
+  body('amount').isFloat({ min: 0.01 }).withMessage('Amount must be greater than 0'),
+  body('payment_method').isIn(['cash', 'bank_transfer', 'upi', 'cheque']).withMessage('Valid payment method required'),
+], handleValidation, async (req, res) => {
+  try {
+    const partnerId = parseInt(req.params.id);
+    if (isNaN(partnerId)) return res.status(400).json({ success: false, message: 'Invalid partner ID' });
+
+    const payment = await partnerService.recordPayment(partnerId, {
+      ...req.body,
+      amount: parseFloat(req.body.amount),
+      created_by: req.user.user_id,
+    });
+
+    res.status(201).json({ success: true, message: 'Payment recorded successfully', data: payment });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+// ============================
+// SETTLEMENTS
+// ============================
+
+router.get('/:id/settlements', protect, adminCheck, async (req, res) => {
+  try {
+    const partnerId = parseInt(req.params.id);
+    if (isNaN(partnerId)) return res.status(400).json({ success: false, message: 'Invalid partner ID' });
+
+    const result = await partnerService.getSettlements(partnerId, req.query);
+    res.json({ success: true, data: result.settlements, pagination: result.pagination });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+// ============================
+// DOCUMENTS
+// ============================
+
+router.get('/:id/documents', protect, adminCheck, async (req, res) => {
+  try {
+    const partnerId = parseInt(req.params.id);
+    if (isNaN(partnerId)) return res.status(400).json({ success: false, message: 'Invalid partner ID' });
+
+    const documents = await partnerService.getDocuments(partnerId);
+    res.json({ success: true, data: documents });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.post('/:id/documents', protect, adminCheck, [
+  body('document_type').isIn(['gst', 'pan', 'aadhaar', 'rc', 'insurance', 'bank_details', 'other']).withMessage('Valid document type required'),
+  body('document_name').notEmpty().withMessage('Document name is required'),
+  body('file_url').notEmpty().withMessage('File URL is required'),
+], handleValidation, async (req, res) => {
+  try {
+    const partnerId = parseInt(req.params.id);
+    if (isNaN(partnerId)) return res.status(400).json({ success: false, message: 'Invalid partner ID' });
+
+    const doc = await partnerService.uploadDocument(partnerId, {
+      ...req.body,
+      uploaded_by: req.user.user_id,
+    });
+
+    res.status(201).json({ success: true, message: 'Document uploaded successfully', data: doc });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.delete('/:id/documents/:docId', protect, adminCheck, async (req, res) => {
+  try {
+    const docId = parseInt(req.params.docId);
+    if (isNaN(docId)) return res.status(400).json({ success: false, message: 'Invalid document ID' });
+
+    await partnerService.deleteDocument(docId);
+    res.json({ success: true, message: 'Document deleted successfully' });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+// ============================
+// DRIVER ASSIGNMENT
+// ============================
+
+router.get('/:id/drivers', protect, adminCheck, async (req, res) => {
+  try {
+    const partnerId = parseInt(req.params.id);
+    if (isNaN(partnerId)) return res.status(400).json({ success: false, message: 'Invalid partner ID' });
+
+    const drivers = await partnerService.getPartnerDrivers(partnerId);
+    res.json({ success: true, data: drivers });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.post('/:id/assign-driver', protect, adminCheck, [
+  body('driver_id').isInt({ min: 1 }).withMessage('Valid driver_id is required'),
+], handleValidation, async (req, res) => {
+  try {
+    const partnerId = parseInt(req.params.id);
+    if (isNaN(partnerId)) return res.status(400).json({ success: false, message: 'Invalid partner ID' });
+
+    const result = await partnerService.assignDriverToPartner(parseInt(req.body.driver_id), partnerId, req.user.user_id);
+    res.json({ success: true, message: 'Driver assigned to partner successfully', data: result });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.post('/:id/unassign-driver', protect, adminCheck, [
+  body('driver_id').isInt({ min: 1 }).withMessage('Valid driver_id is required'),
+], handleValidation, async (req, res) => {
+  try {
+    const partnerId = parseInt(req.params.id);
+    if (isNaN(partnerId)) return res.status(400).json({ success: false, message: 'Invalid partner ID' });
+
+    await partnerService.unassignDriverFromPartner(parseInt(req.body.driver_id), partnerId);
+    res.json({ success: true, message: 'Driver unassigned from partner' });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+module.exports = router;

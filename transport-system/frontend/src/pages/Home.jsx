@@ -426,24 +426,71 @@ function Home() {
   return (
     <>
       <SEO
-        title="Home"
-        description="Book trucks online with Bihar Transport Begusarai. Reliable logistics, FTL, PTL, industrial transportation, Pan India transport services since 1998."
-        keywords="Bihar Transport, truck booking Begusarai, goods transport Bihar, logistics services, freight services Patna, truck rental Bihar, mini truck booking"
-        canonical="https://bihartransport.com/"
+        title="Bihar Transport | Truck Booking &amp; Goods Transport Since 1998"
+        description="Bihar Transport offers reliable truck booking, goods transport, and logistics services across India. Trusted since 1998. FTL, PTL, Pan India services."
+        keywords="Bihar Transport, truck booking, goods transport India, logistics services, freight services, truck rental, mini truck booking, goods transport since 1998"
+        canonical="https://bihartransport.in/"
         schema={[
+          {
+            '@context': 'https://schema.org',
+            '@type': 'Organization',
+            name: 'Bihar Transport',
+            url: 'https://bihartransport.in',
+            logo: 'https://bihartransport.in/assets/logo.png',
+            foundingDate: '1998',
+            description: 'Professional goods transport and logistics services since 1998.',
+            sameAs: [
+              'https://www.facebook.com/bihartransport.in',
+              'https://www.linkedin.com/company/bihartransport/',
+              'https://www.instagram.com/bihartransport.in/',
+            ],
+            contactPoint: {
+              '@type': 'ContactPoint',
+              telephone: '+91-8210931799',
+              contactType: 'customer service',
+              availableLanguage: ['English', 'Hindi'],
+            },
+          },
+          {
+            '@context': 'https://schema.org',
+            '@type': 'LocalBusiness',
+            name: 'Bihar Transport',
+            image: 'https://bihartransport.in/assets/logo.png',
+            telephone: '+91-8210931799',
+            email: 'info@bihartransport.in',
+            openingHours: 'Mo-Sa 08:00-20:00, Su 09:00-17:00',
+            foundingDate: '1998',
+            areaServed: ['Begusarai', 'Patna', 'Muzaffarpur', 'Gaya', 'Darbhanga', 'Bihar', 'India'],
+            priceRange: '₹₹',
+            url: 'https://bihartransport.in',
+          },
+          {
+            '@context': 'https://schema.org',
+            '@type': 'WebSite',
+            name: 'Bihar Transport',
+            url: 'https://bihartransport.in',
+            potentialAction: {
+              '@type': 'SearchAction',
+              target: {
+                '@type': 'EntryPoint',
+                urlTemplate: 'https://bihartransport.in/search?q={search_term_string}',
+              },
+              'query-input': 'required name=search_term_string',
+            },
+          },
           {
             '@context': 'https://schema.org',
             '@type': 'Service',
             name: 'Goods Transportation Services',
             provider: { '@type': 'Organization', name: 'Bihar Transport' },
-            areaServed: ['Begusarai', 'Patna', 'Muzaffarpur', 'Gaya', 'Bihar'],
+            areaServed: ['Begusarai', 'Patna', 'Muzaffarpur', 'Gaya', 'Darbhanga', 'Bihar', 'India'],
             serviceType: 'Trucking and Logistics',
           },
           {
             '@context': 'https://schema.org',
             '@type': 'BreadcrumbList',
             itemListElement: [
-              { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://bihartransport.com/' },
+              { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://bihartransport.in/' },
             ],
           },
         ]}
@@ -460,7 +507,7 @@ function Home() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-12 items-center">
             <div className="text-white order-2 lg:order-1">
               <h1 className="text-xl md:text-3xl lg:text-4xl xl:text-5xl font-bold mb-2 md:mb-4 animate-slide-in-left">
-                Reliable Logistics &amp; Goods Transportation
+                Reliable Truck &amp; Goods Transport Across India | Bihar Transport
               </h1>
               <p
                 className="text-base md:text-xl mb-3 md:mb-6 animate-slide-in-left delay-100"
@@ -856,7 +903,7 @@ function Home() {
                 allowFullScreen=""
                 loading="lazy"
                 referrerPolicy="no-referrer-when-downgrade"
-                title="Bihar Transport Begusarai Location"
+                title="Bihar Transport Office Location"
               ></iframe>
             </div>
 

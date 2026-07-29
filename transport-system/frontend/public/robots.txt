@@ -1,0 +1,36 @@
+# Robots.txt for Bihar Transport
+# https://bihartransport.in
+
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /admin/
+Disallow: /driver-dashboard/
+Disallow: /dashboard/
+
+# Sitemap
+Sitemap: https://bihartransport.in/sitemap.xml
+
+# Crawl-delay
+Crawl-Delay: 10
+
+# Google-specific
+User-agent: Googlebot
+Allow: /
+Disallow: /api/
+Disallow: /admin/
+Disallow: /driver-dashboard/
+Disallow: /dashboard/
+
+User-agent: Googlebot-Image
+Allow: /assets/
+
+User-agent: Googlebot-Video
+Allow: /
+
+# Bing
+User-agent: Bingbot
+Allow: /
+Disallow: /api/
+Disallow: /admin/
+

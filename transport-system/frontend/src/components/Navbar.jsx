@@ -22,7 +22,6 @@ function Navbar() {
               <img src="/assets/logo.png" alt="Bihar Transport Logo" className="site-logo" />
               <div className="brand-text">
                 <span className="brand-title">Bihar Transport</span>
-                <span className="brand-location">Begusarai</span>
               </div>
             </div>
           </Link>

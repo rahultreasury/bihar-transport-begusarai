@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * ============================================================
  * Bihar Transport Begusarai — Driver Management Demo Seed

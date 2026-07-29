@@ -5,7 +5,7 @@
  *   <SEO
  *     title="Home | Bihar Transport"
  *     description="..."
- *     canonical="https://bihartransport.com/"
+ *     canonical="https://bihartransport.in/"
  *     schema={[...]}   // optional array of JSON-LD objects
  *   />
  *
@@ -16,7 +16,7 @@
 import { Helmet } from 'react-helmet-async';
 
 const SITE_NAME = 'Bihar Transport';
-const SITE_URL = 'https://bihartransport.com';
+const SITE_URL = 'https://bihartransport.in';
 const DEFAULT_OG_IMAGE = '/assets/logo.png';
 const TWITTER_HANDLE = '@BiharTransport';
 
@@ -50,6 +50,13 @@ export default function SEO({
       name: 'Bihar Transport',
       url: SITE_URL,
       logo: `${SITE_URL}/assets/logo.png`,
+      foundingDate: '1998',
+      description: 'Professional goods transport and logistics services since 1998.',
+      sameAs: [
+        'https://www.facebook.com/bihartransport.in',
+        'https://www.linkedin.com/company/bihartransport/',
+        'https://www.instagram.com/bihartransport.in/',
+      ],
       contactPoint: {
         '@type': 'ContactPoint',
         telephone: '+91-8210931799',
@@ -68,10 +75,11 @@ export default function SEO({
     {
       '@context': 'https://schema.org',
       '@type': 'LocalBusiness',
-      name: 'Bihar Transport Begusarai',
+      name: 'Bihar Transport',
       image: `${SITE_URL}/assets/logo.png`,
       telephone: '+91-8210931799',
-      email: 'info@bihartransport.com',
+      email: 'info@bihartransport.in',
+      foundingDate: '1998',
       openingHours: 'Mo-Sa 08:00-20:00, Su 09:00-17:00',
       areaServed: ['Begusarai', 'Patna', 'Bihar', 'India'],
       priceRange: '₹₹',

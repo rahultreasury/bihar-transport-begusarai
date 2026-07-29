@@ -7,7 +7,7 @@ import cities from '../data/resources/cities';
 import routes from '../data/resources/routes';
 
 const SITE_URL = 'https://bihartransport.in';
-const SITE_NAME = 'Bihar Transport Begusarai';
+const SITE_NAME = 'Bihar Transport';
 const PHONE = '+918210931799';
 
 // ─── Breadcrumb ───────────────────────────────────────────
@@ -83,7 +83,7 @@ export function localBusinessSchema() {
     name: SITE_NAME,
     image: `${SITE_URL}/assets/logo.png`,
     telephone: PHONE,
-    email: 'info@bihartransport.com',
+    email: 'info@bihartransport.in',
     address: {
       '@type': 'PostalAddress',
       streetAddress: 'Main Road',

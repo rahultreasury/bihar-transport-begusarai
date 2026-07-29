@@ -15,7 +15,7 @@ export default function SEOHead({
   ogType = 'website',
   noIndex = false
 }) {
-  const siteName = 'Bihar Transport Begusarai';
+  const siteName = 'Bihar Transport';
   const defaultDescription = 'Book trucks, mini trucks, pickups for goods transport across India. Reliable logistics since 1998. FTL, PTL services. GPS tracking.';
   const defaultKeywords = 'goods transport, truck booking, logistics, Bihar Transport, cargo services';
 

@@ -55,6 +55,8 @@ const bookingMvpRoutes = require('./routes/bookingMvpRoutes');
 const webhookRoutes = require('./routes/webhookRoutes');
 const testEmailRoutes = require('./routes/testEmailRoutes');
 const driverManagementRoutes = require('./routes/driverManagementRoutes');
+const partnerRoutes = require('./routes/partnerRoutes');
+const partnerSettlementRoutes = require('./routes/partnerSettlementRoutes');
 const emailService = require('./services/emailService');
 
 const app = express();
@@ -114,9 +116,10 @@ const bookingLimiter = rateLimit({
 
 const adminLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 120,
+  limit: 500,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => req.ip === '127.0.0.1' || req.ip === '::1' || req.ip === '::ffff:127.0.0.1',
 });
 
 app.use(globalLimiter);
@@ -137,9 +140,13 @@ app.use('/api', mapsRoutes);
 // Driver Management Routes (admin-limited and admin-checked internally)
 app.use('/api/admin/drivers', adminLimiter, driverManagementRoutes);
 
+// Partner Management Routes
+app.use('/api/admin/partners', adminLimiter, partnerRoutes);
+app.use('/api/admin/settlements', adminLimiter, partnerSettlementRoutes);
+
 // Health check endpoint
 app.get('/api/health', (req, res) => {
-  res.json({ success: true, status: 'ok', message: 'Bihar Transport Begusarai API is running', data: null, timestamp: new Date().toISOString() });
+  res.json({ success: true, status: 'ok', message: 'Bihar Transport API is running', data: null, timestamp: new Date().toISOString() });
 });
 
 // PostgreSQL health check via Prisma (Phase 4.1)
@@ -217,5 +224,25 @@ const startServer = async () => {
 };
 
 startServer();
+
+// Graceful shutdown — disconnect Prisma on SIGTERM/SIGINT
+process.on('SIGTERM', async () => {
+  console.log('[server] SIGTERM received. Shutting down gracefully...');
+  const { prisma } = require('./config/prisma');
+  await prisma.$disconnect();
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('[server] SIGINT received. Shutting down gracefully...');
+  const { prisma } = require('./config/prisma');
+  await prisma.$disconnect();
+  process.exit(0);
+});
+
+// Prevent unhandled rejections from crashing the process
+process.on('unhandledRejection', (err) => {
+  console.error('[server] Unhandled rejection:', err);
+});
 
 

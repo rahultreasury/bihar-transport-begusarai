@@ -52,7 +52,6 @@ function Footer() {
                 <img src="/assets/logo.png" alt="Bihar Transport Logo" className="site-logo" style={{ height: '42px' }} />
                 <div className="brand-text">
                   <span className="brand-title">Bihar Transport</span>
-                  <span className="brand-location">Begusarai</span>
                 </div>
               </div>
             </div>
@@ -150,11 +149,11 @@ function Footer() {
       <div className="bg-gray-950 py-4">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row justify-between items-center">
           <p className="text-gray-400 text-sm">
-            © {new Date().getFullYear()} Bihar Transport Begusarai. All rights reserved.
+            © 1998–{new Date().getFullYear()} Bihar Transport. Professional Goods Transport Company.
           </p>
           <div className="flex space-x-6 mt-2 md:mt-0">
-            <a href="#" className="text-gray-400 hover:text-amber-500 text-sm transition-colors">Privacy Policy</a>
-            <a href="#" className="text-gray-400 hover:text-amber-500 text-sm transition-colors">Terms of Service</a>
+            <Link to="/privacy-policy" className="text-gray-400 hover:text-amber-500 text-sm transition-colors">Privacy Policy</Link>
+            <Link to="/terms" className="text-gray-400 hover:text-amber-500 text-sm transition-colors">Terms of Service</Link>
           </div>
         </div>
       </div>

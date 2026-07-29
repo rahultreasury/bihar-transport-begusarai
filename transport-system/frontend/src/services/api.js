@@ -91,7 +91,7 @@ export const adminAPI = {
   getAvailableDrivers: () => api.get('/admin/drivers', { params: { status: 'available', limit: 100 } }),
   assignVehicle: (bookingId, vehicleId) => api.post(`/admin/bookings/${bookingId}/assign-vehicle`, { vehicle_id: vehicleId }),
 
-  // Driver Management Module
+  // Driver Management Module (Market Drivers - full CRUD + actions)
   getDriverStats: () => api.get('/admin/drivers/stats'),
   getDriver: (id) => api.get(`/admin/drivers/${id}`),
   createDriver: (data) => api.post('/admin/drivers', data),
@@ -99,12 +99,60 @@ export const adminAPI = {
   deleteDriver: (id) => api.delete(`/admin/drivers/${id}`),
   toggleDriverStatus: (id, status) => api.patch(`/admin/drivers/${id}/status`, { status }),
   getDriverTrips: (id, params) => api.get(`/admin/drivers/${id}/trips`, { params }),
-  getDriverFinance: (id, params) => api.get(`/admin/drivers/${id}/finance`, { params }),
-  addDriverAdvance: (id, data) => api.post(`/admin/drivers/${id}/advance`, data),
-  addDriverPayment: (id, data) => api.post(`/admin/drivers/${id}/payment`, data),
-  addDriverExpense: (id, data) => api.post(`/admin/drivers/${id}/expense`, data),
-  getDriverVehicles: (id) => api.get(`/admin/drivers/${id}/vehicles`),
   getDriverTimeline: (id) => api.get(`/admin/drivers/${id}/timeline`),
+  
+  // Driver Transactions
+  recordDriverTransaction: (id, data) => api.post(`/admin/drivers/${id}/transactions`, data),
+  getDriverTransactions: (id, params) => api.get(`/admin/drivers/${id}/transactions`, { params }),
+  
+// Driver Vehicle Assignment
+  getAvailableVehicles: () => api.get('/admin/drivers/vehicles/available'),
+  assignVehicleToDriver: (driverId, vehicleId) => api.post(`/admin/drivers/${driverId}/assign-vehicle`, { vehicle_id: vehicleId }),
+
+  // Partner Management (Transport Partners)
+  getPartnerStats: () => api.get('/admin/partners/stats'),
+  getPartners: (params) => api.get('/admin/partners', { params }),
+  getPartner: (id) => api.get(`/admin/partners/${id}`),
+  createPartner: (data) => api.post('/admin/partners', data),
+  updatePartner: (id, data) => api.put(`/admin/partners/${id}`, data),
+  deletePartner: (id) => api.delete(`/admin/partners/${id}`),
+  togglePartnerStatus: (id, status) => api.patch(`/admin/partners/${id}/status`, { status }),
+
+  // Partner Dashboard
+  getPartnerDashboard: (id) => api.get(`/admin/partners/${id}/dashboard`),
+
+  // Partner Trucks
+  getPartnerTrucks: (id) => api.get(`/admin/partners/${id}/trucks`),
+  addPartnerTruck: (id, data) => api.post(`/admin/partners/${id}/trucks`, data),
+  updatePartnerTruck: (truckId, data) => api.put(`/admin/partners/trucks/${truckId}`, data),
+  removePartnerTruck: (truckId) => api.delete(`/admin/partners/trucks/${truckId}`),
+
+  // Partner Ledger
+  getPartnerLedger: (id, params) => api.get(`/admin/partners/${id}/ledger`, { params }),
+  recordPartnerTransaction: (id, data) => api.post(`/admin/partners/${id}/ledger`, data),
+  recordPartnerReversal: (id, data) => api.post(`/admin/partners/${id}/ledger/reversal`, data),
+
+  // Partner Payments
+  getPartnerPayments: (id, params) => api.get(`/admin/partners/${id}/payments`, { params }),
+  recordPartnerPayment: (id, data) => api.post(`/admin/partners/${id}/payments`, data),
+
+  // Partner Settlements
+  getPartnerSettlements: (id, params) => api.get(`/admin/partners/${id}/settlements`, { params }),
+  generateSettlement: (data) => api.post('/admin/settlements/generate', data),
+  getAllSettlements: (params) => api.get('/admin/settlements', { params }),
+  getSettlement: (id) => api.get(`/admin/settlements/${id}`),
+  updateSettlementStatus: (id, status) => api.patch(`/admin/settlements/${id}/status`, { status }),
+  lockSettlement: (id) => api.post(`/admin/settlements/${id}/lock`),
+
+  // Partner Documents
+  getPartnerDocuments: (id) => api.get(`/admin/partners/${id}/documents`),
+  uploadPartnerDocument: (id, data) => api.post(`/admin/partners/${id}/documents`, data),
+  deletePartnerDocument: (id, docId) => api.delete(`/admin/partners/${id}/documents/${docId}`),
+
+  // Partner Driver Assignment
+  getPartnerDrivers: (id) => api.get(`/admin/partners/${id}/drivers`),
+  assignDriverToPartner: (id, driverId) => api.post(`/admin/partners/${id}/assign-driver`, { driver_id: driverId }),
+  unassignDriverFromPartner: (id, driverId) => api.post(`/admin/partners/${id}/unassign-driver`, { driver_id: driverId }),
 };
 
 // Delivery APIs

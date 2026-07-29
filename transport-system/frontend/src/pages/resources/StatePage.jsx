@@ -1,3 +1,4 @@
+
 /**
  * StatePage — Individual state transport services page
  * SEO-optimized with structured data for /transport-services/:state
@@ -55,7 +56,7 @@ export default function StatePage() {
             description: state.serviceDescription,
             provider: {
               '@type': 'Organization',
-              name: 'Bihar Transport Begusarai',
+              name: 'Bihar Transport',
               url: 'https://bihartransport.in'
             },
             areaServed: {

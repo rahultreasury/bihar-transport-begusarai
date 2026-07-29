@@ -24,8 +24,8 @@ export default function RoutesListing() {
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
     itemListElement: [
-      { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://bihartransport.com/' },
-      { '@type': 'ListItem', position: 2, name: 'Popular Transport Routes', item: 'https://bihartransport.com/routes' },
+      { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://bihartransport.in/' },
+      { '@type': 'ListItem', position: 2, name: 'Popular Transport Routes', item: 'https://bihartransport.in/routes' },
     ],
   };
 
@@ -35,7 +35,7 @@ export default function RoutesListing() {
         title="Popular Transport Routes Across India"
         description="Browse popular goods transport routes across India. Check distance, estimated hours, and book trucks online from Bihar Transport."
         keywords="transport routes India, goods transport routes, truck routes, logistics routes India, popular transport routes"
-        canonical="https://bihartransport.com/routes"
+        canonical="https://bihartransport.in/routes"
         schema={[breadcrumbSchema]}
       />
 

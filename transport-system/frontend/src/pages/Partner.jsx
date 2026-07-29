@@ -76,8 +76,8 @@ export default function Partner() {
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
     itemListElement: [
-      { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://bihartransport.com/' },
-      { '@type': 'ListItem', position: 2, name: 'Become a Partner', item: 'https://bihartransport.com/partner' },
+      { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://bihartransport.in/' },
+      { '@type': 'ListItem', position: 2, name: 'Become a Partner', item: 'https://bihartransport.in/partner' },
     ],
   };
 
@@ -86,7 +86,7 @@ export default function Partner() {
     '@type': 'Organization',
     name: 'Bihar Transport Partner Program',
     description: 'Join Bihar Transport as a transport partner and get regular loads, timely payments, and dedicated support.',
-    url: 'https://bihartransport.com/partner',
+    url: 'https://bihartransport.in/partner',
   };
 
   const handleSubmit = (e) => {
@@ -108,7 +108,7 @@ export default function Partner() {
         title="Become a Transport Partner"
         description="Partner with Bihar Transport and get regular loads, timely payments, and dedicated support. Join India's growing transport network across 28 states."
         keywords="transport partner, truck partner, logistics partner, vehicle owner partner, Bihar Transport partner"
-        canonical="https://bihartransport.com/partner"
+        canonical="https://bihartransport.in/partner"
         schema={[breadcrumbSchema, partnerSchema]}
       />
 

@@ -9,12 +9,17 @@ export default function AdminShell({ navItems, activeKey, onNav, children }) {
   const resolvedNavItems = useMemo(() => navItems || [], [navItems]);
 
   return (
-    <div className={`min-h-screen ${themeClass} bg-surface text-text`}> 
+    <div className={`min-h-screen ${themeClass} bg-surface text-text`} role="application" aria-label="Admin dashboard"> 
       <div className="flex min-h-screen w-full max-w-full">
         <AdminSidebar navItems={resolvedNavItems} activeKey={activeKey} onNav={onNav} />
         <div className="flex-1 flex flex-col min-w-0 w-full max-w-full">
           <AdminTopHeader />
-          <main className="flex-1 px-4 sm:px-6 pb-10 pt-6 xl:pt-6 overflow-y-auto w-full max-w-full min-w-0">
+          <main
+            id="admin-main-content"
+            className="flex-1 px-4 sm:px-6 pb-10 pt-6 xl:pt-6 overflow-y-auto w-full max-w-full min-w-0"
+            role="main"
+            tabIndex={-1}
+          >
             <div className="w-full max-w-full min-w-0">
               {children}
             </div>

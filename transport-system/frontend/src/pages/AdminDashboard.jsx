@@ -60,17 +60,16 @@ function AdminDashboard() {
 
   const stats = dashboard?.stats || {};
   const recentBookings = dashboard?.recentBookings || [];
-  const availableDrivers = dashboard?.availableDrivers || [];
 
   const kpis = [
     { key: 'todayRevenue', title: "Today's Revenue", value: stats?.todayRevenue ?? stats?.totalRevenue, sub: 'INR', accent: 'amber', loading },
-    { key: 'todayBookings', title: "Today's Bookings", value: stats?.todayBookings ?? stats?.activeDeliveries, sub: 'Trips', accent: 'green', loading },
+    { key: 'todayBookings', title: "Today's Bookings", value: stats?.todayBookings ?? 0, sub: 'New bookings', accent: 'green', loading },
     { key: 'pendingBookings', title: 'Pending Bookings', value: stats?.pendingBookings ?? 0, sub: 'Awaiting dispatch', accent: 'purple', loading },
     { key: 'activeTrips', title: 'Active Trips', value: stats?.activeTrips ?? stats?.activeDeliveries, sub: 'In progress', accent: 'sky', loading },
-    { key: 'completedTrips', title: 'Completed Trips', value: stats?.completedTrips ?? 0, sub: 'Delivered', accent: 'green', loading },
+    { key: 'completedTrips', title: 'Trips Delivered', value: stats?.completedDeliveries ?? 0, sub: 'Completed', accent: 'green', loading },
     { key: 'cancelledTrips', title: 'Cancelled Trips', value: stats?.cancelledTrips ?? 0, sub: 'Canceled', accent: 'purple', loading },
-    { key: 'availableDrivers', title: 'Available Drivers', value: stats?.availableDrivers ?? availableDrivers?.length ?? 0, sub: 'Ready to accept', accent: 'amber', loading },
-    { key: 'onlineDrivers', title: 'Online Drivers', value: stats?.onlineDrivers ?? availableDrivers?.length ?? 0, sub: 'Connected', accent: 'sky', loading },
+    { key: 'totalUsers', title: 'Customers', value: stats?.totalUsers ?? 0, sub: 'Registered', accent: 'amber', loading },
+    { key: 'totalBookings', title: 'Total Bookings', value: stats?.totalBookings ?? 0, sub: 'All time', accent: 'sky', loading },
   ];
 
   const navigate = useNavigate();
@@ -203,85 +202,20 @@ function AdminDashboard() {
           ))}
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-7 gap-6">
-          <div className="lg:col-span-4">
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+          <div className="lg:col-span-5">
             <SectionCard
-              title="Live Operations"
-              right={<div className="text-xs text-muted">Real-time view</div>}
+              title="Recent Bookings"
+              right={<div className="text-xs text-muted">Last updates</div>}
             >
-              {dashboard ? (
-                <div className="space-y-4">
-                  <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-4">
-                    <div className="text-sm font-semibold">Delayed Deliveries</div>
-                    <div className="mt-2 text-xs text-muted">
-                      {stats?.delayedDeliveriesCount != null
-                        ? `${stats.delayedDeliveriesCount} flagged trips`
-                        : 'No delayed delivery data from dashboard API yet.'}
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-4">
-                    <div className="text-sm font-semibold">Emergency Alerts</div>
-                    <div className="mt-2 text-xs text-muted">
-                      {stats?.emergencyAlertsCount != null
-                        ? `${stats.emergencyAlertsCount} alerts pending`
-                        : 'No emergency alerts from dashboard API yet.'}
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-4">
-                    <div className="text-sm font-semibold">Driver Status</div>
-                    <div className="mt-2 text-xs text-muted">
-                      {stats?.onlineDrivers != null
-                        ? `${stats.onlineDrivers} online drivers`
-                        : `${availableDrivers.length} available drivers`}
-                    </div>
-                  </div>
-                </div>
+              {bookingRows.length ? (
+                <PremiumTable columns={bookingColumns} rows={bookingRows.slice(0, 8)} loading={false} />
               ) : (
-                <LoadingSkeleton className="h-56" />
-              )}
-            </SectionCard>
-          </div>
-
-          <div className="lg:col-span-3">
-            <SectionCard
-              title="Available Drivers"
-              right={<div className="text-xs text-muted">Dispatch-ready</div>}
-            >
-              {availableDrivers.length ? (
-                <div className="space-y-3">
-                  {availableDrivers.slice(0, 6).map((driver) => (
-                    <div key={driver.driver_id} className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="h-10 w-10 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center text-white font-semibold">
-                          {driver.first_name?.[0] || 'D'}
-                        </div>
-                        <div>
-                          <div className="text-sm font-semibold">
-                            {driver.first_name} {driver.last_name}
-                          </div>
-                          <div className="text-xs text-muted">⭐ {driver.rating ?? '—'}</div>
-                        </div>
-                      </div>
-                      <div className="text-xs font-semibold text-green-500">Available</div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <EmptyState title="No available drivers" subtitle="Drivers will appear here when online." />
+                <EmptyState title="No recent bookings" subtitle="Bookings will appear here once created." />
               )}
             </SectionCard>
           </div>
         </div>
-
-        <SectionCard title="Recent Bookings" right={<div className="text-xs text-muted">Last updates</div>}>
-          {bookingRows.length ? (
-            <PremiumTable columns={bookingColumns} rows={bookingRows.slice(0, 8)} loading={false} />
-          ) : (
-            <EmptyState title="No recent bookings" subtitle="Bookings will appear here once created." />
-          )}
-        </SectionCard>
       </div>
     </AdminShell>
   );

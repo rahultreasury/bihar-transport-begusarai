@@ -216,7 +216,9 @@ router.get('/users', protect, async (req, res) => {
 });
 
 // @route   GET /api/admin/drivers
-// @desc    Get all drivers
+// @desc    Get all drivers (legacy — kept for backward compatibility)
+//          Note: The new driver management module at /api/admin/drivers (driverManagementRoutes)
+//          should be used for full-featured driver listing with search.
 // @access  Private (Admin)
 router.get('/drivers', protect, async (req, res) => {
   try {
@@ -227,7 +229,7 @@ router.get('/drivers', protect, async (req, res) => {
       });
     }
 
-    const { page = 1, limit = 20, status = '' } = req.query;
+    const { page = 1, limit = 20, status = '', search = '' } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const take = parseInt(limit);
 
@@ -237,6 +239,17 @@ router.get('/drivers', protect, async (req, res) => {
       where.is_available = true;
     } else if (status === 'busy') {
       where.is_available = false;
+    }
+
+    // Support search across driver fields
+    if (search) {
+      const searchTerm = String(search).trim();
+      where.OR = [
+        { driver_name: { contains: searchTerm, mode: 'insensitive' } },
+        { driver_code: { contains: searchTerm, mode: 'insensitive' } },
+        { mobile: { contains: searchTerm } },
+        { city: { contains: searchTerm, mode: 'insensitive' } },
+      ];
     }
 
     const [drivers, total] = await Promise.all([
@@ -264,6 +277,9 @@ router.get('/drivers', protect, async (req, res) => {
     // Flatten Prisma result to match original SQL response format
     const flattened = drivers.map((d) => ({
       driver_id: d.driver_id,
+      driver_code: d.driver_code,
+      driver_name: d.driver_name,
+      mobile: d.mobile,
       user_id: d.user_id,
       license_number: d.license_number,
       license_expiry: d.license_expiry,
@@ -276,14 +292,17 @@ router.get('/drivers', protect, async (req, res) => {
       is_verified: d.is_verified,
       rating: d.rating,
       total_deliveries: d.total_deliveries,
+      status: d.status,
+      city: d.city,
+      state: d.state,
       created_at: d.created_at,
       updated_at: d.updated_at,
-      first_name: d.user.first_name,
-      last_name: d.user.last_name,
-      email: d.user.email,
-      phone: d.user.phone,
-      address: d.user.address,
-      city: d.user.city,
+      first_name: d.user?.first_name ?? null,
+      last_name: d.user?.last_name ?? null,
+      email: d.user?.email ?? null,
+      phone: d.user?.phone ?? null,
+      address: d.user?.address ?? null,
+      user_city: d.user?.city ?? null,
     }));
 
     res.json({
