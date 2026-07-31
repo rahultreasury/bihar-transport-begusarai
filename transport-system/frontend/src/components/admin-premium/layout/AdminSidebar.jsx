@@ -22,13 +22,10 @@ import {
 const DEFAULT_NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/admin' },
   { key: 'bookings', label: 'Bookings', icon: Package, path: '/admin/bookings' },
-  { key: 'partners', label: 'Transport Partners', icon: Truck, path: '/admin/partners' },
   { key: 'drivers', label: 'Drivers', icon: Users, path: '/admin/drivers' },
-  { key: 'settlements', label: 'Settlements', icon: FileText, path: '/admin/settlements' },
+  { key: 'owners', label: 'Transport Owners', icon: Truck, path: '/admin/owners' },
   { key: 'analytics', label: 'Analytics', icon: BarChart3, path: '/admin/analytics' },
-  { key: 'reports', label: 'Reports', icon: FileText, path: '/admin/reports' },
   { key: 'ai', label: 'AI Insights', icon: Sparkles, path: '/admin/ai' },
-  { key: 'settings', label: 'Settings', icon: Settings, path: '/admin/settings' },
 ];
 
 /**
@@ -72,8 +69,8 @@ const handleNav = useCallback(
         navigate('/admin');
       } else if (key === 'bookings') {
         navigate('/admin/bookings');
-      } else if (key === 'partners') {
-        navigate('/admin/partners');
+      } else if (key === 'owners' || key === 'partners') {
+        navigate('/admin/owners');
       } else if (key === 'drivers') {
         navigate('/admin/drivers');
       } else if (key === 'settlements') {

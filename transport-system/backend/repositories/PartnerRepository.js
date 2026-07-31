@@ -40,24 +40,33 @@ async function withRetry(fn, context = 'operation', maxRetries = 3) {
 }
 
 class PartnerRepository {
-  /**
+/**
    * Generate next partner code (PRT000001, PRT000002, etc.)
    */
   async generatePartnerCode(tx = null) {
-    const client = tx || prisma;
-    const lastPartner = await client.partner.findFirst({
-      orderBy: { partner_code: 'desc' },
-      select: { partner_code: true },
-    });
+    console.log('[REPO] generatePartnerCode called');
+    try {
+      const client = tx || prisma;
+      const lastPartner = await client.partner.findFirst({
+        orderBy: { partner_code: 'desc' },
+        select: { partner_code: true },
+      });
+      console.log('[REPO] generatePartnerCode - lastPartner:', lastPartner ? lastPartner.partner_code : 'none');
 
-    let nextNum = 1;
-    if (lastPartner && lastPartner.partner_code) {
-      const match = lastPartner.partner_code.match(/PRT(\d+)/);
-      if (match) {
-        nextNum = parseInt(match[1]) + 1;
+      let nextNum = 1;
+      if (lastPartner && lastPartner.partner_code) {
+        const match = lastPartner.partner_code.match(/PRT(\d+)/);
+        if (match) {
+          nextNum = parseInt(match[1]) + 1;
+        }
       }
+      const code = `PRT${String(nextNum).padStart(6, '0')}`;
+      console.log('[REPO] generatePartnerCode generated:', code);
+      return code;
+    } catch (err) {
+      console.error('[REPO] generatePartnerCode ERROR:', err.message, 'code:', err.code);
+      throw err;
     }
-    return `PRT${String(nextNum).padStart(6, '0')}`;
   }
 
   /**
@@ -125,13 +134,21 @@ class PartnerRepository {
     return `${prefix}${String(nextNum).padStart(5, '0')}`;
   }
 
-  /**
+/**
    * Find partner by mobile number
    */
   async findByMobile(mobile) {
-    return await prisma.partner.findFirst({
-      where: { mobile },
-    });
+    console.log('[REPO] findByMobile called with:', mobile);
+    try {
+      const result = await prisma.partner.findFirst({
+        where: { mobile },
+      });
+      console.log('[REPO] findByMobile result:', result ? 'found' : 'not found');
+      return result;
+    } catch (err) {
+      console.error('[REPO] findByMobile ERROR:', err.message, 'code:', err.code);
+      throw err;
+    }
   }
 
   /**
@@ -250,12 +267,20 @@ class PartnerRepository {
     };
   }
 
-  /**
+/**
    * Create a new transport partner
    */
   async create(data, tx = null) {
     const client = tx || prisma;
-    return await client.partner.create({ data });
+    console.log('[REPO] create() called - BEFORE prisma.partner.create');
+    try {
+      const result = await client.partner.create({ data });
+      console.log('[REPO] create() - AFTER prisma.partner.create. partner_id:', result.partner_id);
+      return result;
+    } catch (err) {
+      console.error('[REPO] create() ERROR:', err.message, 'code:', err.code);
+      throw err;
+    }
   }
 
   /**
@@ -809,6 +834,167 @@ class PartnerRepository {
       },
       orderBy: { created_at: 'desc' },
     });
+  }
+
+  // ============================
+  // OWNER MODULE ENHANCEMENTS
+  // ============================
+
+  /**
+   * Get today's assigned trips for a specific partner or all partners
+   */
+  async getTodayAssignedTrips(partnerId = null) {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+
+    const where = {
+      created_at: { gte: todayStart, lte: todayEnd },
+      status: { notIn: ['cancelled', 'completed', 'delivered'] },
+    };
+
+    if (partnerId) {
+      where.partner_id = partnerId;
+    }
+
+    return await prisma.booking.count({ where });
+  }
+
+  /**
+   * Get owner stats for admin dashboard (enhanced with today's trips)
+   */
+  async getOwnerStats() {
+    const [total, active, inactive, suspended] = await Promise.all([
+      prisma.partner.count({ where: { deleted_at: null } }),
+      prisma.partner.count({ where: { status: 'active', deleted_at: null } }),
+      prisma.partner.count({ where: { status: 'inactive', deleted_at: null } }),
+      prisma.partner.count({ where: { status: 'suspended', deleted_at: null } }),
+    ]);
+
+    // Total outstanding across all partners
+    const latestLedgers = await prisma.partnerLedger.groupBy({
+      by: ['partner_id'],
+      _max: { running_balance: true },
+    });
+
+    const totalOutstanding = latestLedgers.reduce((sum, l) => sum + (l._max.running_balance || 0), 0);
+
+    // Today's assigned trips across all partners
+    const todayTrips = await this.getTodayAssignedTrips();
+
+    return {
+      total,
+      active,
+      inactive,
+      suspended,
+      totalOutstanding,
+      todayAssignedTrips: todayTrips,
+    };
+  }
+
+  /**
+   * Get bookings for an owner with status filter
+   */
+  async getOwnerBookings(partnerId, filters = {}) {
+    const { page = 1, limit = 20, status = '', sort_by = 'created_at', sort_order = 'desc' } = filters;
+    const skip = (page - 1) * limit;
+
+    const where = { partner_id: partnerId };
+    if (status) {
+      where.status = status;
+    }
+
+    const allowedSortFields = ['created_at', 'pickup_date', 'final_price', 'status'];
+    const field = allowedSortFields.includes(sort_by) ? sort_by : 'created_at';
+    const order = sort_order === 'asc' ? 'asc' : 'desc';
+
+    const [bookings, total] = await Promise.all([
+      prisma.booking.findMany({
+        where,
+        include: {
+          driver: {
+            select: {
+              driver_id: true,
+              driver_code: true,
+              driver_name: true,
+              mobile: true,
+            },
+          },
+          vehicle: {
+            select: {
+              vehicle_id: true,
+              vehicle_number: true,
+              vehicle_type: true,
+            },
+          },
+        },
+        orderBy: { [field]: order },
+        skip,
+        take: parseInt(limit),
+      }),
+      prisma.booking.count({ where }),
+    ]);
+
+    return {
+      bookings,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / parseInt(limit)),
+      },
+    };
+  }
+
+  /**
+   * Get commission summary for an owner
+   */
+  async getCommissionSummary(partnerId) {
+    const partner = await prisma.partner.findUnique({
+      where: { partner_id: partnerId },
+      select: {
+        commission_percentage: true,
+        commission_type: true,
+        fixed_commission: true,
+      },
+    });
+
+    if (!partner) return null;
+
+    // Total commission from completed bookings
+    const commissionAgg = await prisma.booking.aggregate({
+      where: {
+        partner_id: partnerId,
+        status: { in: ['delivered', 'completed'] },
+      },
+      _sum: { commission_amount: true },
+    });
+
+    // Total revenue
+    const revenueAgg = await prisma.booking.aggregate({
+      where: {
+        partner_id: partnerId,
+        status: { in: ['delivered', 'completed'] },
+      },
+      _sum: { final_price: true },
+    });
+
+    // Current outstanding from ledger
+    const latestLedger = await prisma.partnerLedger.findFirst({
+      where: { partner_id: partnerId },
+      orderBy: { created_at: 'desc' },
+      select: { running_balance: true },
+    });
+
+    return {
+      commissionPercentage: partner.commission_percentage,
+      commissionType: partner.commission_type,
+      fixedCommission: partner.fixed_commission,
+      totalCommission: commissionAgg._sum.commission_amount || 0,
+      totalRevenue: revenueAgg._sum.final_price || 0,
+      outstandingBalance: latestLedger?.running_balance || 0,
+    };
   }
 }
 

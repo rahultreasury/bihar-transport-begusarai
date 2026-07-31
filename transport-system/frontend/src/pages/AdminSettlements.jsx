@@ -11,7 +11,7 @@ import { LoadingSkeleton } from '../components/admin-premium/ui/LoadingSkeleton'
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: '▦' },
   { key: 'bookings', label: 'Bookings', icon: '⟐' },
-  { key: 'partners', label: 'Transport Partners', icon: '⧉' },
+  { key: 'owners', label: 'Transport Owners', icon: '⧉' },
   { key: 'drivers', label: 'Drivers', icon: '⌁' },
   { key: 'settlements', label: 'Settlements', icon: '📊' },
   { key: 'analytics', label: 'Analytics', icon: '◷' },
@@ -86,8 +86,8 @@ export default function AdminSettlements() {
       key: 'partner',
       header: 'Partner',
       render: (r) => (
-        <div className="cursor-pointer" onClick={() => navigate(`/admin/partners/${r.partner_id}`)}>
-          <div className="font-medium text-sm">{r.partner?.partner_name || `Partner #${r.partner_id}`}</div>
+        <div className="cursor-pointer" onClick={() => navigate(`/admin/owners/${r.partner_id}`)}>
+          <div className="font-medium text-sm">{r.partner?.partner_name || `Owner #${r.partner_id}`}</div>
           <div className="text-[10px] text-muted font-mono">{r.partner?.partner_code || ''}</div>
         </div>
       )

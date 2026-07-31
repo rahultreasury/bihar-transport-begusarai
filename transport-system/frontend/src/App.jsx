@@ -31,6 +31,8 @@ const AdminAnalytics = lazy(() => import('./pages/AdminAnalytics'));
 const AdminPartners = lazy(() => import('./pages/AdminPartners'));
 const AdminPartnerProfile = lazy(() => import('./pages/AdminPartnerProfile'));
 const AdminSettlements = lazy(() => import('./pages/AdminSettlements'));
+const AdminOwners = lazy(() => import('./pages/AdminPartners'));
+const AdminOwnerProfile = lazy(() => import('./pages/AdminPartnerProfile'));
 const VehicleSearch = lazy(() => import('./pages/VehicleSearch'));
 const LicenseSearch = lazy(() => import('./pages/LicenseSearch'));
 const ChallanSearch = lazy(() => import('./pages/ChallanSearch'));
@@ -184,18 +186,18 @@ function AppContent() {
           } 
         />
         <Route 
-          path="/admin/partners" 
+          path="/admin/owners" 
           element={
             user?.role === 'admin' || user?.role === 'super_admin' 
-              ? <Suspense fallback={<PageLoader label="Loading Partners..." />}><AdminPartners /></Suspense>
+              ? <Suspense fallback={<PageLoader label="Loading Transport Owners..." />}><AdminPartners /></Suspense>
               : <Navigate to="/" />
           } 
         />
         <Route 
-          path="/admin/partners/:id" 
+          path="/admin/owners/:id" 
           element={
             user?.role === 'admin' || user?.role === 'super_admin' 
-              ? <Suspense fallback={<PageLoader label="Loading Partner Profile..." />}><AdminPartnerProfile /></Suspense>
+              ? <Suspense fallback={<PageLoader label="Loading Owner Profile..." />}><AdminPartnerProfile /></Suspense>
               : <Navigate to="/" />
           } 
         />

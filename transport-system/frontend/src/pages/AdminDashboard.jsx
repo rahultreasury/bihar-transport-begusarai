@@ -25,7 +25,7 @@ function AdminDashboard() {
       { key: 'dashboard', label: 'Dashboard', icon: '▦' },
       { key: 'bookings', label: 'Bookings', icon: '⟐' },
       { key: 'drivers', label: 'Drivers', icon: '⌁' },
-      { key: 'vehicles', label: 'Vehicles', icon: '⧉' },
+      { key: 'owners', label: 'Transport Owners', icon: '▦' },
       { key: 'analytics', label: 'Analytics', icon: '◷' },
       { key: 'ai', label: 'AI Insights', icon: '✦' }
     ],
@@ -66,10 +66,10 @@ function AdminDashboard() {
     { key: 'todayBookings', title: "Today's Bookings", value: stats?.todayBookings ?? 0, sub: 'New bookings', accent: 'green', loading },
     { key: 'pendingBookings', title: 'Pending Bookings', value: stats?.pendingBookings ?? 0, sub: 'Awaiting dispatch', accent: 'purple', loading },
     { key: 'activeTrips', title: 'Active Trips', value: stats?.activeTrips ?? stats?.activeDeliveries, sub: 'In progress', accent: 'sky', loading },
-    { key: 'completedTrips', title: 'Trips Delivered', value: stats?.completedDeliveries ?? 0, sub: 'Completed', accent: 'green', loading },
-    { key: 'cancelledTrips', title: 'Cancelled Trips', value: stats?.cancelledTrips ?? 0, sub: 'Canceled', accent: 'purple', loading },
-    { key: 'totalUsers', title: 'Customers', value: stats?.totalUsers ?? 0, sub: 'Registered', accent: 'amber', loading },
-    { key: 'totalBookings', title: 'Total Bookings', value: stats?.totalBookings ?? 0, sub: 'All time', accent: 'sky', loading },
+    { key: 'totalOwners', title: 'Total Owners', value: stats?.totalOwners ?? 0, sub: 'Transport owners', accent: 'green', loading },
+    { key: 'activeOwners', title: 'Active Owners', value: stats?.activeOwners ?? 0, sub: 'Currently active', accent: 'green', loading },
+    { key: 'inactiveOwners', title: 'Inactive Owners', value: stats?.inactiveOwners ?? 0, sub: 'Inactive', accent: 'purple', loading },
+    { key: 'outstandingPayments', title: 'Outstanding Payments', value: stats?.outstandingPayments ?? 0, sub: 'Due amount', accent: 'amber', loading },
   ];
 
   const navigate = useNavigate();

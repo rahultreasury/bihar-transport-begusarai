@@ -482,6 +482,7 @@ model Partner {
   partner_name      String
   owner_name        String
   company_name      String?
+  email             String?
   mobile            String
   alternate_mobile  String?
   city              String?

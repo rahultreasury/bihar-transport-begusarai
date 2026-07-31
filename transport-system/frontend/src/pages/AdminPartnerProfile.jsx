@@ -9,9 +9,8 @@ import EmptyState from '../components/admin-premium/ui/EmptyState';
 import { LoadingSkeleton } from '../components/admin-premium/ui/LoadingSkeleton';
 
 const NAV_ITEMS = [
-  { key: 'dashboard', label: 'Dashboard', icon: '▦' },
+  { key: 'owners', label: 'Transport Owners', icon: '▦' },
   { key: 'bookings', label: 'Bookings', icon: '⟐' },
-  { key: 'partners', label: 'Transport Partners', icon: '⧉' },
   { key: 'drivers', label: 'Drivers', icon: '⌁' },
   { key: 'analytics', label: 'Analytics', icon: '◷' },
   { key: 'reports', label: 'Reports', icon: '📊' },
@@ -19,16 +18,15 @@ const NAV_ITEMS = [
 ];
 
 const TABS = [
-  { key: 'overview', label: 'Overview', icon: 'ℹ️' },
-  { key: 'trucks', label: 'Trucks', icon: '🚚' },
-  { key: 'drivers', label: 'Drivers', icon: '👤' },
-  { key: 'ledger', label: 'Ledger', icon: '📒' },
-  { key: 'payments', label: 'Payments', icon: '💵' },
-  { key: 'settlements', label: 'Settlements', icon: '📊' },
+  { key: 'overview', label: 'Owner Details', icon: 'ℹ️' },
+  { key: 'drivers', label: 'Assigned Drivers', icon: '👤' },
+  { key: 'bookings', label: 'Current Bookings', icon: '📦' },
+  { key: 'completed', label: 'Completed Trips', icon: '✅' },
+  { key: 'trucks', label: 'Vehicles', icon: '🚚' },
   { key: 'documents', label: 'Documents', icon: '📄' },
 ];
 
-function PartnerStatusBadge({ status }) {
+function OwnerStatusBadge({ status }) {
   const colors = {
     active: 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400',
     inactive: 'bg-gray-100 text-gray-600 dark:bg-gray-500/20 dark:text-gray-400',
@@ -75,11 +73,11 @@ export default function AdminPartnerProfile() {
 
   useEffect(() => { if (id) fetchPartner(); }, [id, fetchPartner]);
 
-  const goBack = () => navigate('/admin/partners');
+  const goBack = () => navigate('/admin/owners');
 
   if (loading) {
     return (
-      <AdminShell navItems={NAV_ITEMS} activeKey="partners" onNav={(k) => {}}>
+      <AdminShell navItems={NAV_ITEMS} activeKey="owners" onNav={(k) => {}}>
         <div className="space-y-4"><LoadingSkeleton className="h-12 w-48" /><LoadingSkeleton className="h-64 w-full" /></div>
       </AdminShell>
     );
@@ -87,40 +85,41 @@ export default function AdminPartnerProfile() {
 
   if (error || !partner) {
     return (
-      <AdminShell navItems={NAV_ITEMS} activeKey="partners" onNav={(k) => {}}>
+      <AdminShell navItems={NAV_ITEMS} activeKey="owners" onNav={(k) => {}}>
         <div className="rounded-2xl border border-red-500/30 bg-red-500/5 p-8 text-center">
-          <div className="text-red-500 font-semibold mb-2">Failed to load partner</div>
-          <div className="text-sm text-muted mb-4">{error || 'Partner not found'}</div>
-          <button onClick={goBack} className="px-5 py-2 rounded-xl bg-amber-500 text-white text-sm font-semibold">Back to Partners</button>
+          <div className="text-red-500 font-semibold mb-2">Failed to load owner</div>
+          <div className="text-sm text-muted mb-4">{error || 'Owner not found'}</div>
+          <button onClick={goBack} className="px-5 py-2 rounded-xl bg-amber-500 text-white text-sm font-semibold">Back to Owners</button>
         </div>
       </AdminShell>
     );
   }
 
   return (
-    <AdminShell navItems={NAV_ITEMS} activeKey="partners" onNav={(k) => {}}>
+    <AdminShell navItems={NAV_ITEMS} activeKey="owners" onNav={(k) => {}}>
       <div className="space-y-5">
         <button onClick={goBack} className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-text transition">
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
-          Back to Partners
+          Back to Owners
         </button>
 
         {/* Header */}
         <div className="rounded-3xl border border-border/60 bg-card/40 backdrop-blur-xl p-6">
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 sm:gap-6">
             <div className="h-20 w-20 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center text-white font-bold text-2xl shrink-0">
-              {partner.partner_name?.charAt(0) || 'P'}
+              {(partner.company_name || partner.partner_name)?.charAt(0) || 'O'}
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-3 flex-wrap">
-                <h1 className="text-2xl font-bold">{partner.partner_name}</h1>
-                <PartnerStatusBadge status={partner.status} />
+                <h1 className="text-2xl font-bold">{partner.company_name || partner.partner_name}</h1>
+                <OwnerStatusBadge status={partner.status} />
               </div>
               <div className="flex items-center gap-4 mt-2 text-sm text-muted flex-wrap">
                 <span className="font-mono font-semibold text-amber-600 dark:text-amber-400">{partner.partner_code}</span>
                 <span>📞 {partner.mobile}</span>
+                {partner.email && <span>✉️ {partner.email}</span>}
                 {partner.city && <span>📍 {partner.city}, {partner.state}</span>}
               </div>
             </div>
@@ -129,13 +128,13 @@ export default function AdminPartnerProfile() {
 
         {/* Dashboard Summary Cards */}
         {dashboard && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             <SummaryCard label="Total Bookings" value={dashboard.totalBookings} color="amber" />
             <SummaryCard label="Active" value={dashboard.activeBookings} color="blue" />
             <SummaryCard label="Completed" value={dashboard.completedBookings} color="green" />
-            <SummaryCard label="Revenue" value={`₹${(dashboard.totalRevenue || 0).toLocaleString('en-IN')}`} color="amber" />
-            <SummaryCard label="Commission" value={`₹${(dashboard.commissionEarned || 0).toLocaleString('en-IN')}`} color="purple" />
+            <SummaryCard label="Commission Earned" value={`₹${(dashboard.commissionEarned || 0).toLocaleString('en-IN')}`} color="purple" />
             <SummaryCard label="Outstanding" value={`₹${(dashboard.outstandingBalance || 0).toLocaleString('en-IN')}`} color="red" />
+            <SummaryCard label="Vehicles" value={partner._count?.trucks || 0} color="amber" />
           </div>
         )}
 
@@ -157,11 +156,10 @@ export default function AdminPartnerProfile() {
         {/* Tab Content */}
         <div className="min-h-[400px]">
           {activeTab === 'overview' && <OverviewTab partner={partner} dashboard={dashboard} />}
-          {activeTab === 'trucks' && <TrucksTab partnerId={partner.partner_id} />}
           {activeTab === 'drivers' && <DriversTab partnerId={partner.partner_id} />}
-          {activeTab === 'ledger' && <LedgerTab partnerId={partner.partner_id} />}
-          {activeTab === 'payments' && <PaymentsTab partnerId={partner.partner_id} />}
-          {activeTab === 'settlements' && <SettlementsTab partnerId={partner.partner_id} />}
+          {activeTab === 'bookings' && <OwnerBookingsTab partnerId={partner.partner_id} status="active" />}
+          {activeTab === 'completed' && <OwnerBookingsTab partnerId={partner.partner_id} status="completed" />}
+          {activeTab === 'trucks' && <TrucksTab partnerId={partner.partner_id} />}
           {activeTab === 'documents' && <DocumentsTab partnerId={partner.partner_id} />}
         </div>
       </div>
@@ -471,6 +469,56 @@ function SettlementsTab({ partnerId }) {
           rows={settlements.map(s => ({ ...s, id: s.settlement_id }))}
           loading={false}
         />
+      )}
+    </SectionCard>
+  );
+}
+
+function OwnerBookingsTab({ partnerId, status }) {
+  const [bookings, setBookings] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetch = async () => {
+      setLoading(true);
+      try {
+        const { adminAPI } = await import('../services/api');
+        const res = await adminAPI.getOwnerBookings(partnerId, { status });
+        if (res.data?.success) setBookings(res.data.data || []);
+      } catch (err) { console.error(err); }
+      finally { setLoading(false); }
+    };
+    if (partnerId) fetch();
+  }, [partnerId, status]);
+
+  const isActive = status !== 'completed';
+
+  const columns = useMemo(() => [
+    { key: 'booking_reference', header: 'Booking #', render: (r) => <span className="font-mono font-semibold text-amber-600">{r.booking_reference}</span> },
+    { key: 'customer', header: 'Customer', render: (r) => <span className="text-sm">{r.first_name ? `${r.first_name} ${r.last_name || ''}` : '—'}</span> },
+    { key: 'route', header: 'Route', render: (r) => <span className="text-sm">{r.pickup_city} → {r.drop_city}</span> },
+    { key: 'goods', header: 'Goods', render: (r) => <span className="text-sm text-muted">{r.goods_description || r.goods_type || '—'}</span> },
+    { key: 'price', header: 'Price', render: (r) => <span className="font-semibold">₹{(r.final_price || 0).toLocaleString('en-IN')}</span> },
+    { key: 'status', header: 'Status', render: (r) => (
+      <span className={`text-xs font-medium px-2 py-1 rounded ${
+        r.status === 'delivered' || r.status === 'completed' ? 'bg-green-100 text-green-700' :
+        r.status === 'in_transit' ? 'bg-blue-100 text-blue-700' :
+        r.status === 'cancelled' ? 'bg-red-100 text-red-700' :
+        'bg-amber-100 text-amber-700'
+      }`}>{r.status?.replace(/_/g, ' ')}</span>
+    )},
+    { key: 'date', header: 'Date', render: (r) => <span className="text-sm text-muted">{r.created_at ? new Date(r.created_at).toLocaleDateString('en-IN') : '—'}</span> },
+    { key: 'commission', header: 'Commission', render: (r) => <span className="text-sm text-purple-500 font-medium">₹{(r.commission_amount || 0).toLocaleString('en-IN')}</span> },
+  ], []);
+
+  if (loading) return <LoadingSkeleton className="h-48 w-full" />;
+
+  return (
+    <SectionCard title={isActive ? 'Current Bookings' : 'Completed Trips'}>
+      {bookings.length === 0 ? (
+        <EmptyState title={isActive ? 'No active bookings' : 'No completed trips'} subtitle={isActive ? 'This owner has no active bookings.' : 'Completed trips will appear here.'} />
+      ) : (
+        <PremiumTable columns={columns} rows={bookings.map(b => ({ ...b, id: b.booking_id }))} loading={false} />
       )}
     </SectionCard>
   );

@@ -109,8 +109,8 @@ export const adminAPI = {
   getAvailableVehicles: () => api.get('/admin/drivers/vehicles/available'),
   assignVehicleToDriver: (driverId, vehicleId) => api.post(`/admin/drivers/${driverId}/assign-vehicle`, { vehicle_id: vehicleId }),
 
-  // Partner Management (Transport Partners)
-  getPartnerStats: () => api.get('/admin/partners/stats'),
+  // Partner Management (Transport Partners/Owners)
+  getPartnerStats: (enhanced) => api.get('/admin/partners/stats', { params: { enhanced: enhanced ? 'true' : 'false' } }),
   getPartners: (params) => api.get('/admin/partners', { params }),
   getPartner: (id) => api.get(`/admin/partners/${id}`),
   createPartner: (data) => api.post('/admin/partners', data),
@@ -153,6 +153,12 @@ export const adminAPI = {
   getPartnerDrivers: (id) => api.get(`/admin/partners/${id}/drivers`),
   assignDriverToPartner: (id, driverId) => api.post(`/admin/partners/${id}/assign-driver`, { driver_id: driverId }),
   unassignDriverFromPartner: (id, driverId) => api.post(`/admin/partners/${id}/unassign-driver`, { driver_id: driverId }),
+
+  // Owner Module Enhancements
+  getOwnerStats: () => api.get('/admin/partners/stats', { params: { enhanced: 'true' } }),
+  getTodayAssignedTrips: (partnerId) => api.get('/admin/partners/today-trips', { params: partnerId ? { partner_id: partnerId } : {} }),
+  getOwnerBookings: (id, params) => api.get(`/admin/partners/${id}/bookings`, { params }),
+  getCommissionSummary: (id) => api.get(`/admin/partners/${id}/commission`),
 };
 
 // Delivery APIs

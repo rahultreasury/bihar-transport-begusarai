@@ -11,15 +11,30 @@ class PartnerService {
     this.repo = new PartnerRepository();
   }
 
-  /**
+/**
    * Register a new transport partner
    */
   async registerPartner(data) {
     const { mobile } = data;
 
+    console.log('[SERVICE] registerPartner ENTERED. mobile:', mobile);
+
+    // Validate commission
+    const commission = parseFloat(data.commission_percentage) || 10;
+    if (commission < 0 || commission > 100) {
+      const err = new Error('Commission must be between 0 and 100');
+      err.code = 'INVALID_COMMISSION';
+      throw err;
+    }
+
+    console.log('[SERVICE] Commission validated:', commission);
+
+    // Check unique mobile
+    console.log('[SERVICE] Checking existing partner by mobile:', mobile);
     const existing = await this.repo.findByMobile(mobile);
+    console.log('[SERVICE] findByMobile returned:', existing ? 'FOUND - partner_id:' + existing.partner_id : 'NOT FOUND');
     if (existing) {
-      const err = new Error('Partner with this mobile already exists');
+      const err = new Error('A partner with this mobile number already exists');
       err.code = 'PARTNER_ALREADY_EXISTS';
       err.data = {
         partner_id: existing.partner_id,
@@ -29,13 +44,26 @@ class PartnerService {
       throw err;
     }
 
+    console.log('[SERVICE] Generating partner code...');
     const partnerCode = await this.repo.generatePartnerCode();
+    console.log('[SERVICE] Partner code generated:', partnerCode);
 
-    return await this.repo.create({
+    // Normalize: all upper layers pass 'owner_name', only the repository maps to 'partner_name'
+    const ownerName = data.owner_name ? data.owner_name.trim() : null;
+    if (!ownerName) {
+      const err = new Error('Owner name is required');
+      err.code = 'MISSING_OWNER_NAME';
+      throw err;
+    }
+
+    console.log('[SERVICE] ownerName:', ownerName);
+
+    const partnerData = {
       partner_code: partnerCode,
-      partner_name: data.partner_name,
-      owner_name: data.owner_name,
+      partner_name: ownerName,    // Prisma required field — mapped from owner_name
+      owner_name: ownerName,      // Prisma field — also stored
       company_name: data.company_name || null,
+      email: data.email || null,
       mobile: data.mobile,
       alternate_mobile: data.alternate_mobile || null,
       city: data.city || null,
@@ -49,11 +77,16 @@ class PartnerService {
       address: data.address || null,
       status: 'active',
       notes: data.notes || null,
-      commission_percentage: data.commission_percentage || 10,
+      commission_percentage: commission,
       commission_type: data.commission_type || 'percentage',
       fixed_commission: data.fixed_commission || 0,
       is_active: true,
-    });
+    };
+
+    console.log('[SERVICE] Calling repo.create()...');
+    const result = await this.repo.create(partnerData);
+    console.log('[SERVICE] repo.create returned. partner_id:', result?.partner_id);
+    return result;
   }
 
   async getPartnerProfile(partnerId) {
@@ -71,7 +104,7 @@ class PartnerService {
   async updatePartner(partnerId, data) {
     const allowedFields = [
       'partner_name', 'owner_name', 'company_name',
-      'mobile', 'alternate_mobile', 'city', 'state',
+      'email', 'mobile', 'alternate_mobile', 'city', 'state',
       'gst_number', 'pan_number',
       'bank_account', 'bank_ifsc', 'bank_name', 'upi_id',
       'address', 'notes',
@@ -367,6 +400,26 @@ class PartnerService {
 
   async getDriverAssignmentHistory(driverId) {
     return await this.repo.getDriverAssignmentHistory(driverId);
+  }
+
+  // ============================
+  // OWNER MODULE ENHANCEMENTS
+  // ============================
+
+  async getOwnerStats() {
+    return await this.repo.getOwnerStats();
+  }
+
+  async getTodayAssignedTrips(partnerId = null) {
+    return await this.repo.getTodayAssignedTrips(partnerId);
+  }
+
+  async getOwnerBookings(partnerId, filters = {}) {
+    return await this.repo.getOwnerBookings(partnerId, filters);
+  }
+
+  async getCommissionSummary(partnerId) {
+    return await this.repo.getCommissionSummary(partnerId);
   }
 }
 

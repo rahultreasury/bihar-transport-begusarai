@@ -44,7 +44,8 @@ const handleError = (res, error, defaultMsg = 'Server error') => {
 
 router.get('/stats', protect, adminCheck, async (req, res) => {
   try {
-    const stats = await partnerService.getPartnerStats();
+    const enh = req.query.enhanced === 'true';
+    const stats = enh ? await partnerService.getOwnerStats() : await partnerService.getPartnerStats();
     res.json({ success: true, data: stats });
   } catch (error) {
     handleError(res, error);
@@ -82,20 +83,42 @@ router.get('/:id', protect, adminCheck, async (req, res) => {
 
 // Create partner
 router.post('/', protect, adminCheck, [
-  body('partner_name').trim().notEmpty().withMessage('Partner name is required'),
-  body('owner_name').trim().notEmpty().withMessage('Owner name is required'),
-  body('mobile').trim().notEmpty().withMessage('Mobile number is required')
-    .matches(/^[6-9]\d{9}$/).withMessage('Enter a valid 10-digit mobile number'),
-], handleValidation, async (req, res) => {
+  body('owner_name').trim().notEmpty().withMessage('Please enter the owner\'s name.'),
+  body('mobile').trim().notEmpty().withMessage('Phone number is required.')
+    .matches(/^[6-9]\d{9}$/).withMessage('Please enter a valid 10-digit phone number.'),
+  body('city').trim().notEmpty().withMessage('City is required.'),
+  body('commission_percentage').optional().isFloat({ min: 0, max: 100 }).withMessage('Commission must be between 0 and 100%.'),
+], handleValidation, async (req, res, next) => {
   try {
+    console.log('[ROUTE] POST /admin/partners - ENTERED');
+    console.log('[ROUTE] Request body keys:', Object.keys(req.body));
+    console.log('[ROUTE] owner_name:', req.body.owner_name, 'mobile:', req.body.mobile);
+
     const partner = await partnerService.registerPartner(req.body);
-    res.status(201).json({
+
+    console.log('[ROUTE] registerPartner returned. partner_id:', partner?.partner_id);
+    console.log('[ROUTE] Sending 201 response');
+    return res.status(201).json({
       success: true,
-      message: 'Partner registered successfully',
+      message: 'Transport Owner registered successfully.',
       data: { partner_id: partner.partner_id, partner_code: partner.partner_code, partner_name: partner.partner_name },
     });
   } catch (error) {
-    handleError(res, error);
+    console.error('[ROUTE] Create partner error:', error.message, 'code:', error.code);
+    if (error.code === 'PARTNER_ALREADY_EXISTS') {
+      return res.status(409).json({ success: false, message: 'This phone number is already registered with another owner.', data: error.data });
+    }
+    if (error.code === 'MISSING_OWNER_NAME') {
+      return res.status(400).json({ success: false, message: 'Please enter the owner\'s name.' });
+    }
+    if (error.code === 'P2002') {
+      return res.status(400).json({ success: false, message: 'This phone number is already registered.' });
+    }
+    if (error.code === 'INVALID_COMMISSION') {
+      return res.status(400).json({ success: false, message: 'Commission must be between 0 and 100%.' });
+    }
+    console.log('[ROUTE] Sending 500 error response');
+    return res.status(500).json({ success: false, message: 'Something went wrong. Please try again.' });
   }
 });
 
@@ -410,6 +433,49 @@ router.post('/:id/unassign-driver', protect, adminCheck, [
 
     await partnerService.unassignDriverFromPartner(parseInt(req.body.driver_id), partnerId);
     res.json({ success: true, message: 'Driver unassigned from partner' });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+// ============================
+// OWNER MODULE ENHANCEMENTS
+// ============================
+
+// Get today's assigned trips
+router.get('/today-trips', protect, adminCheck, async (req, res) => {
+  try {
+    const partnerId = req.query.partner_id ? parseInt(req.query.partner_id) : null;
+    const count = await partnerService.getTodayAssignedTrips(partnerId);
+    res.json({ success: true, data: { todayAssignedTrips: count } });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+// Get owner bookings (with status filter)
+router.get('/:id/bookings', protect, adminCheck, async (req, res) => {
+  try {
+    const partnerId = parseInt(req.params.id);
+    if (isNaN(partnerId)) return res.status(400).json({ success: false, message: 'Invalid partner ID' });
+
+    const result = await partnerService.getOwnerBookings(partnerId, req.query);
+    res.json({ success: true, data: result.bookings, pagination: result.pagination });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+// Get commission summary
+router.get('/:id/commission', protect, adminCheck, async (req, res) => {
+  try {
+    const partnerId = parseInt(req.params.id);
+    if (isNaN(partnerId)) return res.status(400).json({ success: false, message: 'Invalid partner ID' });
+
+    const summary = await partnerService.getCommissionSummary(partnerId);
+    if (!summary) return res.status(404).json({ success: false, message: 'Partner not found' });
+
+    res.json({ success: true, data: summary });
   } catch (error) {
     handleError(res, error);
   }
