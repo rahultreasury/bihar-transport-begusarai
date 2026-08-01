@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { bookingAPI } from '../services/api';
 import { Link, useNavigate } from 'react-router-dom';
 import { LoadScript, Autocomplete } from '@react-google-maps/api';
@@ -56,43 +56,336 @@ const TempoIcon = () => (
   </svg>
 );
 
+const AceIcon = () => (
+  <svg viewBox="0 0 64 64" className="w-16 h-16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="14" y="26" width="24" height="16" rx="2" fill="#F5A623" />
+    <rect x="38" y="30" width="12" height="12" rx="2" fill="#F5A623" />
+    <circle cx="24" cy="46" r="4" fill="#1e3a5f" />
+    <circle cx="44" cy="46" r="4" fill="#1e3a5f" />
+    <circle cx="24" cy="46" r="2" fill="#fff" />
+    <circle cx="44" cy="46" r="2" fill="#fff" />
+    <rect x="16" y="30" width="6" height="4" rx="1" fill="#1e3a5f" />
+  </svg>
+);
+
+const HeavyTruckIcon = () => (
+  <svg viewBox="0 0 64 64" className="w-16 h-16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="4" y="18" width="40" height="22" rx="2" fill="#F5A623" />
+    <rect x="44" y="24" width="14" height="16" rx="2" fill="#F5A623" />
+    <circle cx="16" cy="44" r="4.5" fill="#1e3a5f" />
+    <circle cx="32" cy="44" r="4.5" fill="#1e3a5f" />
+    <circle cx="50" cy="44" r="4.5" fill="#1e3a5f" />
+    <circle cx="16" cy="44" r="2.2" fill="#fff" />
+    <circle cx="32" cy="44" r="2.2" fill="#fff" />
+    <circle cx="50" cy="44" r="2.2" fill="#fff" />
+    <rect x="8" y="22" width="8" height="5" rx="1" fill="#1e3a5f" />
+  </svg>
+);
+
+const ContainerTruckIcon = () => (
+  <svg viewBox="0 0 64 64" className="w-16 h-16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="4" y="20" width="52" height="20" rx="2" fill="#F5A623" />
+    <rect x="4" y="20" width="52" height="6" rx="2" fill="#1e3a5f" opacity="0.9" />
+    <line x1="14" y1="27" x2="14" y2="40" stroke="#1e3a5f" strokeWidth="1.5" opacity="0.4" />
+    <line x1="32" y1="27" x2="32" y2="40" stroke="#1e3a5f" strokeWidth="1.5" opacity="0.4" />
+    <line x1="50" y1="27" x2="50" y2="40" stroke="#1e3a5f" strokeWidth="1.5" opacity="0.4" />
+    <circle cx="16" cy="44" r="4.5" fill="#1e3a5f" />
+    <circle cx="46" cy="44" r="4.5" fill="#1e3a5f" />
+    <circle cx="16" cy="44" r="2.2" fill="#fff" />
+    <circle cx="46" cy="44" r="2.2" fill="#fff" />
+    <rect x="44" y="22" width="6" height="6" rx="1" fill="#FBBF24" />
+  </svg>
+);
+
 // Vehicle data with prices and SVG icons
 const vehicleTypes = [
   {
-    type: 'truck',
-    name: 'Truck',
-    capacity: '10-20 Ton',
-    icon: TruckIcon,
-    price: 25,
-    available: 3,
-    description: 'Heavy cargo transport'
-  },
-  {
-    type: 'mini_truck',
-    name: 'Mini Truck',
-    capacity: '2-3 Ton',
-    icon: MiniTruckIcon,
-    price: 18,
-    available: 1,
-    description: 'Small to medium loads'
-  },
-  {
+    id: 'tata-ace',
     type: 'pickup',
-    name: 'Pickup',
-    capacity: '1-1.5 Ton',
-    icon: PickupIcon,
-    price: 12,
-    available: 2,
-    description: 'Light cargo & personal'
+    name: 'Tata Ace',
+    capacity: '1000 KG',
+    capacityKg: 1000,
+    category: 'Light Commercial',
+    wheels: 4,
+    lengthFt: 8,
+    priceLabel: '₹20–25/km',
+    price: 22.5,
+    priceMin: 20,
+    priceMax: 25,
+    icon: AceIcon,
+    bestFor: ['Small household goods', 'E-commerce deliveries', 'Small business shipments']
   },
   {
-    type: 'tempo',
-    name: 'Tempo',
-    capacity: '3-5 Ton',
+    id: 'ashok-leyland-dost',
+    type: 'pickup',
+    name: 'Ashok Leyland Dost',
+    capacity: '1.5 Ton (1500 KG)',
+    capacityKg: 1500,
+    category: 'Light Commercial',
+    wheels: 4,
+    lengthFt: 9,
+    priceLabel: '₹25–30/km',
+    price: 27.5,
+    priceMin: 25,
+    priceMax: 30,
+    icon: PickupIcon,
+    bestFor: ['Furniture', 'Agricultural goods', 'Retail supply']
+  },
+  {
+    id: 'pickup-truck',
+    type: 'pickup',
+    name: 'Pickup Truck',
+    capacity: '2 Ton',
+    capacityKg: 2000,
+    category: 'Light Commercial',
+    wheels: 6,
+    lengthFt: 10,
+    priceLabel: '₹30–35/km',
+    price: 32.5,
+    priceMin: 30,
+    priceMax: 35,
+    icon: PickupIcon,
+    bestFor: ['Construction material', 'Industrial supplies', 'Medium goods']
+  },
+  {
+    id: 'tata-407-10ft',
+    type: 'mini_truck',
+    name: 'Tata 407 (10 ft)',
+    capacity: '3 Ton',
+    capacityKg: 3000,
+    category: 'Heavy Commercial',
+    wheels: 6,
+    lengthFt: 10,
+    priceLabel: '₹35–42/km',
+    price: 38.5,
+    priceMin: 35,
+    priceMax: 42,
+    icon: MiniTruckIcon,
+    bestFor: ['Construction material', 'Industrial supplies', 'Medium goods']
+  },
+  {
+    id: 'tata-407-14ft',
+    type: 'mini_truck',
+    name: 'Tata 407 (14 ft)',
+    capacity: '4 Ton',
+    capacityKg: 4000,
+    category: 'Heavy Commercial',
+    wheels: 6,
+    lengthFt: 14,
+    priceLabel: '₹42–45/km',
+    price: 43.5,
+    priceMin: 42,
+    priceMax: 45,
     icon: TempoIcon,
-    price: 15,
-    available: 1,
-    description: 'Medium cargo transport'
+    bestFor: ['Furniture shifting', 'Commercial goods', 'Retail distribution']
+  },
+  {
+    id: 'truck-17ft',
+    type: 'truck',
+    name: '17 ft Truck',
+    capacity: '4–5 Ton',
+    capacityKg: 4500,
+    category: 'Heavy Commercial',
+    wheels: 6,
+    lengthFt: 17,
+    priceLabel: '₹45–55/km',
+    price: 50,
+    priceMin: 45,
+    priceMax: 55,
+    icon: TruckIcon,
+    bestFor: ['Intercity goods', 'FMCG loads', 'Warehouse transfer']
+  },
+  {
+    id: 'truck-19ft',
+    type: 'truck',
+    name: '19 ft Truck',
+    capacity: '7–8 Ton',
+    capacityKg: 7500,
+    category: 'Heavy Commercial',
+    wheels: 6,
+    lengthFt: 19,
+    priceLabel: '₹55–60/km',
+    price: 57.5,
+    priceMin: 55,
+    priceMax: 60,
+    icon: TruckIcon,
+    bestFor: ['Bulk FMCG', 'Packed goods', 'Full truck load']
+  },
+  {
+    id: 'truck-22ft-10ton',
+    type: 'truck',
+    name: '22 ft Truck',
+    capacity: '10 Ton',
+    capacityKg: 10000,
+    category: 'Heavy Commercial',
+    wheels: 10,
+    lengthFt: 22,
+    priceLabel: '₹60–65/km',
+    price: 62.5,
+    priceMin: 60,
+    priceMax: 65,
+    icon: TruckIcon,
+    bestFor: ['Full truck load', 'Heavy machinery', 'Bulk freight']
+  },
+  {
+    id: 'truck-22ft-12ton',
+    type: 'truck',
+    name: '22 ft Truck',
+    capacity: '12 Ton',
+    capacityKg: 12000,
+    category: 'Heavy Commercial',
+    wheels: 10,
+    lengthFt: 22,
+    priceLabel: '₹65–70/km',
+    price: 67.5,
+    priceMin: 65,
+    priceMax: 70,
+    icon: TruckIcon,
+    bestFor: ['Heavy cargo', 'Industrial material', 'Bulk transport']
+  },
+  {
+    id: 'truck-22ft-heavy',
+    type: 'truck',
+    name: '22 ft Heavy Truck',
+    capacity: '12 Ton Heavy',
+    capacityKg: 12000,
+    category: 'Heavy Commercial',
+    wheels: 10,
+    lengthFt: 22,
+    priceLabel: '₹70–75/km',
+    price: 72.5,
+    priceMin: 70,
+    priceMax: 75,
+    icon: TruckIcon,
+    bestFor: ['Oversized cargo', 'Industrial equipment', 'High-density goods']
+  },
+  {
+    id: 'truck-24ft',
+    type: 'truck',
+    name: '24 ft Truck',
+    capacity: '13 Ton',
+    capacityKg: 13000,
+    category: 'Heavy Commercial',
+    wheels: 10,
+    lengthFt: 24,
+    priceLabel: 'Around ₹60/km',
+    price: 60,
+    priceMin: 58,
+    priceMax: 62,
+    icon: TruckIcon,
+    bestFor: ['Long-haul freight', 'Bulk goods', 'FTL shipments']
+  },
+  {
+    id: 'wheeler-10',
+    type: 'truck',
+    name: '10 Wheeler',
+    capacity: '18 Ton',
+    capacityKg: 18000,
+    category: 'Heavy Commercial',
+    wheels: 10,
+    lengthFt: 24,
+    priceLabel: 'Around ₹78/km',
+    price: 78,
+    priceMin: 76,
+    priceMax: 80,
+    icon: HeavyTruckIcon,
+    bestFor: ['Heavy industrial loads', 'Construction material', 'Bulk cargo']
+  },
+  {
+    id: 'wheeler-12',
+    type: 'truck',
+    name: '12 Wheeler',
+    capacity: '25 Ton',
+    capacityKg: 25000,
+    category: 'Heavy Commercial',
+    wheels: 12,
+    lengthFt: 28,
+    priceLabel: 'Around ₹92/km',
+    price: 92,
+    priceMin: 90,
+    priceMax: 94,
+    icon: HeavyTruckIcon,
+    bestFor: ['Large-scale freight', 'Mining material', 'Industrial bulk']
+  },
+  {
+    id: 'wheeler-14',
+    type: 'truck',
+    name: '14 Wheeler',
+    capacity: '30 Ton',
+    capacityKg: 30000,
+    category: 'Heavy Commercial',
+    wheels: 14,
+    lengthFt: 30,
+    priceLabel: 'Around ₹102/km',
+    price: 102,
+    priceMin: 100,
+    priceMax: 104,
+    icon: HeavyTruckIcon,
+    bestFor: ['Very heavy loads', 'Infrastructure material', 'Bulk industrial']
+  },
+  {
+    id: 'wheeler-16',
+    type: 'truck',
+    name: '16 Wheeler',
+    capacity: '35 Ton',
+    capacityKg: 35000,
+    category: 'Heavy Commercial',
+    wheels: 16,
+    lengthFt: 32,
+    priceLabel: 'Around ₹118/km',
+    price: 118,
+    priceMin: 116,
+    priceMax: 120,
+    icon: HeavyTruckIcon,
+    bestFor: ['Extra heavy cargo', 'Project logistics', 'Bulk freight']
+  },
+  {
+    id: 'wheeler-18',
+    type: 'truck',
+    name: '18 Wheeler',
+    capacity: '43 Ton',
+    capacityKg: 43000,
+    category: 'Heavy Commercial',
+    wheels: 18,
+    lengthFt: 36,
+    priceLabel: 'Around ₹135/km',
+    price: 135,
+    priceMin: 133,
+    priceMax: 137,
+    icon: HeavyTruckIcon,
+    bestFor: ['Maximum capacity loads', 'Project cargo', 'Heavy machinery']
+  },
+  {
+    id: 'container-32ft-single-axle',
+    type: 'truck',
+    name: '32 ft Container (Single Axle)',
+    capacity: '7.5–10 Ton',
+    capacityKg: 8750,
+    category: 'Container',
+    wheels: 6,
+    lengthFt: 32,
+    priceLabel: '₹68/km',
+    price: 68,
+    priceMin: 67,
+    priceMax: 69,
+    icon: ContainerTruckIcon,
+    bestFor: ['Secure containerized goods', 'E-commerce bulk', 'Export-import cargo']
+  },
+  {
+    id: 'container-32ft-multi-axle',
+    type: 'truck',
+    name: '32 ft Container (Multi Axle)',
+    capacity: '18 Ton',
+    capacityKg: 18000,
+    category: 'Container',
+    wheels: 12,
+    lengthFt: 32,
+    priceLabel: '₹102/km',
+    price: 102,
+    priceMin: 101,
+    priceMax: 103,
+    icon: ContainerTruckIcon,
+    bestFor: ['Containerized FTL', 'Heavy sealed cargo', 'Long-distance transport']
   }
 ];
 
@@ -174,6 +467,184 @@ function Home() {
   const [showPriceResult, setShowPriceResult] = useState(false);
 
   const [selectedVehicle, setSelectedVehicle] = useState(null);
+
+  // ===== Fleet Catalogue — Search, Filters & Compare =====
+  const [fleetSearch, setFleetSearch] = useState('');
+  const [fleetCapacity, setFleetCapacity] = useState('all');
+  const [fleetCategory, setFleetCategory] = useState('all');
+  const [fleetPriceRange, setFleetPriceRange] = useState('all');
+  const [compareList, setCompareList] = useState([]);
+  const [compareOpen, setCompareOpen] = useState(false);
+
+  const CAPACITY_FILTERS = [
+    { value: 'all', label: 'All Capacities' },
+    { value: 'upto1', label: 'Up to 1 Ton', min: 0, max: 1000 },
+    { value: '1to3', label: '1 – 3 Ton', min: 1000, max: 3000 },
+    { value: '3to8', label: '3 – 8 Ton', min: 3000, max: 8000 },
+    { value: '8to15', label: '8 – 15 Ton', min: 8000, max: 15000 },
+    { value: 'above15', label: '15 Ton +', min: 15000, max: Infinity }
+  ];
+
+  const PRICE_FILTERS = [
+    { value: 'all', label: 'All Prices' },
+    { value: 'under40', label: 'Under ₹40/km', min: 0, max: 40 },
+    { value: '40to60', label: '₹40 – 60/km', min: 40, max: 60 },
+    { value: '60to90', label: '₹60 – 90/km', min: 60, max: 90 },
+    { value: 'above90', label: '₹90+/km', min: 90, max: Infinity }
+  ];
+
+  const CATEGORY_FILTERS = [
+    { value: 'all', label: 'All Truck Types' },
+    { value: 'Light Commercial', label: 'Light Commercial' },
+    { value: 'Heavy Commercial', label: 'Heavy Commercial' },
+    { value: 'Container', label: 'Container' }
+  ];
+
+  const DISCLAIMER_FACTORS = [
+    'Pickup & destination',
+    'Road route',
+    'Distance',
+    'Diesel prices',
+    'Loading type',
+    'Truck availability',
+    'Seasonal demand',
+    'Return load availability'
+  ];
+
+  const filteredVehicles = useMemo(() => {
+    const term = fleetSearch.trim().toLowerCase();
+    const capacityFilter = CAPACITY_FILTERS.find((f) => f.value === fleetCapacity);
+    const priceFilter = PRICE_FILTERS.find((f) => f.value === fleetPriceRange);
+
+    return vehicleTypes.filter((v) => {
+      if (fleetCategory !== 'all' && v.category !== fleetCategory) return false;
+      if (
+        capacityFilter &&
+        capacityFilter.value !== 'all' &&
+        (v.capacityKg < capacityFilter.min || v.capacityKg >= capacityFilter.max)
+      ) {
+        return false;
+      }
+      if (
+        priceFilter &&
+        priceFilter.value !== 'all' &&
+        (v.price < priceFilter.min || v.price > priceFilter.max)
+      ) {
+        return false;
+      }
+      if (term) {
+        const haystack = `${v.name} ${v.capacity} ${v.category} ${v.bestFor.join(' ')}`.toLowerCase();
+        if (!haystack.includes(term)) return false;
+      }
+      return true;
+    });
+  }, [fleetSearch, fleetCapacity, fleetCategory, fleetPriceRange]);
+
+  const toggleCompare = (vehicle) => {
+    setCompareList((prev) => {
+      if (prev.some((v) => v.id === vehicle.id)) {
+        return prev.filter((v) => v.id !== vehicle.id);
+      }
+      if (prev.length >= 4) return prev;
+      return [...prev, vehicle];
+    });
+  };
+
+  const resetFleetFilters = () => {
+    setFleetSearch('');
+    setFleetCapacity('all');
+    setFleetCategory('all');
+    setFleetPriceRange('all');
+  };
+
+  const renderVehicleCard = (vehicle) => {
+    const isSelected = selectedVehicle === vehicle.type;
+    const isCompared = compareList.some((v) => v.id === vehicle.id);
+    const VehicleIcon = vehicle.icon;
+
+    return (
+      <div
+        key={vehicle.id}
+        onClick={() => handleVehicleClick(vehicle)}
+        className={`group relative bg-white rounded-2xl overflow-hidden transition-all duration-300 cursor-pointer border-2 animate-fade-in flex flex-col shrink-0 w-[280px] snap-start md:w-auto ${
+          isCompared
+            ? 'border-amber-500 shadow-card-hover'
+            : 'border-gray-100 hover:border-amber-300 hover:-translate-y-1.5 hover:shadow-card-hover'
+        }`}
+        style={{ borderRadius: '12px' }}
+      >
+        <div className="absolute top-3 left-3 z-10">
+          <span className="inline-flex items-center px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide rounded-full bg-blue-900/90 text-white">
+            {vehicle.category}
+          </span>
+        </div>
+        <div className="absolute top-3 right-3 z-10">
+          <span className="inline-flex items-center px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide rounded-full bg-amber-500 text-white shadow-sm">
+            Estimated Rate
+          </span>
+        </div>
+
+        <div className="bg-gradient-to-b from-gray-50 to-amber-50/70 pt-14 pb-4 px-4 flex justify-center">
+          <div className="group-hover:scale-105 transition-transform duration-300">
+            <VehicleIcon />
+          </div>
+        </div>
+
+        <div className="p-5 flex flex-col flex-1">
+          <h3 className="text-base font-bold text-gray-900 mb-2 text-center">{vehicle.name}</h3>
+
+          <div className="flex items-center justify-center gap-2 text-sm text-gray-600 mb-1">
+            <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+            </svg>
+            <span className="font-medium">{vehicle.capacity}</span>
+          </div>
+
+          <div className="text-center my-3">
+            <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Per Kilometre</span>
+            <div className="text-2xl font-extrabold text-amber-600 leading-tight">{vehicle.priceLabel}</div>
+          </div>
+
+          <div className="mt-auto">
+            <div className="bg-gray-50 rounded-xl px-3 py-3 mb-4">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-gray-500 mb-1.5">Recommended For</p>
+              <ul className="space-y-1">
+                {vehicle.bestFor.map((item) => (
+                  <li key={item} className="flex items-start gap-1.5 text-xs text-gray-700">
+                    <span className="text-amber-500 font-bold leading-none mt-0.5">•</span>
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="flex gap-2">
+              <Link
+                to={`/book-transport?vehicle=${vehicle.type}`}
+                onClick={(e) => e.stopPropagation()}
+                className={`flex-1 text-center py-2.5 rounded-lg font-semibold text-sm transition-colors text-white ${
+                  isSelected ? 'bg-amber-600' : 'bg-amber-500 hover:bg-amber-600'
+                }`}
+              >
+                Book Now
+              </Link>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); toggleCompare(vehicle); }}
+                className={`px-3 py-2.5 rounded-lg text-sm font-semibold border-2 transition-colors ${
+                  isCompared
+                    ? 'bg-blue-900 border-blue-900 text-white'
+                    : 'border-gray-200 text-gray-700 hover:border-blue-900 hover:text-blue-900'
+                }`}
+              >
+                {isCompared ? '✓ Added' : 'Compare'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   // Stats animation state
   const [statsVisible, setStatsVisible] = useState(false);
@@ -633,7 +1104,7 @@ function Home() {
                       className="w-full px-2 py-2 md:py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition-all cursor-pointer bg-white text-gray-700 text-sm"
                     >
                       {vehicleTypes.map((v) => (
-                        <option key={v.type} value={v.type}>
+                        <option key={v.id} value={v.type}>
                           {v.name}
                         </option>
                       ))}
@@ -756,51 +1227,335 @@ function Home() {
         </div>
       </section>
 
-      {/* VEHICLE CARDS */}
+      {/* FLEET & PRICING CATALOGUE */}
       <section className="py-16 md:py-20 bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-12">
-            <h2 className="text-2xl md:text-3xl font-bold text-gray-900 mb-2">Our Vehicle Fleet</h2>
-            <p className="text-gray-600">Choose the right vehicle for your goods transportation needs</p>
+          {/* Section Header */}
+          <div className="text-center mb-8">
+            <span className="inline-flex items-center px-3 py-1 text-xs font-bold uppercase tracking-wider rounded-full bg-amber-100 text-amber-700 mb-4">
+              Pricing Engine
+            </span>
+            <h2 className="text-2xl md:text-3xl font-bold text-gray-900 mb-2">
+              Choose the Right Truck for Your Goods
+            </h2>
+            <p className="text-gray-600 max-w-2xl mx-auto">
+              Compare truck sizes, loading capacity and estimated per kilometre rates before booking.
+            </p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-            {vehicleTypes.map((vehicle) => (
-              <div
-                key={vehicle.type}
-                onClick={() => handleVehicleClick(vehicle)}
-                className={`card rounded-xl cursor-pointer transition-all card-hover border-2 glass-card card-entrance ${
-                  selectedVehicle === vehicle.type
-                    ? 'border-amber-500 bg-amber-50/90 shadow-lg'
-                    : 'border-transparent hover:border-amber-300'
-                }`}
-                style={{ borderRadius: '12px' }}
-              >
-                <div className="flex justify-center mb-3">
-                  <vehicle.icon />
+          {/* Search & Filters */}
+          <div className="bg-gray-50 rounded-2xl border border-gray-100 p-4 md:p-5 mb-8 shadow-sm">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
+              <div className="lg:col-span-2">
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Search Vehicle</label>
+                <div className="relative">
+                  <svg
+                    className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2"
+                    fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                  <input
+                    type="text"
+                    value={fleetSearch}
+                    onChange={(e) => setFleetSearch(e.target.value)}
+                    placeholder="Search by name, capacity or use…"
+                    className="w-full pl-9 pr-3 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition-all bg-white text-gray-700 text-sm"
+                  />
                 </div>
-                <h3 className="text-xl font-semibold text-gray-900 mb-1 text-center">{vehicle.name}</h3>
-                <p className="text-gray-600 text-center mb-2" style={{ color: '#E0E0E0' }}>
-                  Capacity: {vehicle.capacity}
-                </p>
-                <p className="text-amber-600 font-bold text-center text-lg mb-3">₹{vehicle.price}/km</p>
-                <p className="text-gray-500 text-sm text-center mb-4">{vehicle.description}</p>
-                <Link
-                  to={`/book-transport?vehicle=${vehicle.type}`}
-                  className={`block w-full text-center py-2 rounded-lg font-medium transition-colors ${
-                    selectedVehicle === vehicle.type
-                      ? 'bg-amber-500 text-white'
-                      : 'bg-gray-100 text-gray-700 hover:bg-amber-500 hover:text-white'
-                  }`}
-                  style={{ borderRadius: '8px' }}
-                >
-                  {selectedVehicle === vehicle.type ? '✓ Selected' : 'Book Now →'}
-                </Link>
               </div>
-            ))}
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Capacity Filter</label>
+                <select
+                  value={fleetCapacity}
+                  onChange={(e) => setFleetCapacity(e.target.value)}
+                  className="w-full px-3 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition-all bg-white text-gray-700 text-sm cursor-pointer"
+                >
+                  {CAPACITY_FILTERS.map((f) => (
+                    <option key={f.value} value={f.value}>{f.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Truck Type</label>
+                <select
+                  value={fleetCategory}
+                  onChange={(e) => setFleetCategory(e.target.value)}
+                  className="w-full px-3 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition-all bg-white text-gray-700 text-sm cursor-pointer"
+                >
+                  {CATEGORY_FILTERS.map((f) => (
+                    <option key={f.value} value={f.value}>{f.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Price Range</label>
+                <select
+                  value={fleetPriceRange}
+                  onChange={(e) => setFleetPriceRange(e.target.value)}
+                  className="w-full px-3 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition-all bg-white text-gray-700 text-sm cursor-pointer"
+                >
+                  {PRICE_FILTERS.map((f) => (
+                    <option key={f.value} value={f.value}>{f.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs text-gray-500">
+                Showing <span className="font-semibold text-gray-800">{filteredVehicles.length}</span> of{' '}
+                <span className="font-semibold text-gray-800">{vehicleTypes.length}</span> vehicles
+              </p>
+              <button
+                type="button"
+                onClick={resetFleetFilters}
+                className="text-xs font-semibold text-amber-600 hover:text-amber-700 hover:underline transition-colors cursor-pointer"
+              >
+                Clear All Filters
+              </button>
+            </div>
+          </div>
+
+          {/* Mobile: Horizontal Slider */}
+          <div className="md:hidden -mx-4 px-4">
+            {filteredVehicles.length > 0 ? (
+              <>
+                <div className="flex gap-4 overflow-x-auto snap-x snap-mandatory scrollbar-hide pb-4">
+                  {filteredVehicles.map((vehicle) => renderVehicleCard(vehicle))}
+                </div>
+                <p className="text-xs text-gray-400 text-center mb-2">← Swipe to explore more vehicles →</p>
+              </>
+            ) : (
+              <div className="text-center py-12 bg-gray-50 rounded-2xl border border-gray-100">
+                <p className="text-3xl mb-2">🚛</p>
+                <p className="font-semibold text-gray-800">No vehicles match your filters</p>
+                <p className="text-sm text-gray-500 mt-1">Try adjusting or clearing the filters above.</p>
+                <button
+                  type="button"
+                  onClick={resetFleetFilters}
+                  className="mt-4 px-5 py-2.5 bg-amber-500 text-white text-sm font-semibold rounded-lg hover:bg-amber-600 transition-colors cursor-pointer"
+                >
+                  Clear Filters
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Desktop/Tablet: Grid — 4 per row on xl */}
+          <div className="hidden md:block">
+            {filteredVehicles.length > 0 ? (
+              <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                {filteredVehicles.map((vehicle) => renderVehicleCard(vehicle))}
+              </div>
+            ) : (
+              <div className="text-center py-12 bg-gray-50 rounded-2xl border border-gray-100">
+                <p className="text-3xl mb-2">🚛</p>
+                <p className="font-semibold text-gray-800">No vehicles match your filters</p>
+                <p className="text-sm text-gray-500 mt-1">Try adjusting or clearing the filters above.</p>
+                <button
+                  type="button"
+                  onClick={resetFleetFilters}
+                  className="mt-4 px-5 py-2.5 bg-amber-500 text-white text-sm font-semibold rounded-lg hover:bg-amber-600 transition-colors cursor-pointer"
+                >
+                  Clear Filters
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Disclaimer — Rates are estimates */}
+          <div className="mt-10 bg-gradient-to-br from-blue-50 to-amber-50/60 rounded-2xl border border-gray-100 p-5 md:p-6">
+            <div className="flex items-start gap-3">
+              <div className="shrink-0 w-9 h-9 bg-blue-900 rounded-xl flex items-center justify-center text-white mt-0.5">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <div>
+                <h4 className="font-bold text-gray-900 mb-1.5">
+                  These rates are estimated — not final freight charges
+                </h4>
+                <p className="text-sm text-gray-600 mb-3">
+                  Actual transport cost depends on the following factors:
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {DISCLAIMER_FACTORS.map((factor) => (
+                    <span
+                      key={factor}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium bg-white/80 border border-gray-200 rounded-full text-gray-700"
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                      {factor}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </section>
+
+      {/* Floating Compare Pill */}
+      {compareList.length > 0 && (
+        <div className="fixed bottom-24 md:bottom-6 left-1/2 -translate-x-1/2 z-40">
+          <button
+            type="button"
+            onClick={() => setCompareOpen(true)}
+            className="flex items-center gap-2 pl-4 pr-5 py-3 bg-blue-900 text-white rounded-full shadow-xl hover:bg-blue-950 transition-colors cursor-pointer animate-fade-in"
+          >
+            <span className="flex -space-x-2">
+              {compareList.slice(0, 4).map((v) => {
+                const Icon = v.icon;
+                return (
+                  <span key={v.id} className="w-7 h-7 rounded-full bg-white/20 border-2 border-blue-900 flex items-center justify-center">
+                    <Icon />
+                  </span>
+                );
+              })}
+            </span>
+            <span className="text-sm font-semibold">Compare ({compareList.length})</span>
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+        </div>
+      )}
+
+      {/* Compare Modal */}
+      {compareOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setCompareOpen(false)} aria-hidden="true" />
+
+          <div
+            className="relative w-full max-w-4xl bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden animate-scale-in"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="compare-modal-title"
+          >
+            <div className="p-4 md:p-6 border-b border-gray-100">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 id="compare-modal-title" className="text-lg md:text-xl font-bold text-gray-900">
+                    Compare Vehicles
+                  </h2>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Select up to 4 vehicles to compare rates and capacity side-by-side.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCompareOpen(false)}
+                  className="shrink-0 inline-flex items-center justify-center w-9 h-9 rounded-xl border border-gray-200 text-gray-500 hover:text-gray-700 hover:bg-gray-50 cursor-pointer"
+                  aria-label="Close"
+                >
+                  <span className="text-xl leading-none">×</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="p-4 md:p-6">
+              {compareList.length === 0 ? (
+                <div className="text-center py-8">
+                  <p className="text-gray-500">No vehicles selected yet. Tap "Compare" on any vehicle card.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto scrollbar-hide">
+                  <table className="w-full min-w-[560px] text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-200">
+                        <th className="text-left py-3 pr-3 text-xs font-bold uppercase tracking-wide text-gray-500 w-32">
+                          Vehicle
+                        </th>
+                        {compareList.map((v) => (
+                          <th key={v.id} className="text-center py-3 px-2 align-top">
+                            <div className="inline-flex items-center justify-center w-12 h-12 bg-gray-50 rounded-xl mb-2">
+                              {(() => { const Icon = v.icon; return <Icon />; })()}
+                            </div>
+                            <div className="font-bold text-gray-900 leading-tight">{v.name}</div>
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr className="border-b border-gray-100">
+                        <td className="py-3 pr-3 font-semibold text-gray-600">Category</td>
+                        {compareList.map((v) => (
+                          <td key={v.id} className="py-3 px-2 text-center">
+                            <span className="inline-block px-2 py-0.5 text-[11px] font-bold uppercase rounded-full bg-blue-900/10 text-blue-900">
+                              {v.category}
+                            </span>
+                          </td>
+                        ))}
+                      </tr>
+                      <tr className="border-b border-gray-100">
+                        <td className="py-3 pr-3 font-semibold text-gray-600">Capacity</td>
+                        {compareList.map((v) => (
+                          <td key={v.id} className="py-3 px-2 text-center font-medium text-gray-800">{v.capacity}</td>
+                        ))}
+                      </tr>
+                      <tr className="border-b border-gray-100">
+                        <td className="py-3 pr-3 font-semibold text-gray-600">Est. Rate / km</td>
+                        {compareList.map((v) => (
+                          <td key={v.id} className="py-3 px-2 text-center">
+                            <span className="text-lg font-extrabold text-amber-600">{v.priceLabel}</span>
+                          </td>
+                        ))}
+                      </tr>
+                      <tr className="border-b border-gray-100">
+                        <td className="py-3 pr-3 font-semibold text-gray-600 align-top">Recommended For</td>
+                        {compareList.map((v) => (
+                          <td key={v.id} className="py-3 px-2">
+                            <ul className="space-y-1 text-xs text-gray-600 text-center">
+                              {v.bestFor.map((item) => (
+                                <li key={item}>{item}</li>
+                              ))}
+                            </ul>
+                          </td>
+                        ))}
+                      </tr>
+                      <tr>
+                        <td className="py-3 pr-3" />
+                        {compareList.map((v) => (
+                          <td key={v.id} className="py-3 px-2 text-center">
+                            <Link
+                              to={`/book-transport?vehicle=${v.type}`}
+                              onClick={() => setCompareOpen(false)}
+                              className="inline-block w-full px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold rounded-lg transition-colors"
+                            >
+                              Book Now
+                            </Link>
+                          </td>
+                        ))}
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <div className="mt-5 flex justify-between items-center">
+                <button
+                  type="button"
+                  onClick={() => setCompareList([])}
+                  className="px-4 py-2.5 text-sm font-semibold text-gray-500 hover:text-red-600 hover:underline transition-colors cursor-pointer"
+                >
+                  Clear All
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCompareOpen(false)}
+                  className="px-6 py-2.5 bg-blue-900 hover:bg-blue-950 text-white text-sm font-semibold rounded-lg transition-colors cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* TRUST */}
       <section className="py-16 md:py-20 bg-gray-50">
