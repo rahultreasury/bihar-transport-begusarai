@@ -26,8 +26,7 @@ const { PrismaClient } = require('@prisma/client');
 // ============================================================
 // CONFIGURATION — Paste your local PostgreSQL connection string below
 // ============================================================
-const SOURCE_DATABASE_URL =postgresql:"neondb_owner:npg_M5Gq0AumvfTo@ep-red-butterfly-azmswhcg-pooler.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require
-  'postgresql://rahulraj@localhost:5432/bihar_transport_begusarai'";
+const SOURCE_DATABASE_URL = 'postgresql://rahulraj@localhost:5432/bihar_transport_begusarai';
 
 // Destination is read from existing .env's DATABASE_URL
 const DEST_DATABASE_URL = process.env.DATABASE_URL;
@@ -158,7 +157,7 @@ function getPkColumn(tableName) {
 async function migrate() {
   console.log('╔══════════════════════════════════════════════════════════╗');
   console.log('║  Bihar Transport — Local PostgreSQL → Neon PostgreSQL   ║');
-  console('  ╚══════════════════════════════════════════════════════════╝');
+  console.log('╚══════════════════════════════════════════════════════════╝');
   console.log('');
 
   // Validate destination URL

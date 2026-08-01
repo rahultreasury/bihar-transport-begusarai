@@ -26,7 +26,6 @@ async registerDriver(data) {
       city,
       state,
       address,
-      notes,
       profile_image,
     } = data;
 
@@ -77,7 +76,6 @@ const driver = await this.repo.create({
       city: city || null,
       state: state || 'Bihar',
       address: address || null,
-      notes: notes || null,
       status: 'available',
       profile_image: profile_image || null,
       is_available: true,
@@ -114,9 +112,9 @@ const driver = await this.repo.create({
    * Update driver information.
    */
   async updateDriver(driverId, data) {
-const allowedFields = [
+    const allowedFields = [
       'driver_name', 'mobile', 'alternate_mobile', 'city',
-      'state', 'address', 'notes',
+      'state', 'address',
       'status', 'profile_image',
     ];
 

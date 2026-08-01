@@ -8,8 +8,7 @@ const INITIAL_FORM = {
   alternate_mobile: '',
   city: '',
   state: 'Bihar',
-  address: '',
-  notes: ''
+  address: ''
 };
 
 export default function DriverRegisterModal({ isOpen, onClose, onSuccess, driver, mode = 'create' }) {
@@ -32,8 +31,7 @@ export default function DriverRegisterModal({ isOpen, onClose, onSuccess, driver
           alternate_mobile: driver.alternate_mobile || '',
           city: driver.city || '',
           state: driver.state || 'Bihar',
-          address: driver.address || '',
-          notes: driver.notes || ''
+          address: driver.address || ''
         });
       } else {
         setForm({ ...INITIAL_FORM });
@@ -82,8 +80,7 @@ const payload = {
         alternate_mobile: form.alternate_mobile.trim() || undefined,
         city: form.city.trim() || undefined,
         state: form.state || 'Bihar',
-        address: form.address.trim() || undefined,
-        notes: form.notes.trim() || undefined
+        address: form.address.trim() || undefined
       };
 
       let response;
@@ -326,22 +323,6 @@ const payload = {
                 />
               </div>
             </div>
-          </div>
-
-          {/* Optional Section - Notes */}
-          <div className="mb-4">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="h-1.5 w-1.5 rounded-full bg-muted" />
-              <span className="text-xs font-semibold text-muted uppercase tracking-wider">Notes (Optional)</span>
-            </div>
-            <textarea
-              name="notes"
-              value={form.notes}
-              onChange={handleChange}
-              rows={2}
-              placeholder="Any additional information about this driver (e.g. preferred routes, language, vehicle preference)"
-              className="w-full px-3 py-2.5 rounded-xl border border-border/60 text-sm bg-card/40 focus:outline-none focus:ring-2 focus:ring-amber-500/30 transition resize-none"
-            />
           </div>
 
           {/* Actions */}

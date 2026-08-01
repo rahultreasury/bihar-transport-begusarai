@@ -1,5 +1,7 @@
 import React from 'react';
-import { getAllDriverStatuses } from './DriverStatusBadge';
+
+// Statuses the backend actually emits for drivers: available, on_trip, inactive
+const DRIVER_STATUSES = ['available', 'on_trip', 'inactive'];
 
 const DriverFilters = React.memo(function DriverFilters({
   search, onSearchChange,
@@ -94,9 +96,9 @@ const DriverFilters = React.memo(function DriverFilters({
                 aria-label="Filter by status"
               >
                 <option value="">All Statuses</option>
-                {getAllDriverStatuses().map((s) => (
+                {DRIVER_STATUSES.map((s) => (
                   <option key={s} value={s}>
-                    {s === 'available' ? 'Available' : s === 'waiting' ? 'Waiting' : s === 'on_trip' ? 'On Trip' : s === 'busy' ? 'Busy' : s === 'inactive' ? 'Inactive' : 'Offline'}
+                    {s === 'available' ? 'Available' : s === 'on_trip' ? 'On Trip' : 'Inactive'}
                   </option>
                 ))}
               </select>
