@@ -145,6 +145,11 @@ class DriverRepository {
       limit = 20,
       search = '',
       status = '',
+      availability = '',
+      balance_filter = '',
+      trips_filter = '',
+      recently_active = '',
+      quick_filter = '',
       sort_by = 'created_at',
       sort_order = 'desc',
       sortBy,
@@ -152,11 +157,12 @@ class DriverRepository {
     } = filters;
 
     // Support both camelCase (internal) and snake_case (query params)
-    const effectiveSortBy = sortBy || sort_by || 'created_at';
-    const effectiveSortOrder = sortOrder || sort_order || 'desc';
+    let effectiveSortBy = sortBy || sort_by || 'created_at';
+    let effectiveSortOrder = sortOrder || sort_order || 'desc';
 
-    const skip = (page - 1) * limit;
-    const take = parseInt(limit);
+    const parsedPage = parseInt(page) || 1;
+    const take = Math.max(1, parseInt(limit) || 20);
+    const skip = (parsedPage - 1) * take;
 
     const where = {};
 
@@ -179,8 +185,62 @@ class DriverRepository {
       where.status = status;
     }
 
-// Determine sort field (whitelist allowed fields)
-    const allowedSortFields = ['driver_code', 'driver_name', 'status', 'created_at', 'total_deliveries'];
+    // Filter by availability
+    if (availability) {
+      if (availability === 'available') where.is_available = true;
+      else if (availability === 'busy') where.is_available = false;
+    }
+
+    // Filter by balance (current_balance)
+    if (balance_filter) {
+      if (balance_filter === 'receive') where.current_balance = { gt: 0 };
+      else if (balance_filter === 'pay') where.current_balance = { lt: 0 };
+      else if (balance_filter === 'settled') where.current_balance = { equals: 0 };
+    }
+
+    // Filter by trips completed (total_deliveries)
+    if (trips_filter) {
+      if (trips_filter === 'high') where.total_deliveries = { gte: 50 };
+      else if (trips_filter === 'medium') where.total_deliveries = { gte: 10, lte: 50 };
+      else if (trips_filter === 'low') where.total_deliveries = { gte: 1, lt: 10 };
+      else if (trips_filter === 'none') where.total_deliveries = { equals: 0 };
+    }
+
+    // Filter by last active (updated_at)
+    if (recently_active) {
+      const now = new Date();
+      const dayMs = 24 * 60 * 60 * 1000;
+      if (recently_active === 'today') {
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        where.updated_at = { gte: todayStart };
+      } else if (recently_active === 'week') {
+        where.updated_at = { gte: new Date(now.getTime() - 7 * dayMs) };
+      } else if (recently_active === 'month') {
+        where.updated_at = { gte: new Date(now.getTime() - 30 * dayMs) };
+      } else if (recently_active === 'older') {
+        where.updated_at = { lt: new Date(now.getTime() - 30 * dayMs) };
+      }
+    }
+
+    // Quick filters from the UI
+    if (quick_filter) {
+      if (quick_filter === 'available') where.status = 'available';
+      else if (quick_filter === 'on_trip') where.status = 'on_trip';
+      else if (quick_filter === 'inactive') where.status = 'inactive';
+      else if (quick_filter === 'assigned') where.transportVehicles = { some: {} };
+      else if (quick_filter === 'unassigned') where.transportVehicles = { none: {} };
+      else if (quick_filter === 'today_active') {
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+        where.bookings = { some: { created_at: { gte: todayStart } } };
+      } else if (quick_filter === 'newest') {
+        effectiveSortBy = 'created_at';
+        effectiveSortOrder = 'desc';
+      }
+    }
+
+    // Determine sort field (whitelist allowed fields)
+    const allowedSortFields = ['driver_code', 'driver_name', 'status', 'created_at', 'updated_at', 'mobile', 'total_deliveries'];
     const field = allowedSortFields.includes(effectiveSortBy) ? effectiveSortBy : 'created_at';
     const order = effectiveSortOrder === 'asc' ? 'asc' : 'desc';
 

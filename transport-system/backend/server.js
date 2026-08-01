@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const { execSync } = require('child_process');
 const dotenv = require('dotenv');
 const compression = require('compression');
 const helmet = require('helmet');
@@ -128,6 +129,10 @@ app.use(globalLimiter);
 app.use('/api/auth', loginLimiter, authRoutes);
 app.use('/api/bookings', bookingLimiter, bookingRoutes);
 app.use('/api', bookingLimiter, bookingMvpRoutes);
+// Driver Management Routes FIRST so the full driver module serves /api/admin/drivers
+app.use('/api/admin/drivers', adminLimiter, driverManagementRoutes);
+
+// Legacy admin routes (dashboard, users, vehicles, bookings)
 app.use('/api/admin', adminLimiter, adminRoutes);
 app.use('/api/drivers', bookingLimiter, driverRoutes);
 app.use('/api/delivery', bookingLimiter, deliveryRoutes);
@@ -136,9 +141,6 @@ app.use('/api/licenses', bookingLimiter, licenseRoutes);
 app.use('/api/challans', bookingLimiter, challanRoutes);
 app.use('/api/appointments', bookingLimiter, appointmentRoutes);
 app.use('/api', mapsRoutes);
-
-// Driver Management Routes (admin-limited and admin-checked internally)
-app.use('/api/admin/drivers', adminLimiter, driverManagementRoutes);
 
 // Partner Management Routes
 app.use('/api/admin/partners', adminLimiter, partnerRoutes);
@@ -191,8 +193,31 @@ app.use(errorHandler);
 
 const PORT = process.env.PORT || 3000;
 
+// Sync the database schema to match schema.prisma on startup.
+// Uses `prisma db push` so both localhost and Render (Neon/PostgreSQL)
+// get the required tables/columns automatically without manual migration steps.
+function syncDatabaseSchema() {
+  if (!process.env.DATABASE_URL) return;
+  const prismaBin = path.join(__dirname, 'node_modules', '.bin', 'prisma');
+  try {
+    console.log('[db] Syncing database schema to match Prisma schema...');
+    execSync(`"${prismaBin}" db push --skip-generate --accept-data-loss`, {
+      cwd: __dirname,
+      stdio: 'pipe',
+      env: { ...process.env },
+    });
+    console.log('[db] Database schema is up to date.');
+  } catch (err) {
+    // Do not crash the server if schema sync fails; the app will surface
+    // any missing-table errors per request, and logs will show the cause.
+    console.error('[db] Schema sync failed (continuing):', err.stderr ? err.stderr.toString() : err.message);
+  }
+}
+
 // Start server
 const startServer = async () => {
+  syncDatabaseSchema();
+
   const dbResult = await testPrismaConnection();
   if (dbResult.success) {
     console.log(dbResult.message);

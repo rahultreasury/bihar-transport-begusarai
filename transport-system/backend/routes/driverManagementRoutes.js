@@ -44,6 +44,23 @@ router.get('/stats', protect, adminCheck, async (req, res) => {
 });
 
 // ============================
+// VEHICLE ASSIGNMENT
+// Must be defined BEFORE `/:id` param routes to avoid Express
+// matching `vehicles` as a driver ID.
+// ============================
+
+// Get available vehicles
+router.get('/vehicles/available', protect, adminCheck, async (req, res) => {
+  try {
+    const vehicles = await driverService.getAvailableVehicles();
+    res.json({ success: true, data: vehicles });
+  } catch (error) {
+    console.error('Get available vehicles error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// ============================
 // DRIVER CRUD
 // ============================
 
@@ -213,17 +230,6 @@ router.get('/:id/transactions', protect, adminCheck, async (req, res) => {
 // ============================
 // VEHICLE ASSIGNMENT
 // ============================
-
-// Get available vehicles
-router.get('/vehicles/available', protect, adminCheck, async (req, res) => {
-  try {
-    const vehicles = await driverService.getAvailableVehicles();
-    res.json({ success: true, data: vehicles });
-  } catch (error) {
-    console.error('Get available vehicles error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
-});
 
 // Assign vehicle to driver
 router.post('/:id/assign-vehicle', protect, adminCheck, [
