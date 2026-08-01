@@ -9,7 +9,6 @@ import {
   ShieldCheck,
   X,
   BadgeCheck,
-  Calendar,
   Gauge,
   MapPin,
   ClipboardList,
@@ -315,7 +314,6 @@ const DriverCard = React.memo(function DriverCard({
   const rating = driver.rating;
   const deliveries = driver.total_deliveries ?? driver.total_deliveries;
   const phone = driver.phone || '—';
-  const experience = driver.experience_years || driver.years_of_experience || driver.total_experience;
   const vehicleType = driver.vehicle_type ? driver.vehicle_type.replace(/_/g, ' ') : null;
   const isAvailable = driver.status === 'available' || driver.is_available === 1 || driver.is_available === true;
 
@@ -383,16 +381,6 @@ const DriverCard = React.memo(function DriverCard({
               </div>
               <span className="text-xs text-muted truncate">{phone}</span>
             </div>
-            {experience && (
-              <div className="flex items-center gap-1.5">
-                <div className="w-5 h-5 rounded-md bg-amber-500/10 flex items-center justify-center shrink-0">
-                  <Calendar className="w-3 h-3 text-amber-600" strokeWidth={2} />
-                </div>
-                <span className="text-xs text-muted">
-                  <span className="font-semibold text-text">{experience}</span> {Number(experience) === 1 ? 'year' : 'years'}
-                </span>
-              </div>
-            )}
           </div>
 
           {/* Bottom Row: Availability + Vehicle Type */}

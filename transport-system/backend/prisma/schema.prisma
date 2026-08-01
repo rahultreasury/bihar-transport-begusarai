@@ -24,12 +24,6 @@ enum UserRole {
   admin
 }
 
-enum DriverGender {
-  male
-  female
-  other
-}
-
 enum VehicleType {
   truck
   mini_truck

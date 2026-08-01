@@ -286,7 +286,8 @@ class DriverRepository {
           },
           delivery: {
             select: {
-              estimated_distance_km: true,
+              current_status: true,
+              status_description: true,
             },
           },
         },
