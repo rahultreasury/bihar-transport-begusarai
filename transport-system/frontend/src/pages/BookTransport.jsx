@@ -1,4 +1,4 @@
-import { useState, useContext, useEffect, useCallback, useMemo } from 'react';
+import { useState, useContext, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { GoogleMap, useJsApiLoader, Marker, DirectionsRenderer, StandaloneSearchBox } from '@react-google-maps/api';
 import { AuthContext } from '../App';
@@ -9,6 +9,41 @@ const BIHAR_CENTER = { lat: 25.6200, lng: 85.8900 };
 
 // Google Maps configuration
 const libraries = ['places', 'geometry', 'distanceMatrix'];
+
+// Booking form vehicle types (generic fleet categories)
+const vehicleTypes = [
+  { value: 'truck', label: 'Truck', rate: 25, description: '₹25/km', icon: '🚛' },
+  { value: 'mini_truck', label: 'Mini Truck', rate: 15, description: '₹15/km', icon: '🛻' },
+  { value: 'pickup', label: 'Pickup', rate: 12, description: '₹12/km', icon: '🛺' },
+  { value: 'tempo', label: 'Tempo', rate: 18, description: '₹18/km', icon: '🚚' },
+  { value: 'lorry', label: 'Lorry', rate: 25, description: '₹25/km', icon: '🚛' }
+];
+
+// Maps fleet catalogue vehicle IDs (Home page) to booking form vehicle types
+const FLEET_VEHICLE_TYPE_MAP = {
+  'tata-ace': 'pickup',
+  'ashok-leyland-dost': 'pickup',
+  'pickup-truck': 'pickup',
+  'tata-407-10ft': 'mini_truck',
+  'tata-407-14ft': 'mini_truck',
+  'truck-17ft': 'truck',
+  'truck-19ft': 'truck',
+  'truck-22ft-10ton': 'truck',
+  'truck-22ft-12ton': 'truck',
+  'truck-22ft-heavy': 'truck',
+  'truck-24ft': 'truck',
+  'wheeler-10': 'truck',
+  'wheeler-12': 'truck',
+  'wheeler-14': 'truck',
+  'wheeler-16': 'truck',
+  'wheeler-18': 'truck',
+  'container-32ft-single-axle': 'truck',
+  'container-32ft-multi-axle': 'truck'
+};
+
+// Convert a fleet vehicle ID (e.g. "tata-ace") into a readable label (e.g. "Tata Ace")
+const formatVehicleId = (id) =>
+  id.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 
 function BookTransport() {
   const { user } = useContext(AuthContext);
@@ -39,6 +74,14 @@ function BookTransport() {
   const [pickupSearchBox, setPickupSearchBox] = useState(null);
   const [dropSearchBox, setDropSearchBox] = useState(null);
 
+  const formRef = useRef(null);
+
+  // Pre-select the vehicle passed from the Home fleet catalogue (?vehicle=<vehicle-id>)
+  // Falls back to legacy direct type values (?vehicle=truck) and finally to default 'truck'
+  const preselectedFleetVehicle = FLEET_VEHICLE_TYPE_MAP[vehicleParam] ? vehicleParam : '';
+  const initialVehicleType = FLEET_VEHICLE_TYPE_MAP[vehicleParam]
+    || (vehicleTypes.some((v) => v.value === vehicleParam) ? vehicleParam : 'truck');
+
   const [formData, setFormData] = useState({
     pickup_location: '',
     pickup_address: '',
@@ -53,8 +96,17 @@ function BookTransport() {
     goods_weight_kg: '',
     number_of_items: 1,
     fragile: false,
-    vehicle_type_required: vehicleParam || 'truck'
+    vehicle_type_required: initialVehicleType
   });
+
+  // Smoothly scroll to the booking form when arriving from a fleet vehicle card
+  useEffect(() => {
+    if (!preselectedFleetVehicle) return;
+    const t = setTimeout(() => {
+      formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 200);
+    return () => clearTimeout(t);
+  }, [preselectedFleetVehicle]);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -307,15 +359,7 @@ function BookTransport() {
     return pickupLocation?.lat ? pickupLocation : BIHAR_CENTER;
   }, [pickupLocation, dropLocation]);
 
-  const vehicleTypes = [
-    { value: 'truck', label: 'Truck', rate: 25, description: '₹25/km', icon: '🚛' },
-    { value: 'mini_truck', label: 'Mini Truck', rate: 15, description: '₹15/km', icon: '🛻' },
-    { value: 'pickup', label: 'Pickup', rate: 12, description: '₹12/km', icon: '🛺' },
-    { value: 'tempo', label: 'Tempo', rate: 18, description: '₹18/km', icon: '🚚' },
-    { value: 'lorry', label: 'Lorry', rate: 25, description: '₹25/km', icon: '🚛' }
-  ];
-
-const goodsTypes = [
+  const goodsTypes = [
     'Electronics', 'Furniture', 'Food Items', 'Clothing', 'Machinery',
     'Construction Materials', 'Agricultural Products', 'Pharmaceuticals', 'Other'
   ];
@@ -372,7 +416,24 @@ Please confirm booking.`;
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <form onSubmit={handleSubmit} className="space-y-6" ref={formRef}>
+          {/* Pre-selected vehicle notice */}
+          {preselectedFleetVehicle && (
+            <div className="bg-blue-900 text-white rounded-xl px-4 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5">
+                <svg className="w-5 h-5 text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span className="text-sm font-semibold">
+                  {formatVehicleId(preselectedFleetVehicle)} pre-selected
+                </span>
+              </div>
+              <span className="text-xs text-blue-100/80 sm:text-right">
+                The matching vehicle type has been auto-selected below.
+              </span>
+            </div>
+          )}
+
           {/* Vehicle Selection */}
           <div className="card">
             <h2 className="text-lg md:text-xl font-semibold mb-4">Select Vehicle Type</h2>

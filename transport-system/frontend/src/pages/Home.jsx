@@ -6,6 +6,15 @@ import SEO from '../components/seo/SEO';
 import PanIndiaCoverage from '../components/home/PanIndiaCoverage';
 import TrustedClients from '../components/home/TrustedClients';
 
+// Vehicle images — real images live in src/assets/vehicles.
+// Vehicles without an image yet automatically fall back to the inline SVG icon.
+import tataAceImg from '../assets/vehicles/tata-ace.webp';
+import ashokLeylandDostImg from '../assets/vehicles/ashok-leyland-dost.webp';
+import pickupTruckImg from '../assets/vehicles/pickup-truck.webp';
+import tata40710ftImg from '../assets/vehicles/tata-407-10ft.webp';
+import tata40714ftImg from '../assets/vehicles/tata-407-14ft.webp';
+import truck17ftImg from '../assets/vehicles/truck-17ft.webp';
+
 // SVG Icons for vehicles
 const TruckIcon = () => (
   <svg viewBox="0 0 64 64" className="w-16 h-16" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -103,6 +112,7 @@ const vehicleTypes = [
     id: 'tata-ace',
     type: 'pickup',
     name: 'Tata Ace',
+    image: tataAceImg,
     capacity: '1000 KG',
     capacityKg: 1000,
     category: 'Light Commercial',
@@ -119,6 +129,7 @@ const vehicleTypes = [
     id: 'ashok-leyland-dost',
     type: 'pickup',
     name: 'Ashok Leyland Dost',
+    image: ashokLeylandDostImg,
     capacity: '1.5 Ton (1500 KG)',
     capacityKg: 1500,
     category: 'Light Commercial',
@@ -134,7 +145,8 @@ const vehicleTypes = [
   {
     id: 'pickup-truck',
     type: 'pickup',
-    name: 'Pickup Truck',
+    name: 'Mahindra Bolero Pik-Up (Extra Long)',
+    image: pickupTruckImg,
     capacity: '2 Ton',
     capacityKg: 2000,
     category: 'Light Commercial',
@@ -151,6 +163,7 @@ const vehicleTypes = [
     id: 'tata-407-10ft',
     type: 'mini_truck',
     name: 'Tata 407 (10 ft)',
+    image: tata40710ftImg,
     capacity: '3 Ton',
     capacityKg: 3000,
     category: 'Heavy Commercial',
@@ -167,6 +180,7 @@ const vehicleTypes = [
     id: 'tata-407-14ft',
     type: 'mini_truck',
     name: 'Tata 407 (14 ft)',
+    image: tata40714ftImg,
     capacity: '4 Ton',
     capacityKg: 4000,
     category: 'Heavy Commercial',
@@ -183,6 +197,7 @@ const vehicleTypes = [
     id: 'truck-17ft',
     type: 'truck',
     name: '17 ft Truck',
+    image: truck17ftImg,
     capacity: '4–5 Ton',
     capacityKg: 4500,
     category: 'Heavy Commercial',
@@ -584,10 +599,19 @@ function Home() {
           </span>
         </div>
 
-        <div className="bg-gradient-to-b from-gray-50 to-amber-50/70 pt-14 pb-4 px-4 flex justify-center">
-          <div className="group-hover:scale-105 transition-transform duration-300">
-            <VehicleIcon />
-          </div>
+        <div className="bg-gradient-to-b from-gray-50 to-amber-50/70 pt-14 pb-4 px-4 flex items-center justify-center">
+          {vehicle.image ? (
+            <img
+              src={vehicle.image}
+              alt={vehicle.name}
+              loading="lazy"
+              className="w-full max-w-[220px] h-[150px] object-contain transition-transform duration-300 group-hover:scale-105"
+            />
+          ) : (
+            <div className="group-hover:scale-105 transition-transform duration-300">
+              <VehicleIcon />
+            </div>
+          )}
         </div>
 
         <div className="p-5 flex flex-col flex-1">
@@ -620,7 +644,7 @@ function Home() {
 
             <div className="flex gap-2">
               <Link
-                to={`/book-transport?vehicle=${vehicle.type}`}
+                to={`/book-transport?vehicle=${vehicle.id}`}
                 onClick={(e) => e.stopPropagation()}
                 className={`flex-1 text-center py-2.5 rounded-lg font-semibold text-sm transition-colors text-white ${
                   isSelected ? 'bg-amber-600' : 'bg-amber-500 hover:bg-amber-600'
@@ -1411,8 +1435,12 @@ function Home() {
               {compareList.slice(0, 4).map((v) => {
                 const Icon = v.icon;
                 return (
-                  <span key={v.id} className="w-7 h-7 rounded-full bg-white/20 border-2 border-blue-900 flex items-center justify-center">
-                    <Icon />
+                  <span key={v.id} className="w-7 h-7 rounded-full bg-white/20 border-2 border-blue-900 flex items-center justify-center overflow-hidden">
+                    {v.image ? (
+                      <img src={v.image} alt={v.name} loading="lazy" className="w-full h-full object-contain" />
+                    ) : (
+                      <Icon />
+                    )}
                   </span>
                 );
               })}
@@ -1472,8 +1500,12 @@ function Home() {
                         </th>
                         {compareList.map((v) => (
                           <th key={v.id} className="text-center py-3 px-2 align-top">
-                            <div className="inline-flex items-center justify-center w-12 h-12 bg-gray-50 rounded-xl mb-2">
-                              {(() => { const Icon = v.icon; return <Icon />; })()}
+                            <div className="inline-flex items-center justify-center w-12 h-12 bg-gray-50 rounded-xl mb-2 overflow-hidden">
+                              {v.image ? (
+                                <img src={v.image} alt={v.name} loading="lazy" className="w-full h-full object-contain" />
+                              ) : (
+                                (() => { const Icon = v.icon; return <Icon />; })()
+                              )}
                             </div>
                             <div className="font-bold text-gray-900 leading-tight">{v.name}</div>
                           </th>
@@ -1522,7 +1554,7 @@ function Home() {
                         {compareList.map((v) => (
                           <td key={v.id} className="py-3 px-2 text-center">
                             <Link
-                              to={`/book-transport?vehicle=${v.type}`}
+                              to={`/book-transport?vehicle=${v.id}`}
                               onClick={() => setCompareOpen(false)}
                               className="inline-block w-full px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold rounded-lg transition-colors"
                             >
