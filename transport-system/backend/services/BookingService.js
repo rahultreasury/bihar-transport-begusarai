@@ -174,6 +174,112 @@ class BookingService {
   }
 
   /**
+   * Admin sends a final quote for a booking.
+   * Business rules:
+   * - booking must exist
+   * - only PENDING bookings can receive a quote (idempotent when already SENT with same price)
+   * - final_price (the Final Transport Charge) is required
+   * - moves quote_status PENDING → SENT and records quote_sent_at
+   * The booking stays `pending` until the customer accepts or rejects the quote.
+   *
+   * @param {number} bookingId
+   * @param {Object} input - { final_price, remarks }
+   */
+  async sendQuote(bookingId, input = {}) {
+    if (!bookingId) throw new ValidationError('bookingId is required');
+    if (input.final_price == null) {
+      throw new ValidationError('final_price (Final Transport Charge) is required');
+    }
+
+    const finalPrice = Number(input.final_price);
+    if (!Number.isFinite(finalPrice) || finalPrice <= 0) {
+      throw new ValidationError('final_price must be a positive number');
+    }
+
+    const existing = await this.bookingRepo.findById(bookingId);
+    if (!existing) throw new NotFoundError('Booking not found');
+
+    if (['cancelled', 'completed', 'delivered'].includes(existing.status)) {
+      throw new ValidationError(`Cannot send a quote for a booking with status: ${existing.status}`);
+    }
+
+    // Idempotent re-send: allow SENT → SENT (e.g., admin corrects price before acceptance).
+    if (existing.quote_status === 'ACCEPTED' || existing.quote_status === 'REJECTED') {
+      throw new ValidationError(`Quote already ${existing.quote_status.toLowerCase()} for this booking`);
+    }
+
+    const patch = {
+      final_price: finalPrice,
+      quote_status: 'SENT',
+      quote_sent_at: new Date(),
+      status: existing.status || 'pending',
+    };
+    if (input.remarks != null) patch.quote_remarks = String(input.remarks);
+
+    const updated = await this.bookingRepo.update(bookingId, patch);
+
+    await this.timelineRepo.addEvent(
+      bookingId,
+      'quote_sent',
+      JSON.stringify({ final_price: finalPrice, remarks: input.remarks || null })
+    );
+
+    return updated;
+  }
+
+  /**
+   * Customer responds to a sent quote.
+   * Business rules:
+   * - booking must exist
+   * - quote must be SENT
+   * - accept → quote_status = ACCEPTED, quote_accepted_at set, status = confirmed
+   * - reject → quote_status = REJECTED
+   *
+   * @param {number} bookingId
+   * @param {'ACCEPT'|'REJECT'} action
+   */
+  async respondToQuote(bookingId, action) {
+    if (!bookingId) throw new ValidationError('bookingId is required');
+    if (!['ACCEPT', 'REJECT'].includes(action)) {
+      throw new ValidationError("action must be 'ACCEPT' or 'REJECT'");
+    }
+
+    const existing = await this.bookingRepo.findById(bookingId);
+    if (!existing) throw new NotFoundError('Booking not found');
+
+    if (existing.quote_status !== 'SENT') {
+      throw new ValidationError(
+        `Quote is not in SENT state (current: ${existing.quote_status || 'PENDING'})`
+      );
+    }
+
+    if (action === 'ACCEPT') {
+      const patch = {
+        quote_status: 'ACCEPTED',
+        quote_accepted_at: new Date(),
+        status: 'confirmed',
+        confirmed_at: new Date(),
+      };
+      await this.bookingRepo.update(bookingId, patch);
+
+      await this.timelineRepo.addEvent(
+        bookingId,
+        'quote_accepted',
+        JSON.stringify({ final_price: existing.final_price })
+      );
+
+      return { ok: true, quote_status: 'ACCEPTED', status: 'confirmed' };
+    }
+
+    const patch = { quote_status: 'REJECTED' };
+    await this.bookingRepo.update(bookingId, patch);
+
+    await this.timelineRepo.addEvent(bookingId, 'quote_rejected', JSON.stringify({}));
+
+    return { ok: true, quote_status: 'REJECTED', status: existing.status };
+  }
+
+  /**
    * Search bookings.
    * @param {Object} filters
    */

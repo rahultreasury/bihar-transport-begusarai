@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { prisma } = require('../config/prisma');
+const { getVehiclePricing, getValidVehicleIds, LEGACY_TYPE_FALLBACK } = require('../services/vehiclePricing');
 
 // Legacy helpers for backward compatible request/response fields
 const generateBookingRef = () => {
@@ -9,17 +10,18 @@ const generateBookingRef = () => {
   return `BTB-${timestamp.slice(-4)}${random}`;
 };
 
+// Every vehicle uses its own per-km rate (from the shared pricing catalogue).
+// Legacy generic types (truck/mini_truck/pickup/tempo/lorry) are resolved to a
+// representative vehicle for backward compatibility.
 const calculatePrice = (distance, vehicleType) => {
-  const rates = {
-    truck: { base: 500, perKm: 25 },
-    mini_truck: { base: 300, perKm: 18 },
-    pickup: { base: 250, perKm: 15 },
-    tempo: { base: 400, perKm: 20 },
-    lorry: { base: 700, perKm: 30 },
-  };
-  const rate = rates[vehicleType] || rates.pickup;
-  return rate.base + distance * rate.perKm;
+  const pricing = getVehiclePricing(vehicleType);
+  if (!pricing) return null;
+  return Math.round(distance * pricing.rate);
 };
+
+// Accept both the 18 catalogue vehicle ids and the legacy generic type names
+// (truck/mini_truck/pickup/tempo/lorry) that BookTransport still submits.
+const VALID_VEHICLE_TYPES = [...getValidVehicleIds(), ...Object.keys(LEGACY_TYPE_FALLBACK)];
 
 const estimateDistance = (fromCity, toCity) => {
   const cityDistances = {
@@ -88,7 +90,7 @@ router.post('/create', protect, [
   body('pickup_date').notEmpty().withMessage('Pickup date is required'),
   body('pickup_time').notEmpty().withMessage('Pickup time is required'),
   body('goods_description').notEmpty().withMessage('Goods description is required'),
-  body('vehicle_type_required').isIn(['truck', 'mini_truck', 'pickup', 'tempo', 'lorry']).withMessage('Valid vehicle type required')
+  body('vehicle_type_required').isIn(VALID_VEHICLE_TYPES).withMessage('Valid vehicle type required')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -612,6 +614,64 @@ router.put('/:id/cancel', protect, async (req, res) => {
   }
 });
 
+// @route   POST /api/bookings/:id/quote/accept
+// @desc    Customer accepts the admin's final quote.
+//          Moves quote_status SENT → ACCEPTED and status → confirmed.
+// @access  Private (Booking owner / admin)
+router.post('/:id/quote/accept', protect, async (req, res) => {
+  try {
+    const bookingId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(bookingId)) {
+      return res.status(400).json({ success: false, message: 'Invalid booking id' });
+    }
+
+    const booking = await prisma.booking.findUnique({
+      where: { booking_id: bookingId },
+      select: { user_id: true, quote_status: true },
+    });
+    if (!booking) return res.status(404).json({ success: false, message: 'Booking not found' });
+
+    if (booking.user_id !== req.user.user_id && req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+    }
+
+    const result = await bookingService.respondToQuote(bookingId, 'ACCEPT');
+    return res.json({ success: true, message: 'Quote accepted successfully', data: result });
+  } catch (err) {
+    console.error('Accept quote error:', err);
+    return mapDomainErrorToHttp(err, res);
+  }
+});
+
+// @route   POST /api/bookings/:id/quote/reject
+// @desc    Customer rejects the admin's final quote.
+//          Moves quote_status SENT → REJECTED (booking stays pending).
+// @access  Private (Booking owner / admin)
+router.post('/:id/quote/reject', protect, async (req, res) => {
+  try {
+    const bookingId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(bookingId)) {
+      return res.status(400).json({ success: false, message: 'Invalid booking id' });
+    }
+
+    const booking = await prisma.booking.findUnique({
+      where: { booking_id: bookingId },
+      select: { user_id: true, quote_status: true },
+    });
+    if (!booking) return res.status(404).json({ success: false, message: 'Booking not found' });
+
+    if (booking.user_id !== req.user.user_id && req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+    }
+
+    const result = await bookingService.respondToQuote(bookingId, 'REJECT');
+    return res.json({ success: true, message: 'Quote rejected', data: result });
+  } catch (err) {
+    console.error('Reject quote error:', err);
+    return mapDomainErrorToHttp(err, res);
+  }
+});
+
 // @route   GET /api/bookings/track/:reference
 // @desc    Track booking by reference number
 // @access  Public
@@ -673,6 +733,20 @@ router.get('/track/:reference', async (req, res) => {
         }
       : null;
 
+    // Brokerage model: driver details are often captured as snapshots
+    // (driver_name_snapshot, mobile_snapshot, truck_number_snapshot,
+    //  partner_name_snapshot) rather than linked accounts. Expose them so the
+    // customer always sees the assigned driver's contact + vehicle.
+    const snapshotDriverInfo = booking.driver_name_snapshot
+      ? {
+          driver_name: booking.driver_name_snapshot,
+          phone: booking.mobile_snapshot,
+          vehicle_number: booking.truck_number_snapshot,
+          vehicle_type: booking.vehicle?.vehicle_type || null,
+          owner_name: booking.partner_name_snapshot,
+        }
+      : null;
+
     res.json({
       success: true,
       data: {
@@ -685,11 +759,16 @@ router.get('/track/:reference', async (req, res) => {
         goods_description: booking.goods_description,
         status: booking.status,
         estimated_price: booking.estimated_price,
+        final_price: booking.final_price,
+        quote_status: booking.quote_status,
+        quote_remarks: booking.quote_remarks,
+        quote_sent_at: booking.quote_sent_at,
+        quote_accepted_at: booking.quote_accepted_at,
         pickup_date: booking.pickup_date,
         pickup_time: booking.pickup_time,
         driver_id: booking.driver_id,
         vehicle_id: booking.vehicle_id,
-        vehicle_number: booking.vehicle?.vehicle_number || null,
+        vehicle_number: booking.vehicle?.vehicle_number || booking.truck_number_snapshot || null,
         vehicle_name: booking.vehicle?.vehicle_name || null,
         vehicle_type: booking.vehicle?.vehicle_type || null,
         current_status: booking.delivery?.current_status || null,
@@ -697,6 +776,7 @@ router.get('/track/:reference', async (req, res) => {
         estimated_pickup_time: booking.delivery?.estimated_pickup_time || null,
         estimated_delivery_time: booking.delivery?.estimated_delivery_time || null,
         driver: driverInfo,
+        snapshot_driver: snapshotDriverInfo,
       },
     });
   } catch (error) {

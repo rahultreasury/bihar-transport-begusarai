@@ -1,17 +1,7 @@
 const axios = require('axios');
+const { getVehiclePricing } = require('../services/vehiclePricing');
 
 const GOOGLE_API_BASE = 'https://maps.googleapis.com/maps/api';
-
-const getVehicleRate = (vehicleType) => {
-  const rates = {
-    truck: 25,
-    mini_truck: 18,
-    pickup: 15,
-    tempo: 12,
-    lorry: 25,
-  };
-  return rates[vehicleType] ?? null;
-};
 
 const formatDuration = (durationSeconds) => {
   const totalMinutes = Math.round(durationSeconds / 60);
@@ -106,13 +96,15 @@ const calculatePriceHandler = async (req, res) => {
       });
     }
 
-    const rate = getVehicleRate(vehicleType);
-    if (!rate) {
+    const pricing = getVehiclePricing(vehicleType);
+    if (!pricing) {
       return res.status(400).json({
         success: false,
         message: 'Invalid vehicleType',
       });
     }
+
+    const { rate, min: rateMin, max: rateMax } = pricing;
 
     if (!googleApiKey) {
       // Fallback when API key is missing
@@ -134,6 +126,9 @@ const calculatePriceHandler = async (req, res) => {
         distanceKm,
         duration: '0 hours 0 mins',
         price,
+        rate,
+        rateMin,
+        rateMax,
         warning: 'GOOGLE_MAPS_API_KEY missing - using fallback distance',
       });
     }
@@ -151,6 +146,9 @@ const calculatePriceHandler = async (req, res) => {
       distanceKm,
       duration,
       price,
+      rate,
+      rateMin,
+      rateMax,
     });
   } catch (err) {
     return res.status(500).json({
