@@ -3,6 +3,20 @@ const router = express.Router();
 const { protect } = require('../middleware/auth');
 const { prisma } = require('../config/prisma');
 
+const { BookingService, ValidationError, NotFoundError } = require('../services/BookingService');
+
+const bookingService = new BookingService();
+
+const mapDomainErrorToHttp = (err, res) => {
+  if (err?.name === 'ValidationError' || err?.code === 'VALIDATION_ERROR') {
+    return res.status(400).json({ success: false, message: err?.message || 'Validation failed' });
+  }
+  if (err?.name === 'NotFoundError' || err?.code === 'NOT_FOUND') {
+    return res.status(404).json({ success: false, message: err?.message || 'Not found' });
+  }
+  return res.status(500).json({ success: false, message: 'Internal server error' });
+};
+
 // @route   GET /api/admin/dashboard
 // @desc    Get admin dashboard stats
 // @access  Private (Admin)
@@ -502,6 +516,10 @@ router.get('/bookings', protect, async (req, res) => {
       estimated_price: b.estimated_price,
       final_price: b.final_price,
       status: b.status,
+      quote_status: b.quote_status,
+      quote_remarks: b.quote_remarks,
+      quote_sent_at: b.quote_sent_at,
+      quote_accepted_at: b.quote_accepted_at,
       created_at: b.created_at,
       updated_at: b.updated_at,
       confirmed_at: b.confirmed_at,
@@ -532,6 +550,41 @@ router.get('/bookings', protect, async (req, res) => {
       success: false,
       message: 'Server error',
     });
+  }
+});
+
+// @route   POST /api/admin/bookings/:id/send-quote
+// @desc    Send a final quote to the customer (Final Transport Charge).
+//          Does NOT confirm the booking — waits for customer acceptance.
+// @access  Private (Admin)
+router.post('/bookings/:id/send-quote', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const bookingId = parseInt(req.params.id);
+    if (!Number.isFinite(bookingId)) {
+      return res.status(400).json({ success: false, message: 'Invalid booking id' });
+    }
+
+    const { final_price, remarks } = req.body || {};
+    const result = await bookingService.sendQuote(bookingId, { final_price, remarks });
+
+    return res.json({
+      success: true,
+      message: 'Quote sent to customer',
+      data: {
+        booking_id: bookingId,
+        final_price: Number(final_price),
+        quote_status: 'SENT',
+        quote_sent_at: result?.quote_sent_at || new Date(),
+        quote_remarks: remarks || null,
+      },
+    });
+  } catch (err) {
+    console.error('Send quote error:', err);
+    return mapDomainErrorToHttp(err, res);
   }
 });
 
@@ -756,6 +809,10 @@ router.get('/bookings/:id', protect, async (req, res) => {
       estimated_price: booking.estimated_price,
       final_price: booking.final_price,
       status: booking.status,
+      quote_status: booking.quote_status,
+      quote_remarks: booking.quote_remarks,
+      quote_sent_at: booking.quote_sent_at,
+      quote_accepted_at: booking.quote_accepted_at,
       created_at: booking.created_at,
       updated_at: booking.updated_at,
       confirmed_at: booking.confirmed_at,
@@ -768,10 +825,15 @@ router.get('/bookings/:id', protect, async (req, res) => {
       customer_phone: booking.user?.phone ?? null,
       vehicle_number: booking.vehicle?.vehicle_number ?? null,
       vehicle_name: booking.vehicle?.vehicle_name ?? null,
+      vehicle_type: booking.vehicle?.vehicle_type ?? null,
       driver_user_id: booking.driver?.user_id ?? null,
       driver_first_name: booking.driver?.user?.first_name ?? null,
       driver_last_name: booking.driver?.user?.last_name ?? null,
       driver_phone: booking.driver?.user?.phone ?? null,
+      driver_name_snapshot: booking.driver_name_snapshot ?? null,
+      truck_number_snapshot: booking.truck_number_snapshot ?? null,
+      owner_name_snapshot: booking.partner_name_snapshot ?? null,
+      mobile_snapshot: booking.mobile_snapshot ?? null,
       delivery_current_status: booking.delivery?.current_status ?? null,
       delivery_status_description: booking.delivery?.status_description ?? null,
     };
@@ -984,12 +1046,22 @@ router.post('/bookings/:id/assign-driver', protect, async (req, res) => {
         booking_id: true,
         driver_id: true,
         status: true,
+        quote_status: true,
       },
     });
     if (!booking) {
       return res.status(404).json({
         success: false,
         message: 'Booking not found'
+      });
+    }
+
+    // Quote workflow gate: a driver may only be assigned AFTER the customer
+    // has ACCEPTED the final quote. This replaces the old confirm flow.
+    if (booking.quote_status !== 'ACCEPTED') {
+      return res.status(400).json({
+        success: false,
+        message: 'Driver can only be assigned after the customer accepts the final quote'
       });
     }
 
@@ -1112,6 +1184,112 @@ router.post('/bookings/:id/assign-driver', protect, async (req, res) => {
     res.status(500).json({
       success: false,
       message: error.message || 'Server error assigning driver'
+    });
+  }
+});
+
+// @route   POST /api/admin/bookings/:id/assign-driver-details
+// @desc    Manually assign a driver + truck to a booking (brokerage model).
+//          The platform does NOT own trucks — the admin captures the driver's
+//          own vehicle details and stores them as immutable snapshots.
+//          Only allowed after the customer ACCEPTS the final quote.
+// @access  Private (Admin)
+router.post('/bookings/:id/assign-driver-details', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const bookingId = parseInt(req.params.id);
+    if (!Number.isFinite(bookingId)) {
+      return res.status(400).json({ success: false, message: 'Invalid booking id' });
+    }
+
+    const {
+      driver_name,
+      phone,
+      vehicle_number,
+      vehicle_type,
+      owner_name
+    } = req.body || {};
+
+    if (!driver_name) {
+      return res.status(400).json({ success: false, message: 'driver_name is required' });
+    }
+    if (!phone) {
+      return res.status(400).json({ success: false, message: 'phone is required' });
+    }
+    if (!vehicle_number) {
+      return res.status(400).json({ success: false, message: 'vehicle_number is required' });
+    }
+
+    const booking = await prisma.booking.findUnique({
+      where: { booking_id: bookingId },
+      select: { booking_id: true, status: true, quote_status: true },
+    });
+    if (!booking) {
+      return res.status(404).json({ success: false, message: 'Booking not found' });
+    }
+
+    if (booking.quote_status !== 'ACCEPTED') {
+      return res.status(400).json({
+        success: false,
+        message: 'Driver can only be assigned after the customer accepts the final quote',
+      });
+    }
+
+    if (['cancelled', 'completed', 'delivered'].includes(booking.status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot assign driver to a booking with status: ${booking.status}`,
+      });
+    }
+
+    // Persist driver + truck contact details as immutable snapshots and mark assigned.
+    const updated = await prisma.booking.update({
+      where: { booking_id: bookingId },
+      data: {
+        driver_name_snapshot: String(driver_name),
+        mobile_snapshot: String(phone),
+        truck_number_snapshot: String(vehicle_number),
+        partner_name_snapshot: owner_name ? String(owner_name) : null,
+        status: 'driver_assigned',
+        driver_assigned_at: new Date(),
+      },
+    });
+
+    await prisma.bookingEvent.create({
+      data: {
+        booking_id: bookingId,
+        event_type: 'driver_assigned',
+        event_payload: JSON.stringify({
+          driver_name,
+          phone,
+          vehicle_number,
+          vehicle_type: vehicle_type || null,
+          owner_name: owner_name || null,
+        }),
+      },
+    });
+
+    res.json({
+      success: true,
+      message: 'Driver assigned successfully',
+      data: {
+        booking_id: bookingId,
+        driver_name,
+        phone,
+        vehicle_number,
+        vehicle_type: vehicle_type || null,
+        owner_name: owner_name || null,
+        status: updated.status,
+      },
+    });
+  } catch (error) {
+    console.error('Assign driver details error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Server error assigning driver',
     });
   }
 });

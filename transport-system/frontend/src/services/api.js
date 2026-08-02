@@ -59,7 +59,10 @@ export const bookingAPI = {
   getUserBookings: (userId) => api.get(`/bookings/user/${userId}`),
   getBooking: (id) => api.get(`/bookings/${id}`),
   cancelBooking: (id) => api.put(`/bookings/${id}/cancel`),
-  trackBooking: (reference) => api.get(`/bookings/track/${reference}`)
+  trackBooking: (reference) => api.get(`/bookings/track/${reference}`),
+  // Quote-based booking workflow — customer responses
+  acceptQuote: (id) => api.post(`/bookings/${id}/quote/accept`),
+  rejectQuote: (id) => api.post(`/bookings/${id}/quote/reject`)
 };
 
 // Driver APIs

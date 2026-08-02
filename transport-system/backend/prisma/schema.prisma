@@ -343,6 +343,12 @@ model Booking {
   estimated_price       Float?
   final_price           Float?
   status                String?   @default("pending")
+  // Quote-based brokerage workflow fields.
+  // quote_status: PENDING → SENT → ACCEPTED | REJECTED
+  quote_status          String?   @default("PENDING")
+  quote_remarks         String?
+  quote_sent_at         DateTime?
+  quote_accepted_at     DateTime?
   created_at            DateTime? @default(now())
   updated_at            DateTime? @default(now())
   confirmed_at          DateTime?

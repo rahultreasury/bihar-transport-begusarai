@@ -1,18 +1,26 @@
-# Consistency Repair TODO
+# TODO — Fix Vehicle Dropdown Selection & Per-Kilometre Pricing
 
-Goal: Make the existing project internally consistent and production ready (Prisma schema ↔ code).
+## Bug 1 — Vehicle dropdown selection (Home.jsx)
+- [x] Investigate root cause: `<option value={v.type}>` used non-unique `type` (e.g. 13 vehicles share `type: 'truck'`), so the browser selected the first match.
+- [x] Home.jsx: default `quickBooking.vehicleType` → unique id `truck-17ft`
+- [x] Home.jsx: default `priceCalc.vehicleType` → unique id `truck-17ft`
+- [x] Home.jsx: `<option value={v.id}>` (unique slug)
+- [x] Home.jsx: `handleVehicleClick` sets `selectedVehicle`/`quickBooking.vehicleType` by `vehicle.id`
+- [x] Home.jsx: card highlight `isSelected = selectedVehicle === vehicle.id`
+- [x] Home.jsx: `latestQuote` stores `vehicleType` (id) + `vehicleName` (display name); modal displays name
 
-## Steps
+## Bug 2 — Per-kilometre pricing (old 5-vehicle logic)
+- [x] Backend: created shared `services/vehiclePricing.js` — 18-vehicle catalogue (rate, min, max) + legacy type aliases
+- [x] Backend: `controllers/mapsController.js` — uses shared pricing; returns `rate`/`rateMin`/`rateMax`
+- [x] Backend: `routes/bookingRoutes.js` — removed hardcoded 5-type map; uses shared pricing; validates all valid ids
 
-- [x] Step 0: Complete consistency audit (schema, migration, repos, services, routes, frontend)
-- [x] Step 1 (Fix 1): Remove `notes` references from Driver stack
-  - [x] backend/services/DriverManagementService.js — remove `notes` from register/update payloads
-  - [x] frontend/src/components/admin-premium/drivers/DriverRegisterModal.jsx — remove `notes` form field/UI
-- [x] Step 2 (Fix 2): Fix DriverRepository.getTrips() — remove invalid `delivery.estimated_distance_km` select
-- [x] Step 3 (Fix 3, limited): Fix corrupt SOURCE_DATABASE_URL in archived migrate script (parse-only fix)
-- [x] Step 4 (Fix 4): DriverFilters.jsx — backend-only statuses (available, on_trip, inactive)
-- [x] Step 5 (Fix 5): Verify remaining frontend files for removed-field references
-- [ ] Step 6: Verify ZERO references to `notes`, `estimated_distance_km` (delivery), removed KYC fields
-- [ ] Step 7: Run `prisma validate` and `prisma generate`
-- [ ] Step 8: Final consistency report
+## Verification
+- [x] Node sanity check of `vehiclePricing.js`
+- [x] Confirm every listed vehicle returns correct rate range and selected rate
+
+## Summary of changes
+- `transport-system/frontend/src/pages/Home.jsx` — unique `id` (slug) is the single identifier for dropdown, selection, quote, and booking state.
+- `transport-system/backend/services/vehiclePricing.js` — new single source of truth for all 18 vehicles' per-km pricing (rate/min/max), plus legacy `truck/mini_truck/pickup/tempo/lorry` aliases for backward compatibility.
+- `transport-system/backend/controllers/mapsController.js` — `/api/calculate-price` now resolves any vehicle's own rate and returns `rate`, `rateMin`, `rateMax`.
+- `transport-system/backend/routes/bookingRoutes.js` — legacy hardcoded 5-rate map removed; price computed from shared catalogue; validation accepts all 18 ids + legacy types.
 

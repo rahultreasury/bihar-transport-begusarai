@@ -3,6 +3,16 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { GoogleMap, useJsApiLoader, Marker, DirectionsRenderer, StandaloneSearchBox } from '@react-google-maps/api';
 import { AuthContext } from '../App';
 import { bookingAPI } from '../services/api';
+// Shared 18-vehicle fleet catalogue — SINGLE SOURCE OF TRUTH (same data as Home).
+import {
+  vehicleTypes,
+  DEFAULT_VEHICLE_ID,
+  getVehicleById,
+  getVehicleRate,
+  getVehicleName
+} from '../data/vehicleCatalogue';
+// SVG fallback icons — resolved at render time via getVehicleIcon(id).
+import { getVehicleIcon } from '../components/icons/VehicleIcons';
 
 // Bihar region center coordinates
 const BIHAR_CENTER = { lat: 25.6200, lng: 85.8900 };
@@ -10,40 +20,27 @@ const BIHAR_CENTER = { lat: 25.6200, lng: 85.8900 };
 // Google Maps configuration
 const libraries = ['places', 'geometry', 'distanceMatrix'];
 
-// Booking form vehicle types (generic fleet categories)
-const vehicleTypes = [
-  { value: 'truck', label: 'Truck', rate: 25, description: '₹25/km', icon: '🚛' },
-  { value: 'mini_truck', label: 'Mini Truck', rate: 15, description: '₹15/km', icon: '🛻' },
-  { value: 'pickup', label: 'Pickup', rate: 12, description: '₹12/km', icon: '🛺' },
-  { value: 'tempo', label: 'Tempo', rate: 18, description: '₹18/km', icon: '🚚' },
-  { value: 'lorry', label: 'Lorry', rate: 25, description: '₹25/km', icon: '🚛' }
-];
-
-// Maps fleet catalogue vehicle IDs (Home page) to booking form vehicle types
-const FLEET_VEHICLE_TYPE_MAP = {
-  'tata-ace': 'pickup',
-  'ashok-leyland-dost': 'pickup',
-  'pickup-truck': 'pickup',
-  'tata-407-10ft': 'mini_truck',
-  'tata-407-14ft': 'mini_truck',
-  'truck-17ft': 'truck',
-  'truck-19ft': 'truck',
-  'truck-22ft-10ton': 'truck',
-  'truck-22ft-12ton': 'truck',
-  'truck-22ft-heavy': 'truck',
-  'truck-24ft': 'truck',
-  'wheeler-10': 'truck',
-  'wheeler-12': 'truck',
-  'wheeler-14': 'truck',
-  'wheeler-16': 'truck',
-  'wheeler-18': 'truck',
-  'container-32ft-single-axle': 'truck',
-  'container-32ft-multi-axle': 'truck'
+// Backward-compatible mapping for legacy direct type query params
+// (e.g. /book-transport?vehicle=truck) to a representative fleet id.
+// Mirrors the backend LEGACY_TYPE_FALLBACK in services/vehiclePricing.js.
+const LEGACY_VEHICLE_PARAM_FALLBACK = {
+  truck: 'truck-17ft',
+  mini_truck: 'tata-407-10ft',
+  pickup: 'pickup-truck',
+  tempo: 'tata-407-14ft',
+  lorry: 'truck-19ft'
 };
 
-// Convert a fleet vehicle ID (e.g. "tata-ace") into a readable label (e.g. "Tata Ace")
-const formatVehicleId = (id) =>
-  id.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+/**
+ * Resolve a ?vehicle= query param to a valid fleet id (slug).
+ * Returns the matching catalogue id, a legacy-type representative, or ''.
+ */
+const resolveVehicleParam = (param) => {
+  if (!param) return '';
+  if (getVehicleById(param)) return param;
+  if (LEGACY_VEHICLE_PARAM_FALLBACK[param]) return LEGACY_VEHICLE_PARAM_FALLBACK[param];
+  return '';
+};
 
 function BookTransport() {
   const { user } = useContext(AuthContext);
@@ -76,11 +73,11 @@ function BookTransport() {
 
   const formRef = useRef(null);
 
-  // Pre-select the vehicle passed from the Home fleet catalogue (?vehicle=<vehicle-id>)
-  // Falls back to legacy direct type values (?vehicle=truck) and finally to default 'truck'
-  const preselectedFleetVehicle = FLEET_VEHICLE_TYPE_MAP[vehicleParam] ? vehicleParam : '';
-  const initialVehicleType = FLEET_VEHICLE_TYPE_MAP[vehicleParam]
-    || (vehicleTypes.some((v) => v.value === vehicleParam) ? vehicleParam : 'truck');
+  // Pre-select the vehicle passed from the Home fleet catalogue (?vehicle=<vehicle-id>).
+  // The value stored in the form is the unique fleet id (slug) — the exact value the
+  // backend pricing engine (vehiclePricing.js) and booking validation expect.
+  const preselectedFleetVehicle = resolveVehicleParam(vehicleParam);
+  const initialVehicleType = preselectedFleetVehicle || DEFAULT_VEHICLE_ID;
 
   const [formData, setFormData] = useState({
     pickup_location: '',
@@ -108,6 +105,73 @@ function BookTransport() {
     return () => clearTimeout(t);
   }, [preselectedFleetVehicle]);
 
+  // ===== Vehicle Selector Carousel =====
+  const vehicleCarouselRef = useRef(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  // Fixed card width (220px) + gap (12px) — used for one-card arrow steps.
+  const VEHICLE_CARD_STEP = 232;
+  const carouselRafRef = useRef(0);
+
+  const updateCarouselArrows = useCallback(() => {
+    const el = vehicleCarouselRef.current;
+    if (!el) return;
+    const { scrollLeft, scrollWidth, clientWidth } = el;
+    setCanScrollLeft(scrollLeft > 4);
+    setCanScrollRight(scrollLeft + clientWidth < scrollWidth - 4);
+  }, []);
+
+  // rAF-throttled scroll handler — keeps re-renders to one per frame.
+  const handleCarouselScroll = useCallback(() => {
+    if (carouselRafRef.current) return;
+    carouselRafRef.current = requestAnimationFrame(() => {
+      carouselRafRef.current = 0;
+      updateCarouselArrows();
+    });
+  }, [updateCarouselArrows]);
+
+  // Smoothly scroll one card width left/right (desktop arrow buttons).
+  const scrollCarousel = useCallback((direction) => {
+    const el = vehicleCarouselRef.current;
+    if (!el) return;
+    el.scrollBy({ left: direction * VEHICLE_CARD_STEP, behavior: 'smooth' });
+  }, []);
+
+  // Arrow-key keyboard navigation on the carousel (accessibility).
+  const handleCarouselKeyDown = useCallback((e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const el = vehicleCarouselRef.current;
+    if (!el) return;
+    el.scrollBy({
+      left: (e.key === 'ArrowLeft' ? -1 : 1) * VEHICLE_CARD_STEP,
+      behavior: 'smooth'
+    });
+  }, []);
+
+  // Keep arrow visibility in sync on mount / resize / after data loads.
+  useEffect(() => {
+    updateCarouselArrows();
+    window.addEventListener('resize', updateCarouselArrows);
+    return () => {
+      window.removeEventListener('resize', updateCarouselArrows);
+      if (carouselRafRef.current) cancelAnimationFrame(carouselRafRef.current);
+    };
+  }, [updateCarouselArrows]);
+
+  // Auto-scroll the selected/preselected vehicle card into view (centered).
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const selected = vehicleCarouselRef.current?.querySelector(
+        `[data-vehicle-id="${formData.vehicle_type_required}"]`
+      );
+      selected?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+      updateCarouselArrows();
+    }, 250);
+    return () => clearTimeout(t);
+  }, [formData.vehicle_type_required, updateCarouselArrows]);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -131,17 +195,12 @@ function BookTransport() {
     return cityDistances[key1] || cityDistances[key2] || 50;
   };
 
-  // Calculate price based on distance and vehicle type
+  // Calculate price based on distance and the selected vehicle's per-km rate.
+  // Rates come from the shared 18-vehicle catalogue (same display rates as Home),
+  // which mirrors the backend vehiclePricing.js source of truth.
   const calculateEstimatedPrice = (dist, vType) => {
-    const rates = {
-      'truck': 25,      // ₹25 per km
-      'mini_truck': 15, // ₹15 per km
-      'pickup': 12,     // ₹12 per km
-      'tempo': 18,      // ₹18 per km
-      'lorry': 25       // ₹25 per km
-    };
-    const rate = rates[vType] || rates['pickup'];
-    return Math.round(dist * rate);
+    const rate = getVehicleRate(vType);
+    return Math.round(dist * (rate || getVehicleRate(DEFAULT_VEHICLE_ID)));
   };
 
   // Calculate distance using Google Distance Matrix API
@@ -380,7 +439,7 @@ function BookTransport() {
       ? calculateEstimatedPrice(calculatedDistance, formData.vehicle_type_required)
       : estimatedPrice;
     
-    const vehicleName = vehicleTypes.find(v => v.value === formData.vehicle_type_required)?.label || 'Truck';
+    const vehicleName = getVehicleName(formData.vehicle_type_required);
     
     const message = `Hello Bihar Transport,
 
@@ -425,44 +484,115 @@ Please confirm booking.`;
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
                 <span className="text-sm font-semibold">
-                  {formatVehicleId(preselectedFleetVehicle)} pre-selected
+                  {getVehicleName(preselectedFleetVehicle)} pre-selected
                 </span>
               </div>
               <span className="text-xs text-blue-100/80 sm:text-right">
-                The matching vehicle type has been auto-selected below.
+                The matching vehicle has been auto-selected below.
               </span>
             </div>
           )}
 
-          {/* Vehicle Selection */}
+          {/* Vehicle Selection — premium horizontal carousel (Amazon / Apple-style) */}
           <div className="card">
-            <h2 className="text-lg md:text-xl font-semibold mb-4">Select Vehicle Type</h2>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-              {vehicleTypes.map((vehicle) => (
-                <label 
-                  key={vehicle.value}
-                  className={`cursor-pointer border-2 rounded-xl p-3 md:p-4 transition-all ${
-                    formData.vehicle_type_required === vehicle.value
-                      ? 'border-amber-500 bg-amber-100'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="vehicle_type_required"
-                    value={vehicle.value}
-                    checked={formData.vehicle_type_required === vehicle.value}
-                    onChange={handleChange}
-                    className="sr-only"
-                  />
-                  <div className="text-center">
-                    <div className="text-2xl md:text-3xl mb-1">{vehicle.icon}</div>
-                    <div className="font-semibold text-xs md:text-sm">{vehicle.label}</div>
-                    <div className="text-xs text-amber-600 font-medium">{vehicle.description}</div>
-                  </div>
-                </label>
-              ))}
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+              <h2 className="text-lg md:text-xl font-semibold">Select Vehicle</h2>
+              <span className="text-xs text-gray-500">
+                {vehicleTypes.length} vehicles available
+              </span>
             </div>
+
+            <div className="relative">
+              {/* Desktop navigation arrows — only shown when the carousel overflows */}
+              {canScrollLeft && (
+                <button
+                  type="button"
+                  onClick={() => scrollCarousel(-1)}
+                  aria-label="Scroll vehicles left"
+                  className="hidden md:flex absolute left-0 top-[104px] -translate-x-1/2 z-20 w-10 h-10 items-center justify-center rounded-full bg-white text-gray-700 shadow-lg border border-gray-200 hover:bg-amber-50 hover:text-amber-600 hover:border-amber-300 hover:shadow-xl transition-all duration-200 focus-visible:outline-2 focus-visible:outline-amber-500 cursor-pointer"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+              )}
+              {canScrollRight && (
+                <button
+                  type="button"
+                  onClick={() => scrollCarousel(1)}
+                  aria-label="Scroll vehicles right"
+                  className="hidden md:flex absolute right-0 top-[104px] translate-x-1/2 z-20 w-10 h-10 items-center justify-center rounded-full bg-white text-gray-700 shadow-lg border border-gray-200 hover:bg-amber-50 hover:text-amber-600 hover:border-amber-300 hover:shadow-xl transition-all duration-200 focus-visible:outline-2 focus-visible:outline-amber-500 cursor-pointer"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              )}
+
+              {/* Horizontal scroll-snap carousel */}
+              <div
+                ref={vehicleCarouselRef}
+                onScroll={handleCarouselScroll}
+                onKeyDown={handleCarouselKeyDown}
+                tabIndex={0}
+                role="group"
+                aria-label="Select a vehicle"
+                className="flex gap-3 overflow-x-auto scrollbar-hide snap-x snap-mandatory pb-2 -mx-1 px-1 outline-none"
+              >
+                {vehicleTypes.map((vehicle) => {
+                  const isSelected = formData.vehicle_type_required === vehicle.id;
+                  const VehicleIcon = getVehicleIcon(vehicle.id);
+                  return (
+                    <label
+                      key={vehicle.id}
+                      data-vehicle-id={vehicle.id}
+                      className={`cursor-pointer border-2 rounded-xl overflow-hidden transition-all snap-start shrink-0 w-[220px] ${
+                        isSelected
+                          ? 'border-amber-500 bg-amber-100 ring-2 ring-amber-200'
+                          : 'border-gray-200 hover:border-amber-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="vehicle_type_required"
+                        value={vehicle.id}
+                        checked={isSelected}
+                        onChange={handleChange}
+                        className="sr-only"
+                      />
+                      <div className="bg-gradient-to-b from-gray-50 to-amber-50/60 px-3 pt-3 pb-2 flex items-center justify-center h-[96px]">
+                        {vehicle.image ? (
+                          <img
+                            src={vehicle.image}
+                            alt={vehicle.name}
+                            loading="lazy"
+                            className="w-full max-h-[84px] object-contain"
+                          />
+                        ) : (
+                          <div className="scale-90">
+                            <VehicleIcon />
+                          </div>
+                        )}
+                      </div>
+                      <div className="p-2.5 text-center">
+                        <div className="font-semibold text-xs md:text-sm text-gray-900 leading-tight mb-1">
+                          {vehicle.name}
+                        </div>
+                        <div className="text-[10px] md:text-xs text-gray-500 mb-1">{vehicle.capacity}</div>
+                        <div className="text-[11px] md:text-xs text-amber-600 font-bold">
+                          {vehicle.priceLabel}
+                        </div>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Mobile swipe hint (desktop shows arrow hints instead) */}
+            <p className="mt-2 text-xs text-gray-400 md:hidden text-center">
+              ← Swipe to explore all vehicles →
+            </p>
           </div>
 
           {/* Pickup & Drop Locations with Google Places Autocomplete */}
@@ -703,10 +833,10 @@ Please confirm booking.`;
                   </div>
                   <div className="text-center p-3 md:p-4 bg-white rounded-lg shadow-sm">
                     <div className="text-lg md:text-xl font-semibold text-gray-800">
-                      {vehicleTypes.find(v => v.value === formData.vehicle_type_required)?.label || 'Pickup'}
+                      {getVehicleName(formData.vehicle_type_required)}
                     </div>
                     <div className="text-sm text-gray-500">
-                      ₹{vehicleTypes.find(v => v.value === formData.vehicle_type_required)?.rate || 12}/km
+                      {getVehicleById(formData.vehicle_type_required)?.priceLabel || ''}
                     </div>
                   </div>
                   <div className="text-center p-3 md:p-4 bg-white rounded-lg shadow-sm">
@@ -740,7 +870,7 @@ Please confirm booking.`;
                   </div>
                   <div className="text-center p-4 bg-white rounded-xl shadow-sm">
                     <div className="text-xl font-semibold text-gray-800">
-                      {vehicleTypes.find(v => v.value === formData.vehicle_type_required)?.label}
+                      {getVehicleName(formData.vehicle_type_required)}
                     </div>
                     <div className="text-sm text-gray-500">Vehicle Type</div>
                   </div>

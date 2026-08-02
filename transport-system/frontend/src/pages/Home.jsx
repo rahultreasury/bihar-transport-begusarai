@@ -6,403 +6,13 @@ import SEO from '../components/seo/SEO';
 import PanIndiaCoverage from '../components/home/PanIndiaCoverage';
 import TrustedClients from '../components/home/TrustedClients';
 
-// Vehicle images — real images live in src/assets/vehicles.
-// Vehicles without an image yet automatically fall back to the inline SVG icon.
-import tataAceImg from '../assets/vehicles/tata-ace.webp';
-import ashokLeylandDostImg from '../assets/vehicles/ashok-leyland-dost.webp';
-import pickupTruckImg from '../assets/vehicles/pickup-truck.webp';
-import tata40710ftImg from '../assets/vehicles/tata-407-10ft.webp';
-import tata40714ftImg from '../assets/vehicles/tata-407-14ft.webp';
-import truck17ftImg from '../assets/vehicles/truck-17ft.webp';
-
-// SVG Icons for vehicles
-const TruckIcon = () => (
-  <svg viewBox="0 0 64 64" className="w-16 h-16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="8" y="20" width="36" height="24" rx="2" fill="#F5A623" />
-    <rect x="44" y="28" width="12" height="16" rx="2" fill="#F5A623" />
-    <circle cx="18" cy="48" r="5" fill="#1e3a5f" />
-    <circle cx="46" cy="48" r="5" fill="#1e3a5f" />
-    <circle cx="18" cy="48" r="2.5" fill="#fff" />
-    <circle cx="46" cy="48" r="2.5" fill="#fff" />
-    <rect x="12" y="24" width="8" height="6" rx="1" fill="#1e3a5f" />
-    <rect x="46" y="30" width="4" height="4" rx="0.5" fill="#1e3a5f" />
-  </svg>
-);
-
-const MiniTruckIcon = () => (
-  <svg viewBox="0 0 64 64" className="w-16 h-16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="12" y="24" width="28" height="18" rx="2" fill="#F5A623" />
-    <rect x="40" y="30" width="12" height="12" rx="2" fill="#F5A623" />
-    <circle cx="22" cy="46" r="4" fill="#1e3a5f" />
-    <circle cx="46" cy="46" r="4" fill="#1e3a5f" />
-    <circle cx="22" cy="46" r="2" fill="#fff" />
-    <circle cx="46" cy="46" r="2" fill="#fff" />
-    <rect x="14" y="28" width="6" height="4" rx="1" fill="#1e3a5f" />
-  </svg>
-);
-
-const PickupIcon = () => (
-  <svg viewBox="0 0 64 64" className="w-16 h-16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M10 28L14 28L20 20H48L52 28H10Z" fill="#F5A623" />
-    <rect x="10" y="28" width="28" height="16" rx="2" fill="#F5A623" />
-    <rect x="38" y="32" width="16" height="12" rx="2" fill="#F5A623" />
-    <circle cx="22" cy="48" r="4" fill="#1e3a5f" />
-    <circle cx="46" cy="48" r="4" fill="#1e3a5f" />
-    <circle cx="22" cy="48" r="2" fill="#fff" />
-    <circle cx="46" cy="48" r="2" fill="#fff" />
-  </svg>
-);
-
-const TempoIcon = () => (
-  <svg viewBox="0 0 64 64" className="w-16 h-16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="6" y="22" width="40" height="20" rx="2" fill="#F5A623" />
-    <rect x="46" y="26" width="12" height="16" rx="2" fill="#F5A623" />
-    <circle cx="18" cy="46" r="4" fill="#1e3a5f" />
-    <circle cx="46" cy="46" r="4" fill="#1e3a5f" />
-    <circle cx="18" cy="46" r="2" fill="#fff" />
-    <circle cx="46" cy="46" r="2" fill="#fff" />
-    <rect x="10" y="26" width="6" height="4" rx="1" fill="#1e3a5f" />
-  </svg>
-);
-
-const AceIcon = () => (
-  <svg viewBox="0 0 64 64" className="w-16 h-16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="14" y="26" width="24" height="16" rx="2" fill="#F5A623" />
-    <rect x="38" y="30" width="12" height="12" rx="2" fill="#F5A623" />
-    <circle cx="24" cy="46" r="4" fill="#1e3a5f" />
-    <circle cx="44" cy="46" r="4" fill="#1e3a5f" />
-    <circle cx="24" cy="46" r="2" fill="#fff" />
-    <circle cx="44" cy="46" r="2" fill="#fff" />
-    <rect x="16" y="30" width="6" height="4" rx="1" fill="#1e3a5f" />
-  </svg>
-);
-
-const HeavyTruckIcon = () => (
-  <svg viewBox="0 0 64 64" className="w-16 h-16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="4" y="18" width="40" height="22" rx="2" fill="#F5A623" />
-    <rect x="44" y="24" width="14" height="16" rx="2" fill="#F5A623" />
-    <circle cx="16" cy="44" r="4.5" fill="#1e3a5f" />
-    <circle cx="32" cy="44" r="4.5" fill="#1e3a5f" />
-    <circle cx="50" cy="44" r="4.5" fill="#1e3a5f" />
-    <circle cx="16" cy="44" r="2.2" fill="#fff" />
-    <circle cx="32" cy="44" r="2.2" fill="#fff" />
-    <circle cx="50" cy="44" r="2.2" fill="#fff" />
-    <rect x="8" y="22" width="8" height="5" rx="1" fill="#1e3a5f" />
-  </svg>
-);
-
-const ContainerTruckIcon = () => (
-  <svg viewBox="0 0 64 64" className="w-16 h-16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="4" y="20" width="52" height="20" rx="2" fill="#F5A623" />
-    <rect x="4" y="20" width="52" height="6" rx="2" fill="#1e3a5f" opacity="0.9" />
-    <line x1="14" y1="27" x2="14" y2="40" stroke="#1e3a5f" strokeWidth="1.5" opacity="0.4" />
-    <line x1="32" y1="27" x2="32" y2="40" stroke="#1e3a5f" strokeWidth="1.5" opacity="0.4" />
-    <line x1="50" y1="27" x2="50" y2="40" stroke="#1e3a5f" strokeWidth="1.5" opacity="0.4" />
-    <circle cx="16" cy="44" r="4.5" fill="#1e3a5f" />
-    <circle cx="46" cy="44" r="4.5" fill="#1e3a5f" />
-    <circle cx="16" cy="44" r="2.2" fill="#fff" />
-    <circle cx="46" cy="44" r="2.2" fill="#fff" />
-    <rect x="44" y="22" width="6" height="6" rx="1" fill="#FBBF24" />
-  </svg>
-);
-
-// Vehicle data with prices and SVG icons
-const vehicleTypes = [
-  {
-    id: 'tata-ace',
-    type: 'pickup',
-    name: 'Tata Ace',
-    image: tataAceImg,
-    capacity: '1000 KG',
-    capacityKg: 1000,
-    category: 'Light Commercial',
-    wheels: 4,
-    lengthFt: 8,
-    priceLabel: '₹20–25/km',
-    price: 22.5,
-    priceMin: 20,
-    priceMax: 25,
-    icon: AceIcon,
-    bestFor: ['Small household goods', 'E-commerce deliveries', 'Small business shipments']
-  },
-  {
-    id: 'ashok-leyland-dost',
-    type: 'pickup',
-    name: 'Ashok Leyland Dost',
-    image: ashokLeylandDostImg,
-    capacity: '1.5 Ton (1500 KG)',
-    capacityKg: 1500,
-    category: 'Light Commercial',
-    wheels: 4,
-    lengthFt: 9,
-    priceLabel: '₹25–30/km',
-    price: 27.5,
-    priceMin: 25,
-    priceMax: 30,
-    icon: PickupIcon,
-    bestFor: ['Furniture', 'Agricultural goods', 'Retail supply']
-  },
-  {
-    id: 'pickup-truck',
-    type: 'pickup',
-    name: 'Mahindra Bolero Pik-Up (Extra Long)',
-    image: pickupTruckImg,
-    capacity: '2 Ton',
-    capacityKg: 2000,
-    category: 'Light Commercial',
-    wheels: 6,
-    lengthFt: 10,
-    priceLabel: '₹30–35/km',
-    price: 32.5,
-    priceMin: 30,
-    priceMax: 35,
-    icon: PickupIcon,
-    bestFor: ['Construction material', 'Industrial supplies', 'Medium goods']
-  },
-  {
-    id: 'tata-407-10ft',
-    type: 'mini_truck',
-    name: 'Tata 407 (10 ft)',
-    image: tata40710ftImg,
-    capacity: '3 Ton',
-    capacityKg: 3000,
-    category: 'Heavy Commercial',
-    wheels: 6,
-    lengthFt: 10,
-    priceLabel: '₹35–42/km',
-    price: 38.5,
-    priceMin: 35,
-    priceMax: 42,
-    icon: MiniTruckIcon,
-    bestFor: ['Construction material', 'Industrial supplies', 'Medium goods']
-  },
-  {
-    id: 'tata-407-14ft',
-    type: 'mini_truck',
-    name: 'Tata 407 (14 ft)',
-    image: tata40714ftImg,
-    capacity: '4 Ton',
-    capacityKg: 4000,
-    category: 'Heavy Commercial',
-    wheels: 6,
-    lengthFt: 14,
-    priceLabel: '₹42–45/km',
-    price: 43.5,
-    priceMin: 42,
-    priceMax: 45,
-    icon: TempoIcon,
-    bestFor: ['Furniture shifting', 'Commercial goods', 'Retail distribution']
-  },
-  {
-    id: 'truck-17ft',
-    type: 'truck',
-    name: '17 ft Truck',
-    image: truck17ftImg,
-    capacity: '4–5 Ton',
-    capacityKg: 4500,
-    category: 'Heavy Commercial',
-    wheels: 6,
-    lengthFt: 17,
-    priceLabel: '₹45–55/km',
-    price: 50,
-    priceMin: 45,
-    priceMax: 55,
-    icon: TruckIcon,
-    bestFor: ['Intercity goods', 'FMCG loads', 'Warehouse transfer']
-  },
-  {
-    id: 'truck-19ft',
-    type: 'truck',
-    name: '19 ft Truck',
-    capacity: '7–8 Ton',
-    capacityKg: 7500,
-    category: 'Heavy Commercial',
-    wheels: 6,
-    lengthFt: 19,
-    priceLabel: '₹55–60/km',
-    price: 57.5,
-    priceMin: 55,
-    priceMax: 60,
-    icon: TruckIcon,
-    bestFor: ['Bulk FMCG', 'Packed goods', 'Full truck load']
-  },
-  {
-    id: 'truck-22ft-10ton',
-    type: 'truck',
-    name: '22 ft Truck',
-    capacity: '10 Ton',
-    capacityKg: 10000,
-    category: 'Heavy Commercial',
-    wheels: 10,
-    lengthFt: 22,
-    priceLabel: '₹60–65/km',
-    price: 62.5,
-    priceMin: 60,
-    priceMax: 65,
-    icon: TruckIcon,
-    bestFor: ['Full truck load', 'Heavy machinery', 'Bulk freight']
-  },
-  {
-    id: 'truck-22ft-12ton',
-    type: 'truck',
-    name: '22 ft Truck',
-    capacity: '12 Ton',
-    capacityKg: 12000,
-    category: 'Heavy Commercial',
-    wheels: 10,
-    lengthFt: 22,
-    priceLabel: '₹65–70/km',
-    price: 67.5,
-    priceMin: 65,
-    priceMax: 70,
-    icon: TruckIcon,
-    bestFor: ['Heavy cargo', 'Industrial material', 'Bulk transport']
-  },
-  {
-    id: 'truck-22ft-heavy',
-    type: 'truck',
-    name: '22 ft Heavy Truck',
-    capacity: '12 Ton Heavy',
-    capacityKg: 12000,
-    category: 'Heavy Commercial',
-    wheels: 10,
-    lengthFt: 22,
-    priceLabel: '₹70–75/km',
-    price: 72.5,
-    priceMin: 70,
-    priceMax: 75,
-    icon: TruckIcon,
-    bestFor: ['Oversized cargo', 'Industrial equipment', 'High-density goods']
-  },
-  {
-    id: 'truck-24ft',
-    type: 'truck',
-    name: '24 ft Truck',
-    capacity: '13 Ton',
-    capacityKg: 13000,
-    category: 'Heavy Commercial',
-    wheels: 10,
-    lengthFt: 24,
-    priceLabel: 'Around ₹60/km',
-    price: 60,
-    priceMin: 58,
-    priceMax: 62,
-    icon: TruckIcon,
-    bestFor: ['Long-haul freight', 'Bulk goods', 'FTL shipments']
-  },
-  {
-    id: 'wheeler-10',
-    type: 'truck',
-    name: '10 Wheeler',
-    capacity: '18 Ton',
-    capacityKg: 18000,
-    category: 'Heavy Commercial',
-    wheels: 10,
-    lengthFt: 24,
-    priceLabel: 'Around ₹78/km',
-    price: 78,
-    priceMin: 76,
-    priceMax: 80,
-    icon: HeavyTruckIcon,
-    bestFor: ['Heavy industrial loads', 'Construction material', 'Bulk cargo']
-  },
-  {
-    id: 'wheeler-12',
-    type: 'truck',
-    name: '12 Wheeler',
-    capacity: '25 Ton',
-    capacityKg: 25000,
-    category: 'Heavy Commercial',
-    wheels: 12,
-    lengthFt: 28,
-    priceLabel: 'Around ₹92/km',
-    price: 92,
-    priceMin: 90,
-    priceMax: 94,
-    icon: HeavyTruckIcon,
-    bestFor: ['Large-scale freight', 'Mining material', 'Industrial bulk']
-  },
-  {
-    id: 'wheeler-14',
-    type: 'truck',
-    name: '14 Wheeler',
-    capacity: '30 Ton',
-    capacityKg: 30000,
-    category: 'Heavy Commercial',
-    wheels: 14,
-    lengthFt: 30,
-    priceLabel: 'Around ₹102/km',
-    price: 102,
-    priceMin: 100,
-    priceMax: 104,
-    icon: HeavyTruckIcon,
-    bestFor: ['Very heavy loads', 'Infrastructure material', 'Bulk industrial']
-  },
-  {
-    id: 'wheeler-16',
-    type: 'truck',
-    name: '16 Wheeler',
-    capacity: '35 Ton',
-    capacityKg: 35000,
-    category: 'Heavy Commercial',
-    wheels: 16,
-    lengthFt: 32,
-    priceLabel: 'Around ₹118/km',
-    price: 118,
-    priceMin: 116,
-    priceMax: 120,
-    icon: HeavyTruckIcon,
-    bestFor: ['Extra heavy cargo', 'Project logistics', 'Bulk freight']
-  },
-  {
-    id: 'wheeler-18',
-    type: 'truck',
-    name: '18 Wheeler',
-    capacity: '43 Ton',
-    capacityKg: 43000,
-    category: 'Heavy Commercial',
-    wheels: 18,
-    lengthFt: 36,
-    priceLabel: 'Around ₹135/km',
-    price: 135,
-    priceMin: 133,
-    priceMax: 137,
-    icon: HeavyTruckIcon,
-    bestFor: ['Maximum capacity loads', 'Project cargo', 'Heavy machinery']
-  },
-  {
-    id: 'container-32ft-single-axle',
-    type: 'truck',
-    name: '32 ft Container (Single Axle)',
-    capacity: '7.5–10 Ton',
-    capacityKg: 8750,
-    category: 'Container',
-    wheels: 6,
-    lengthFt: 32,
-    priceLabel: '₹68/km',
-    price: 68,
-    priceMin: 67,
-    priceMax: 69,
-    icon: ContainerTruckIcon,
-    bestFor: ['Secure containerized goods', 'E-commerce bulk', 'Export-import cargo']
-  },
-  {
-    id: 'container-32ft-multi-axle',
-    type: 'truck',
-    name: '32 ft Container (Multi Axle)',
-    capacity: '18 Ton',
-    capacityKg: 18000,
-    category: 'Container',
-    wheels: 12,
-    lengthFt: 32,
-    priceLabel: '₹102/km',
-    price: 102,
-    priceMin: 101,
-    priceMax: 103,
-    icon: ContainerTruckIcon,
-    bestFor: ['Containerized FTL', 'Heavy sealed cargo', 'Long-distance transport']
-  }
-];
+// Shared 18-vehicle fleet catalogue — SINGLE SOURCE OF TRUTH.
+// Images, capacities and per-km rate ranges live in
+// src/data/vehicleCatalogue.js and are consumed by both Home and BookTransport.
+// SVG fallback icons live in src/components/icons/VehicleIcons.jsx and are
+// resolved at render time via getVehicleIcon(id) — never stored in the data.
+import { vehicleTypes, DEFAULT_VEHICLE_ID } from '../data/vehicleCatalogue';
+import { getVehicleIcon } from '../components/icons/VehicleIcons';
 
 // Service areas
 // Customer reviews with Bihar cities
@@ -452,7 +62,7 @@ function Home() {
   const [quickBooking, setQuickBooking] = useState({
     pickup: '',
     drop: '',
-    vehicleType: 'truck'
+    vehicleType: DEFAULT_VEHICLE_ID
   });
 
   // Price Calculator State
@@ -467,7 +77,7 @@ function Home() {
     dropLat: null,
     dropLng: null,
     dropFormattedAddress: '',
-    vehicleType: 'truck'
+    vehicleType: DEFAULT_VEHICLE_ID
   });
 
   const pickupAutocompleteRef = useRef(null);
@@ -573,9 +183,9 @@ function Home() {
   };
 
   const renderVehicleCard = (vehicle) => {
-    const isSelected = selectedVehicle === vehicle.type;
+    const isSelected = selectedVehicle === vehicle.id;
     const isCompared = compareList.some((v) => v.id === vehicle.id);
-    const VehicleIcon = vehicle.icon;
+    const VehicleIcon = getVehicleIcon(vehicle.id);
 
     return (
       <div
@@ -744,6 +354,11 @@ function Home() {
     navigate(`/book-transport?${params.toString()}`);
   };
 
+  const handleVehicleClick = (vehicle) => {
+    setSelectedVehicle(vehicle.id);
+    setQuickBooking((prev) => ({ ...prev, vehicleType: vehicle.id }));
+  };
+
   // ===== Price Calculator (Distance Matrix API + Google Autocomplete inputs) =====
   const handleCheckPrice = async () => {
     if (!priceCalc.pickupLat || !priceCalc.pickupLng || !priceCalc.dropLat || !priceCalc.dropLng) {
@@ -796,6 +411,9 @@ function Home() {
         dropAddress: priceCalc.dropFormattedAddress || priceCalc.drop,
         dropCity: priceCalc.drop || 'Patna',
         vehicleType: priceCalc.vehicleType,
+        vehicleName:
+          vehicleTypes.find((v) => v.id === priceCalc.vehicleType)?.name ||
+          priceCalc.vehicleType,
         distanceKm: data.distanceKm,
         price: data.price
       });
@@ -909,11 +527,6 @@ function Home() {
   const handleWhatsApp = () => {
     const message = `Hello Bihar Transport,\n\nI'm interested in booking transport service.\n\nPlease share more details.`;
     window.open(`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`, '_blank');
-  };
-
-  const handleVehicleClick = (vehicle) => {
-    setSelectedVehicle(vehicle.type);
-    setQuickBooking((prev) => ({ ...prev, vehicleType: vehicle.type }));
   };
 
   const renderStars = (rating) => '⭐'.repeat(rating);
@@ -1128,7 +741,7 @@ function Home() {
                       className="w-full px-2 py-2 md:py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition-all cursor-pointer bg-white text-gray-700 text-sm"
                     >
                       {vehicleTypes.map((v) => (
-                        <option key={v.id} value={v.type}>
+                        <option key={v.id} value={v.id}>
                           {v.name}
                         </option>
                       ))}
@@ -1433,7 +1046,7 @@ function Home() {
           >
             <span className="flex -space-x-2">
               {compareList.slice(0, 4).map((v) => {
-                const Icon = v.icon;
+                const Icon = getVehicleIcon(v.id);
                 return (
                   <span key={v.id} className="w-7 h-7 rounded-full bg-white/20 border-2 border-blue-900 flex items-center justify-center overflow-hidden">
                     {v.image ? (
@@ -1504,7 +1117,7 @@ function Home() {
                               {v.image ? (
                                 <img src={v.image} alt={v.name} loading="lazy" className="w-full h-full object-contain" />
                               ) : (
-                                (() => { const Icon = v.icon; return <Icon />; })()
+                                (() => { const Icon = getVehicleIcon(v.id); return <Icon />; })()
                               )}
                             </div>
                             <div className="font-bold text-gray-900 leading-tight">{v.name}</div>
@@ -1835,7 +1448,7 @@ function Home() {
                   <label className="block text-xs font-semibold text-gray-600">Vehicle</label>
                   <input
                     type="text"
-                    value={latestQuote?.vehicleType || ''}
+                    value={latestQuote?.vehicleName || latestQuote?.vehicleType || ''}
                     readOnly
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-700 text-sm"
                   />

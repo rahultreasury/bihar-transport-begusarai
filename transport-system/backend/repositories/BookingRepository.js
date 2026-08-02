@@ -88,6 +88,10 @@ class BookingRepository {
           estimated_price: data.estimated_price != null ? Number(data.estimated_price) : null,
           final_price: data.final_price != null ? Number(data.final_price) : null,
           status: data.status || 'pending',
+          quote_status: data.quote_status || 'PENDING',
+          quote_remarks: data.quote_remarks != null ? data.quote_remarks : null,
+          quote_sent_at: data.quote_sent_at || null,
+          quote_accepted_at: data.quote_accepted_at || null,
         },
       });
       return { booking_id: booking.booking_id };
@@ -156,6 +160,10 @@ class BookingRepository {
       'estimated_price',
       'final_price',
       'status',
+      'quote_status',
+      'quote_remarks',
+      'quote_sent_at',
+      'quote_accepted_at',
       'confirmed_at',
       'driver_assigned_at',
       'pickup_completed_at',
