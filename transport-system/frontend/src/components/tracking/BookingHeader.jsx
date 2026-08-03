@@ -1,4 +1,5 @@
 import React from 'react';
+import QuoteStatusBadge from './QuoteStatusBadge';
 
 const VEHICLE_ICONS = {
   truck: '🚛',
@@ -9,13 +10,18 @@ const VEHICLE_ICONS = {
 };
 
 /**
- * BookingHeader — Displays confirmed booking summary at the top of tracking dashboard.
+ * BookingHeader — Displays booking summary at the top of tracking dashboard.
+ * Quote-aware: shows "Booking Received" while awaiting approval, and
+ * "Booking Confirmed" only after the quote is accepted.
+ *
  * @param {{ booking: Object }} props
  */
 const BookingHeader = React.memo(function BookingHeader({ booking }) {
   if (!booking) return null;
 
   const vehicleIcon = VEHICLE_ICONS[booking.vehicle_type_required] || '🚛';
+  const quoteStatus = (booking.quote_status || 'PENDING').toUpperCase();
+  const isConfirmed = quoteStatus === 'ACCEPTED' || booking.status === 'confirmed';
 
   const formatDate = (dateStr) => {
     if (!dateStr) return '—';
@@ -30,16 +36,18 @@ const BookingHeader = React.memo(function BookingHeader({ booking }) {
     }
   };
 
-  const paymentStatus = booking.final_price ? 'Paid' : 'Unpaid';
-
   return (
     <div className="rounded-2xl bg-gradient-to-br from-amber-500 to-amber-600 p-5 md:p-7 text-white shadow-lg">
-      {/* Confirmed Badge */}
+      {/* Status badge */}
       <div className="flex items-center gap-2 mb-4">
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-white/20 px-3 py-1 text-xs font-medium backdrop-blur-sm">
-          <span className="h-1.5 w-1.5 rounded-full bg-green-300 animate-pulse" />
-          Booking Confirmed
-        </span>
+        {isConfirmed ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/20 px-3 py-1 text-xs font-medium backdrop-blur-sm">
+            <span className="h-1.5 w-1.5 rounded-full bg-green-300 animate-pulse" />
+            Booking Confirmed
+          </span>
+        ) : (
+          <QuoteStatusBadge quoteStatus={quoteStatus} size="sm" />
+        )}
       </div>
 
       {/* Booking Number & Customer */}
@@ -81,13 +89,19 @@ const BookingHeader = React.memo(function BookingHeader({ booking }) {
           </div>
         </div>
         <div className="rounded-xl bg-white/10 backdrop-blur-sm p-3">
-          <div className="text-amber-200 text-xs font-medium uppercase tracking-wider">Est. Cost</div>
-          <div className="font-semibold mt-1 text-sm md:text-base">
-            ₹{Number(booking.estimated_price || 0).toLocaleString('en-IN')}
-          </div>
-          <div className={`text-xs mt-0.5 ${paymentStatus === 'Paid' ? 'text-green-300' : 'text-amber-200'}`}>
-            {paymentStatus}
-          </div>
+          <div className="text-amber-200 text-xs font-medium uppercase tracking-wider">Cost</div>
+          {isConfirmed && booking.final_price != null ? (
+            <div className="font-semibold mt-1 text-sm md:text-base">
+              ₹{Number(booking.final_price).toLocaleString('en-IN')}
+            </div>
+          ) : (
+            <div className="font-semibold mt-1 text-sm md:text-base">
+              <span className="inline-flex items-center gap-1.5">
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-200 animate-pulse" />
+                Confirming
+              </span>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -95,4 +109,3 @@ const BookingHeader = React.memo(function BookingHeader({ booking }) {
 });
 
 export default BookingHeader;
-

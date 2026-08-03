@@ -10,10 +10,16 @@ const VEHICLE_LABELS = {
 
 /**
  * BookingDetails — Displays all booking details in a structured card.
+ * The final price is shown ONLY after the quote is accepted (confirmed).
+ * Before acceptance, the price row shows "Finding best market price…".
+ *
  * @param {{ booking: Object }} props
  */
 const BookingDetails = React.memo(function BookingDetails({ booking }) {
   if (!booking) return null;
+
+  const quoteStatus = (booking.quote_status || 'PENDING').toUpperCase();
+  const isConfirmed = quoteStatus === 'ACCEPTED' || booking.status === 'confirmed';
 
   const formatDate = (dateStr) => {
     if (!dateStr) return '—';
@@ -59,12 +65,6 @@ const BookingDetails = React.memo(function BookingDetails({ booking }) {
         ? `${Number(booking.estimated_distance_km).toLocaleString('en-IN')} km`
         : '—',
     },
-    {
-      label: 'Estimated Price',
-      value: booking.estimated_price
-        ? `₹${Number(booking.estimated_price).toLocaleString('en-IN')}`
-        : '—',
-    },
     { label: 'Goods Type', value: booking.goods_type || '—' },
     {
       label: 'Weight',
@@ -96,10 +96,26 @@ const BookingDetails = React.memo(function BookingDetails({ booking }) {
             </dd>
           </div>
         ))}
+
+        {/* Price row — shows final price only after confirmation */}
+        <div className="py-3 flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4">
+          <dt className="text-xs font-medium text-gray-500 uppercase tracking-wider shrink-0 w-32">
+            Price
+          </dt>
+          <dd className="text-sm font-semibold text-gray-900 sm:ml-0">
+            {isConfirmed && booking.final_price != null ? (
+              `₹${Number(booking.final_price).toLocaleString('en-IN')}`
+            ) : (
+              <span className="inline-flex items-center gap-1.5 text-amber-600">
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                Finding best market price…
+              </span>
+            )}
+          </dd>
+        </div>
       </dl>
     </div>
   );
 });
 
 export default BookingDetails;
-

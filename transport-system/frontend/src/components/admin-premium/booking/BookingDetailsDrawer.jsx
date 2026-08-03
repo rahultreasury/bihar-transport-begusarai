@@ -16,8 +16,10 @@ import {
   ChevronLeft,
   AlertCircle,
   CheckCircle2,
-  ArrowUpRight,
+ArrowUpRight,
   Clock,
+  Send,
+  Timer,
 } from 'lucide-react';
 import StatusBadge from './StatusBadge';
 import { adminAPI } from '../../../services/api';
@@ -746,6 +748,14 @@ function BookingDetailsDrawer({ booking, isOpen, onClose, onBookingUpdated }) {
   const [assignVehicleSuccess, setAssignVehicleSuccess] = useState('');
   const [loadingVehicles, setLoadingVehicles] = useState(false);
 
+  // Send Quote state — final price + quote validity + remarks
+  const [finalPrice, setFinalPrice] = useState('');
+  const [quoteValidityHours, setQuoteValidityHours] = useState('2');
+  const [quoteRemarks, setQuoteRemarks] = useState('');
+  const [sendingQuote, setSendingQuote] = useState(false);
+  const [quoteError, setQuoteError] = useState('');
+  const [quoteSuccess, setQuoteSuccess] = useState('');
+
   // Trap focus
   useEffect(() => {
     if (isOpen) {
@@ -892,6 +902,45 @@ function BookingDetailsDrawer({ booking, isOpen, onClose, onBookingUpdated }) {
     }
   }, [selectedVehicleId, booking, onBookingUpdated]);
 
+const handleSendQuote = useCallback(async () => {
+    if (!booking) return;
+    const price = Number(finalPrice);
+    if (!finalPrice || isNaN(price) || price <= 0) {
+      setQuoteError('Please enter a valid final price (₹).');
+      return;
+    }
+    const validity = Number(quoteValidityHours);
+    if (!validity || validity <= 0) {
+      setQuoteError('Please enter a valid quote validity (hours).');
+      return;
+    }
+
+    setSendingQuote(true);
+    setQuoteError('');
+    setQuoteSuccess('');
+    try {
+      const response = await adminAPI.sendQuote(booking.booking_id, {
+        final_price: price,
+        driver_id: booking.driver_id || null,
+        vehicle_id: booking.vehicle_id || null,
+        quote_validity_hours: validity,
+        remarks: quoteRemarks || null,
+      });
+      if (response.data?.success) {
+        setQuoteSuccess('Quote sent to customer successfully.');
+        if (onBookingUpdated) {
+          onBookingUpdated(booking.booking_id);
+        }
+      } else {
+        setQuoteError(response.data?.message || 'Failed to send quote');
+      }
+    } catch (err) {
+      setQuoteError(err?.response?.data?.message || err?.message || 'Failed to send quote');
+    } finally {
+      setSendingQuote(false);
+    }
+  }, [booking, finalPrice, quoteValidityHours, quoteRemarks, onBookingUpdated]);
+
   if (!booking) return null;
 
   const customerName = `${booking.customer_first_name || ''} ${booking.customer_last_name || ''}`.trim() || '—';
@@ -980,7 +1029,124 @@ function BookingDetailsDrawer({ booking, isOpen, onClose, onBookingUpdated }) {
                 </div>
               </SectionCard>
 
-              {/* 3. ASSIGNMENT - Premium Redesign */}
+{/* 3. QUOTE & PRICING - Send Final Quote */}
+              <SectionCard title="Quote & Pricing">
+                <div className="space-y-4">
+                  {/* Quote status */}
+                  <div className="flex items-center justify-between rounded-xl bg-amber-500/5 border border-amber-500/15 px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center">
+                        <Timer className="w-4 h-4 text-amber-600" strokeWidth={2.5} />
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold text-text uppercase tracking-wider">Quote Status</div>
+                        <div className="text-xs text-muted mt-0.5">
+                          {booking.quote_status || 'PENDING'}
+                        </div>
+                      </div>
+                    </div>
+                    {booking.final_price != null && (
+                      <div className="text-right">
+                        <div className="text-[10px] text-muted uppercase tracking-wider">Final Price</div>
+                        <div className="text-sm font-bold text-amber-600">
+                          ₹{Number(booking.final_price).toLocaleString('en-IN')}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Final price input */}
+                  <div>
+                    <label className="block text-xs font-semibold text-text mb-1.5">
+                      Final Transport Price (₹)
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-muted">₹</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={finalPrice}
+                        onChange={(e) => setFinalPrice(e.target.value)}
+                        placeholder="e.g. 6900"
+                        className="w-full pl-8 pr-4 py-2.5 rounded-xl border border-border/60 bg-card/40 text-sm font-semibold text-text focus:ring-2 focus:ring-amber-500/40 focus:border-transparent outline-none transition"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Quote validity */}
+                  <div>
+                    <label className="block text-xs font-semibold text-text mb-1.5">
+                      Quote Validity (hours)
+                    </label>
+                    <select
+                      value={quoteValidityHours}
+                      onChange={(e) => setQuoteValidityHours(e.target.value)}
+                      className="w-full px-4 py-2.5 rounded-xl border border-border/60 bg-card/40 text-sm font-semibold text-text focus:ring-2 focus:ring-amber-500/40 focus:border-transparent outline-none transition"
+                    >
+                      <option value="1">1 Hour</option>
+                      <option value="2">2 Hours</option>
+                      <option value="4">4 Hours</option>
+                      <option value="8">8 Hours</option>
+                      <option value="24">24 Hours</option>
+                    </select>
+                  </div>
+
+                  {/* Remarks */}
+                  <div>
+                    <label className="block text-xs font-semibold text-text mb-1.5">
+                      Remarks (optional)
+                    </label>
+                    <textarea
+                      value={quoteRemarks}
+                      onChange={(e) => setQuoteRemarks(e.target.value)}
+                      placeholder="e.g. Price includes tolls and loading charges"
+                      rows={2}
+                      className="w-full px-4 py-2.5 rounded-xl border border-border/60 bg-card/40 text-sm font-semibold text-text focus:ring-2 focus:ring-amber-500/40 focus:border-transparent outline-none transition resize-none"
+                    />
+                  </div>
+
+                  {/* Error / Success */}
+                  {quoteError && (
+                    <div className="rounded-xl border border-red-200 bg-red-50 dark:bg-red-500/10 dark:border-red-500/20 px-4 py-2.5 flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 text-red-500 shrink-0" strokeWidth={2} />
+                      <span className="text-sm text-red-700 dark:text-red-400">{quoteError}</span>
+                    </div>
+                  )}
+                  {quoteSuccess && (
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 dark:bg-emerald-500/10 dark:border-emerald-500/20 px-4 py-2.5 flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" strokeWidth={2} />
+                      <span className="text-sm text-emerald-700 dark:text-emerald-400">{quoteSuccess}</span>
+                    </div>
+                  )}
+
+                  {/* Send quote button */}
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={handleSendQuote}
+                    disabled={sendingQuote}
+                    className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-amber-500 text-white font-semibold text-sm hover:bg-amber-600 transition disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-amber-500/20"
+                  >
+                    {sendingQuote ? (
+                      <>
+                        <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        Sending Quote...
+                      </>
+                    ) : (
+                      <>
+                        <Send className="w-4 h-4" strokeWidth={2.5} />
+                        Send Quote to Customer
+                      </>
+                    )}
+                  </motion.button>
+                  <p className="text-[11px] text-muted text-center">
+                    Booking is NOT confirmed until the customer accepts the final quote.
+                  </p>
+                </div>
+              </SectionCard>
+
+              {/* 4. ASSIGNMENT - Premium Redesign */}
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}

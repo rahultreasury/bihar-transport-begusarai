@@ -164,6 +164,8 @@ class BookingRepository {
       'quote_remarks',
       'quote_sent_at',
       'quote_accepted_at',
+      'quote_rejected_at',
+      'quote_valid_until',
       'confirmed_at',
       'driver_assigned_at',
       'pickup_completed_at',

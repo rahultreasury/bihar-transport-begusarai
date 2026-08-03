@@ -89,10 +89,12 @@ export const adminAPI = {
   updateBookingStatus: (id, status) => api.patch(`/admin/bookings/${id}/status`, { status }),
   verifyDriver: (id) => api.put(`/admin/drivers/${id}/verify`),
   verifyVehicle: (id) => api.put(`/admin/vehicles/${id}/verify`),
-  toggleUserStatus: (id, isActive) => api.put(`/admin/users/${id}/status`, { is_active: isActive }),
+toggleUserStatus: (id, isActive) => api.put(`/admin/users/${id}/status`, { is_active: isActive }),
   assignDriver: (bookingId, driverId) => api.post(`/admin/bookings/${bookingId}/assign-driver`, { driver_id: driverId }),
   getAvailableDrivers: () => api.get('/admin/drivers', { params: { status: 'available', limit: 100 } }),
   assignVehicle: (bookingId, vehicleId) => api.post(`/admin/bookings/${bookingId}/assign-vehicle`, { vehicle_id: vehicleId }),
+  // Quote workflow — admin reserves driver + vehicle and sends final quote
+  sendQuote: (bookingId, data) => api.post(`/admin/bookings/${bookingId}/send-quote`, data),
 
   // Driver Management Module (Market Drivers - full CRUD + actions)
   getDriverStats: () => api.get('/admin/drivers/stats'),

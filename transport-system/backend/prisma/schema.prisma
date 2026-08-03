@@ -70,6 +70,35 @@ enum AssignmentStatus {
   // Other statuses as needed in future phases
 }
 
+// Quote workflow states (enterprise quote → approval → confirmation)
+enum QuoteStatus {
+  PENDING
+  PREPARING
+  DRIVER_RESERVED
+  VEHICLE_RESERVED
+  QUOTE_SENT
+  WAITING_CUSTOMER_APPROVAL
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+// Reservation lifecycle (driver/vehicle held before customer approval)
+enum ReservationStatus {
+  ACTIVE
+  CONVERTED
+  RELEASED
+  EXPIRED
+}
+
+// Invoice lifecycle (generated on delivery completion, not on quote accept)
+enum InvoiceStatus {
+  PENDING
+  GENERATED
+  PAID
+  CANCELLED
+}
+
 // ============================================================
 // PARTNER MODULE ENUMS
 // ============================================================
@@ -187,10 +216,11 @@ model Driver {
   transportVehicles    TransportVehicle[]
   bookings             Booking[]
   deliveries           Delivery[]
-  bookingAssignments   BookingAssignment[] @relation("assigned_driver")
+bookingAssignments   BookingAssignment[] @relation("assigned_driver")
   transactions         DriverTransaction[]
   timelineEvents       DriverTimeline[]
   driverAssignments    DriverAssignment[]  @relation("assigned_driver_history")
+  reservations         Reservation[]
 
   @@index([driver_code], name: "idx_drivers_code")
   @@index([user_id], name: "idx_drivers_user")
@@ -283,9 +313,10 @@ model TransportVehicle {
   // Relations
   driver              Driver?         @relation(fields: [driver_id], references: [driver_id], onDelete: SetNull)
   ownerPartner        Partner?        @relation("partner_vehicles", fields: [partner_id], references: [partner_id], onDelete: SetNull)
-  bookings            Booking[]
+bookings            Booking[]
   deliveries          Delivery[]
   bookingAssignments  BookingAssignment[] @relation("assigned_vehicle")
+  reservations        Reservation[]
 
   @@index([driver_id], name: "idx_vehicles_driver")
   @@index([partner_id], name: "idx_vehicles_partner")
@@ -349,6 +380,8 @@ model Booking {
   quote_remarks         String?
   quote_sent_at         DateTime?
   quote_accepted_at     DateTime?
+  quote_valid_until     DateTime?  // When the sent quote expires (backend-validated)
+  quote_rejected_at     DateTime?
   created_at            DateTime? @default(now())
   updated_at            DateTime? @default(now())
   confirmed_at          DateTime?
@@ -362,9 +395,11 @@ model Booking {
   vehicle            TransportVehicle? @relation(fields: [vehicle_id], references: [vehicle_id], onDelete: SetNull)
   partner            Partner?          @relation(fields: [partner_id], references: [partner_id], onDelete: SetNull)
   bookingSettlement  Settlement?       @relation(fields: [settlement_id], references: [settlement_id], onDelete: SetNull)
-  delivery           Delivery?
+delivery           Delivery?
   bookingEvents      BookingEvent[]
   bookingAssignments BookingAssignment[]
+  reservations       Reservation[]
+  invoices           Invoice[]
   ledgerEntries      PartnerLedger[] @relation("ledger_entries")
 
   @@index([user_id], name: "idx_bookings_user")
@@ -667,6 +702,71 @@ model PartnerDocument {
   @@index([partner_id], name: "idx_doc_partner")
   @@index([document_type], name: "idx_doc_type")
   @@index([expiry_date], name: "idx_doc_expiry")
-  @@map("partner_documents")
+@@map("partner_documents")
+}
+
+// ============================================================
+// QUOTE WORKFLOW MODULE
+// ============================================================
+
+// --- Reservations (driver/vehicle held before customer approval) ---
+// Single source of truth for reserved driver/vehicle during the quote
+// workflow. Booking only holds business state (status, quote_status, price).
+model Reservation {
+  reservation_id   Int               @id @default(autoincrement())
+  booking_id       Int
+  driver_id        Int?
+  vehicle_id       Int?
+  status           ReservationStatus @default(ACTIVE)
+  expires_at       DateTime?         // When the reservation expires
+  released_at      DateTime?
+  converted_at     DateTime?
+  reserved_by      Int?              // Admin ID who reserved
+  created_at       DateTime?         @default(now())
+  updated_at       DateTime?         @default(now())
+
+  // Relations
+  booking  Booking?          @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
+  driver   Driver?           @relation(fields: [driver_id], references: [driver_id], onDelete: SetNull)
+  vehicle  TransportVehicle? @relation(fields: [vehicle_id], references: [vehicle_id], onDelete: SetNull)
+
+  @@index([booking_id], name: "idx_reservations_booking")
+  @@index([driver_id], name: "idx_reservations_driver")
+  @@index([vehicle_id], name: "idx_reservations_vehicle")
+  @@index([status], name: "idx_reservations_status")
+  @@index([expires_at], name: "idx_reservations_expires")
+  @@map("reservations")
+}
+
+// --- Invoices (generated on delivery completion, NOT quote accept) ---
+// Module is ready for the future billing workflow. Not auto-generated on
+// quote acceptance.
+model Invoice {
+  invoice_id      Int           @id @default(autoincrement())
+  invoice_number  String        @unique
+  booking_id      Int
+  final_price     Float
+  status          InvoiceStatus @default(PENDING)
+  goods_amount    Float?
+  vehicle_charge  Float?
+  extra_charges   Float?        @default(0)
+  discount        Float?        @default(0)
+  total_amount    Float?
+  tax_amount      Float?        @default(0)
+  grand_total     Float?
+  issued_at       DateTime?
+  due_at          DateTime?
+  paid_at         DateTime?
+  notes           String?
+  created_at      DateTime?     @default(now())
+  updated_at      DateTime?     @default(now())
+
+  // Relations
+  booking Booking @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
+
+  @@index([invoice_number], name: "idx_invoices_number")
+  @@index([booking_id], name: "idx_invoices_booking")
+  @@index([status], name: "idx_invoices_status")
+  @@map("invoices")
 }
 

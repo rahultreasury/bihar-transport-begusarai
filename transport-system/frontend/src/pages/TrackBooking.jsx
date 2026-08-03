@@ -9,6 +9,8 @@ import StatusCard from '../components/tracking/StatusCard';
 import ProgressTimeline from '../components/tracking/ProgressTimeline';
 import ActivityFeed from '../components/tracking/ActivityFeed';
 import BookingDetails from '../components/tracking/BookingDetails';
+import QuoteCard from '../components/tracking/QuoteCard';
+import DriverVehicleCard from '../components/tracking/DriverVehicleCard';
 import SupportCard from '../components/tracking/SupportCard';
 import LoadingSkeleton from '../components/tracking/LoadingSkeleton';
 import NotFoundCard from '../components/tracking/NotFoundCard';
@@ -94,7 +96,7 @@ function TrackBooking() {
     navigate(`/track/${ref.toUpperCase()}`);
   };
 
-  /**
+/**
    * Handle retry on error.
    */
   const handleRetry = () => {
@@ -102,6 +104,44 @@ function TrackBooking() {
       fetchBooking(bookingNumber);
     }
   };
+
+  /**
+   * Accept the final quote → booking becomes confirmed.
+   * After success, re-fetch the booking so the UI transitions to the
+   * "Booking Confirmed" + driver/vehicle/ETA state immediately.
+   */
+  const handleAcceptQuote = async () => {
+    if (!booking) return;
+    await bookingAPI.acceptQuote(booking.booking_id);
+    await fetchBooking(booking.booking_reference);
+  };
+
+  /**
+   * Reject the final quote → releases reservations, booking stays pending.
+   * After success, re-fetch so the UI reflects the REJECTED state.
+   */
+  const handleRejectQuote = async () => {
+    if (!booking) return;
+    await bookingAPI.rejectQuote(booking.booking_id);
+    await fetchBooking(booking.booking_reference);
+  };
+
+  /**
+   * Handle quote expiry → re-fetch so the UI reflects the EXPIRED state.
+   */
+  const handleQuoteExpired = () => {
+    if (bookingNumber) {
+      fetchBooking(bookingNumber);
+    }
+  };
+
+  // Derived booking state for quote-aware rendering
+  const quoteStatus = (booking?.quote_status || 'PENDING').toUpperCase();
+  const isConfirmed =
+    booking?.status === 'confirmed' ||
+    quoteStatus === 'ACCEPTED' ||
+    ['driver_assigned', 'pickup_completed', 'in_transit', 'delivered', 'completed'].includes(booking?.status);
+  const isQuoteSent = quoteStatus === 'SENT' && !isConfirmed;
 
   // ==============================
   // RENDER: SEARCH ONLY (no booking number in URL)
@@ -293,10 +333,27 @@ function TrackBooking() {
           <BookingHeader booking={booking} />
         </div>
 
+{/* Quote action card — shows Final Quote or Booking Confirmed */}
+        {(isQuoteSent || isConfirmed) && (
+          <div className="animate-fade-in-down" style={{ animationDuration: '0.5s', animationDelay: '0.1s' }}>
+            {isQuoteSent ? (
+              <QuoteCard
+                booking={booking}
+                onAccept={handleAcceptQuote}
+                onReject={handleRejectQuote}
+                onExpired={handleQuoteExpired}
+              />
+            ) : (
+              <DriverVehicleCard booking={booking} />
+            )}
+          </div>
+        )}
+
         {/* Current Status Card */}
-        <div className="animate-fade-in-down" style={{ animationDuration: '0.5s', animationDelay: '0.1s' }}>
+        <div className="animate-fade-in-down" style={{ animationDuration: '0.5s', animationDelay: '0.15s' }}>
           <StatusCard
             status={booking.status}
+            quoteStatus={booking.quote_status}
             pickupDate={booking.pickup_date}
             updatedAt={booking.updated_at}
           />
@@ -306,13 +363,15 @@ function TrackBooking() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 md:gap-6">
           {/* Progress Timeline */}
           <div className="animate-fade-in-down" style={{ animationDuration: '0.5s', animationDelay: '0.2s' }}>
-            <ProgressTimeline status={booking.status} />
+            <ProgressTimeline status={booking.status} quoteStatus={booking.quote_status} />
           </div>
 
           {/* Activity Feed */}
           <div className="animate-fade-in-down" style={{ animationDuration: '0.5s', animationDelay: '0.25s' }}>
             <ActivityFeed
+              events={booking.bookingEvents}
               status={booking.status}
+              quoteStatus={booking.quote_status}
               createdAt={booking.created_at}
               updatedAt={booking.updated_at}
             />

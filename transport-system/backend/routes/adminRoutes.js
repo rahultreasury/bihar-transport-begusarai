@@ -568,8 +568,19 @@ router.post('/bookings/:id/send-quote', protect, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid booking id' });
     }
 
-    const { final_price, remarks } = req.body || {};
-    const result = await bookingService.sendQuote(bookingId, { final_price, remarks });
+    const { final_price, remarks, driver_id, vehicle_id, quote_validity_hours } = req.body || {};
+
+    // Enterprise workflow: admin reserves a driver + vehicle, sets the Final
+    // Transport Charge and a validity window, then sends the quote. The booking
+    // is NOT confirmed until the customer accepts.
+    const result = await bookingService.sendQuoteWithReservation(bookingId, {
+      final_price,
+      remarks,
+      driver_id,
+      vehicle_id,
+      quote_validity_hours,
+      reserved_by: req.user.user_id,
+    });
 
     return res.json({
       success: true,
@@ -579,7 +590,10 @@ router.post('/bookings/:id/send-quote', protect, async (req, res) => {
         final_price: Number(final_price),
         quote_status: 'SENT',
         quote_sent_at: result?.quote_sent_at || new Date(),
+        quote_valid_until: result?.quote_valid_until || null,
         quote_remarks: remarks || null,
+        driver_id: result?.driver_id || null,
+        vehicle_id: result?.vehicle_id || null,
       },
     });
   } catch (err) {

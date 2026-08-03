@@ -61,6 +61,12 @@ const emailService = require('./services/emailService');
 
 const app = express();
 
+// Trust the first hop behind Render's reverse proxy so Express uses the real
+// client IP (X-Forwarded-For) for req.ip. Without this, every request appears
+// to come from the proxy's internal IP, collapsing all admin traffic into a
+// single shared rate-limit bucket and causing production-only HTTP 429s.
+app.set('trust proxy', 1);
+
 // Middleware
 app.use(helmet({
   contentSecurityPolicy: {

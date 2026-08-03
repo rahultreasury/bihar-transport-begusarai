@@ -673,118 +673,25 @@ router.post('/:id/quote/reject', protect, async (req, res) => {
 });
 
 // @route   GET /api/bookings/track/:reference
-// @desc    Track booking by reference number
+// @desc    Track booking by reference number (full quote workflow context)
 // @access  Public
 router.get('/track/:reference', async (req, res) => {
   try {
     const reference = req.params.reference;
 
-    const booking = await prisma.booking.findUnique({
-      where: { booking_reference: reference },
-      include: {
-        vehicle: {
-          select: {
-            vehicle_number: true,
-            vehicle_name: true,
-            vehicle_type: true,
-          },
-        },
-        delivery: {
-          select: {
-            current_status: true,
-            status_description: true,
-            estimated_pickup_time: true,
-            estimated_delivery_time: true,
-          },
-        },
-        driver: {
-          select: {
-            driver_id: true,
-            rating: true,
-            total_deliveries: true,
-            user: {
-              select: {
-                user_id: true,
-                first_name: true,
-                last_name: true,
-                phone: true,
-              },
-            },
-          },
-        },
-      },
-    });
-
-    if (!booking) {
-      return res.status(404).json({
-        success: false,
-        message: 'Booking not found',
-      });
-    }
-
-    const driverInfo = booking.driver
-      ? {
-          driver_id: booking.driver.driver_id,
-          rating: booking.driver.rating,
-          total_deliveries: booking.driver.total_deliveries,
-          first_name: booking.driver.user.first_name,
-          last_name: booking.driver.user.last_name,
-          phone: booking.driver.user.phone,
-        }
-      : null;
-
-    // Brokerage model: driver details are often captured as snapshots
-    // (driver_name_snapshot, mobile_snapshot, truck_number_snapshot,
-    //  partner_name_snapshot) rather than linked accounts. Expose them so the
-    // customer always sees the assigned driver's contact + vehicle.
-    const snapshotDriverInfo = booking.driver_name_snapshot
-      ? {
-          driver_name: booking.driver_name_snapshot,
-          phone: booking.mobile_snapshot,
-          vehicle_number: booking.truck_number_snapshot,
-          vehicle_type: booking.vehicle?.vehicle_type || null,
-          owner_name: booking.partner_name_snapshot,
-        }
-      : null;
+    // Use the service which enriches the response with:
+    //   - active reservation (driver + vehicle held for approval)
+    //   - quote lifecycle fields (sent_at, valid_until, accepted/rejected)
+    //   - auto-expiry handling
+    const data = await bookingService.getBookingForTracking(reference);
 
     res.json({
       success: true,
-      data: {
-        booking_id: booking.booking_id,
-        booking_reference: booking.booking_reference,
-        pickup_location: booking.pickup_location,
-        pickup_city: booking.pickup_city,
-        drop_location: booking.drop_location,
-        drop_city: booking.drop_city,
-        goods_description: booking.goods_description,
-        status: booking.status,
-        estimated_price: booking.estimated_price,
-        final_price: booking.final_price,
-        quote_status: booking.quote_status,
-        quote_remarks: booking.quote_remarks,
-        quote_sent_at: booking.quote_sent_at,
-        quote_accepted_at: booking.quote_accepted_at,
-        pickup_date: booking.pickup_date,
-        pickup_time: booking.pickup_time,
-        driver_id: booking.driver_id,
-        vehicle_id: booking.vehicle_id,
-        vehicle_number: booking.vehicle?.vehicle_number || booking.truck_number_snapshot || null,
-        vehicle_name: booking.vehicle?.vehicle_name || null,
-        vehicle_type: booking.vehicle?.vehicle_type || null,
-        current_status: booking.delivery?.current_status || null,
-        status_description: booking.delivery?.status_description || null,
-        estimated_pickup_time: booking.delivery?.estimated_pickup_time || null,
-        estimated_delivery_time: booking.delivery?.estimated_delivery_time || null,
-        driver: driverInfo,
-        snapshot_driver: snapshotDriverInfo,
-      },
+      data,
     });
-  } catch (error) {
-    console.error('Track booking error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error tracking booking',
-    });
+  } catch (err) {
+    console.error('Track booking error:', err);
+    return mapDomainErrorToHttp(err, res, { message: 'Server error tracking booking' });
   }
 });
 
