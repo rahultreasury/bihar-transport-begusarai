@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 /**
  * QuoteCountdown — Live countdown timer to quote expiry.

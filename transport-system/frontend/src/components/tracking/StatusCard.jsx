@@ -11,6 +11,16 @@ const STATUS_META = {
     borderColor: 'border-amber-200',
     pulse: true,
   },
+  quote_sent: {
+    emoji: '💬',
+    label: 'Waiting for Your Approval',
+    description: 'We have prepared your final quote. Please review the price and accept or reject it to proceed.',
+    color: 'bg-orange-500',
+    textColor: 'text-orange-600',
+    bgColor: 'bg-orange-50',
+    borderColor: 'border-orange-200',
+    pulse: true,
+  },
   confirmed: {
     emoji: '✅',
     label: 'Booking Confirmed',
@@ -89,9 +99,20 @@ const STATUS_META = {
  * @param {{ status: string, quoteStatus?: string, pickupDate?: string, updatedAt?: string }} props
  */
 const StatusCard = React.memo(function StatusCard({ status, quoteStatus, pickupDate, updatedAt }) {
-  const meta = STATUS_META[status] || STATUS_META.pending;
   const quote = (quoteStatus || 'PENDING').toUpperCase();
+  // SINGLE SOURCE OF TRUTH: once the quote is ACCEPTED the booking is
+  // confirmed. If the status string hasn't yet advanced past 'pending' but the
+  // quote was accepted, show the Confirmed card (mirrors the header/timeline).
+  // Also, when quote is SENT, show the quote_sent status card.
+  const effectiveStatus =
+    quote === 'ACCEPTED' && !['confirmed', 'driver_assigned', 'pickup_completed', 'in_transit', 'delivered', 'completed', 'cancelled'].includes(status)
+      ? 'confirmed'
+      : quote === 'SENT'
+        ? 'quote_sent'
+        : status;
+  const meta = STATUS_META[effectiveStatus] || STATUS_META.pending;
   const isWaitingForQuote = quote === 'PENDING' || quote === 'QUOTE_REQUESTED' || quote === 'QUOTE_PREPARING';
+  const isWaitingForApproval = quote === 'SENT';
 
   const formatTime = (dateStr) => {
     if (!dateStr) return null;
@@ -135,6 +156,19 @@ const StatusCard = React.memo(function StatusCard({ status, quoteStatus, pickupD
               </span>
               <span className="text-xs font-semibold text-amber-700">
                 Finding Best Market Price…
+              </span>
+            </div>
+          )}
+
+          {/* Waiting for customer approval indicator */}
+          {isWaitingForApproval && (
+            <div className="mt-3 inline-flex items-center gap-2 rounded-lg bg-white/70 border border-orange-200 px-3 py-1.5">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-orange-500" />
+              </span>
+              <span className="text-xs font-semibold text-orange-700">
+                Waiting for Your Approval
               </span>
             </div>
           )}

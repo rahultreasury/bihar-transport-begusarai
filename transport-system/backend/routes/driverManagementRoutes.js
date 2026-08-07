@@ -58,6 +58,26 @@ router.get('/', protect, adminCheck, async (req, res) => {
   }
 });
 
+// List drivers with their vehicles (single endpoint for the Booking Details
+// Assign Driver UX). MUST be declared before '/:id' so Express doesn't
+// interpret 'vehicles' as a driver id.
+// @query  page, limit, search, onlyAvailable=true
+router.get('/drivers-with-vehicles', protect, adminCheck, async (req, res) => {
+  try {
+    const { page = 1, limit = 20, search = '', onlyAvailable = 'true' } = req.query;
+    const result = await driverService.listDriversWithVehicles({
+      page: parseInt(page),
+      limit: parseInt(limit),
+      search,
+      onlyAvailable: onlyAvailable === 'true' || onlyAvailable === true,
+    });
+    res.json({ success: true, data: result.drivers, pagination: result.pagination });
+  } catch (error) {
+    console.error('List drivers with vehicles error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
 // Get driver profile
 router.get('/:id', protect, adminCheck, async (req, res) => {
   try {
@@ -79,6 +99,9 @@ router.post('/', protect, adminCheck, [
   body('driver_name').trim().notEmpty().withMessage('Driver name is required'),
   body('mobile').trim().notEmpty().withMessage('Mobile number is required')
     .matches(/^[6-9]\d{9}$/).withMessage('Enter a valid 10-digit mobile number'),
+  body('vehicle_type').trim().notEmpty().withMessage('Vehicle type is required'),
+  body('vehicle_number').trim().notEmpty().withMessage('Vehicle number is required')
+    .matches(/^[A-Z]{2}\d{2}[A-Z]{1,2}\d{4}$/i).withMessage('Enter a valid vehicle number (e.g. BR09AB1234)'),
 ], handleValidation, async (req, res) => {
   try {
     const driver = await driverService.registerDriver(req.body);
@@ -96,6 +119,13 @@ router.post('/', protect, adminCheck, [
         data: error.data,
       });
     }
+    if (error.code === 'VEHICLE_ALREADY_EXISTS') {
+      return res.status(409).json({
+        success: false,
+        message: 'Vehicle number already registered.',
+        data: error.data,
+      });
+    }
     if (error.code === 'P2002') {
       return res.status(400).json({ success: false, message: 'A driver with this mobile number already exists' });
     }
@@ -104,7 +134,10 @@ router.post('/', protect, adminCheck, [
 });
 
 // Update driver
-router.put('/:id', protect, adminCheck, async (req, res) => {
+router.put('/:id', protect, adminCheck, [
+  body('vehicle_number').optional({ values: 'falsy' }).trim()
+    .matches(/^[A-Z]{2}\d{2}[A-Z]{1,2}\d{4}$/i).withMessage('Enter a valid vehicle number (e.g. BR09AB1234)'),
+], handleValidation, async (req, res) => {
   try {
     const driverId = parseInt(req.params.id);
     if (isNaN(driverId)) return res.status(400).json({ success: false, message: 'Invalid driver ID' });
@@ -113,6 +146,35 @@ router.put('/:id', protect, adminCheck, async (req, res) => {
     res.json({ success: true, message: 'Driver updated successfully', data: driver });
   } catch (error) {
     console.error('Update driver error:', error);
+    if (error.code === 'VEHICLE_ALREADY_EXISTS') {
+      return res.status(409).json({
+        success: false,
+        message: 'Vehicle number already registered.',
+        data: error.data,
+      });
+    }
+    if (error.code === 'P2002') {
+      return res.status(409).json({
+        success: false,
+        message: 'Vehicle number already registered.',
+      });
+    }
+    res.status(500).json({ success: false, message: error.message || 'Server error' });
+  }
+});
+
+// Bulk soft-delete drivers in a single request + transaction.
+// MUST be declared BEFORE '/:id' so Express matches the 'bulk-delete' path.
+router.post('/bulk-delete', protect, adminCheck, async (req, res) => {
+  try {
+    const { ids } = req.body || {};
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ success: false, message: 'ids must be a non-empty array' });
+    }
+    const result = await driverService.bulkDeleteDrivers(ids);
+    res.json({ success: true, message: `${result.count} driver(s) marked as inactive`, deleted: result.count });
+  } catch (error) {
+    console.error('Bulk delete drivers error:', error);
     res.status(500).json({ success: false, message: error.message || 'Server error' });
   }
 });

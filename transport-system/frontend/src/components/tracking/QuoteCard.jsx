@@ -24,8 +24,32 @@ const QuoteCard = React.memo(function QuoteCard({
   const [rejecting, setRejecting] = useState(false);
   const [error, setError] = useState('');
 
-  const price = booking.final_price != null ? Number(booking.final_price) : null;
+const price = booking.final_price != null ? Number(booking.final_price) : null;
   const expiresAt = booking.quote_valid_until;
+  // Spec-compliant message: prefer quote_message, fall back to quote_remarks.
+  const message = booking.quote_message || booking.quote_remarks || null;
+  const sentAt = booking.sent_quote_at || booking.quote_sent_at || null;
+
+  // Driver/vehicle info from the reservation (driver_quote) or booking snapshots.
+  const driverQuote = booking.driver_quote || null;
+  const driverName = driverQuote?.driver_name || booking.snapshot_driver?.driver_name || null;
+  const driverPhone = driverQuote?.driver_phone || booking.snapshot_driver?.phone || null;
+  const vehicleNumber = driverQuote?.vehicle_number || booking.vehicle_number || booking.snapshot_driver?.vehicle_number || null;
+  const vehicleType = driverQuote?.vehicle_type || booking.vehicle_type || booking.snapshot_driver?.vehicle_type || null;
+
+  const formatSentAt = (ts) => {
+    if (!ts) return null;
+    try {
+      return new Date(ts).toLocaleString('en-IN', {
+        day: 'numeric',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch {
+      return null;
+    }
+  };
 
   const handleAccept = async () => {
     if (accepting || rejecting) return;
@@ -90,11 +114,44 @@ const QuoteCard = React.memo(function QuoteCard({
           />
         </div>
 
-        {/* Quote remarks */}
-        {booking.quote_remarks && (
+{/* Quote message */}
+        {message && (
           <div className="rounded-xl bg-amber-50 border border-amber-100 px-4 py-3">
-            <p className="text-xs text-amber-700 leading-relaxed">{booking.quote_remarks}</p>
+            <p className="text-xs text-amber-700 leading-relaxed">{message}</p>
           </div>
+        )}
+
+        {/* Driver & Vehicle info (from reservation) */}
+        {(driverName || vehicleNumber) && (
+          <div className="rounded-xl bg-gray-50 border border-gray-100 px-4 py-3 space-y-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {driverName && (
+                <div>
+                  <div className="text-[10px] text-gray-400 uppercase tracking-wider">Driver</div>
+                  <div className="text-sm font-bold text-gray-900">{driverName}</div>
+                  {driverPhone && (
+                    <div className="text-xs text-gray-500">{driverPhone}</div>
+                  )}
+                </div>
+              )}
+              {vehicleNumber && (
+                <div>
+                  <div className="text-[10px] text-gray-400 uppercase tracking-wider">Vehicle</div>
+                  <div className="text-sm font-bold text-gray-900 font-mono">{vehicleNumber}</div>
+                  {vehicleType && (
+                    <div className="text-xs text-gray-500 capitalize">{String(vehicleType).replace(/_/g, ' ')}</div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Quote sent timestamp */}
+        {sentAt && (
+          <p className="text-xs text-gray-400 text-center">
+            Final quote sent on {formatSentAt(sentAt)}
+          </p>
         )}
 
         {/* Error */}

@@ -43,8 +43,19 @@ const STATUS_CONFIG = {
   }
 };
 
-const StatusBadge = React.memo(function StatusBadge({ status, size = 'md', showDot = true }) {
-  const config = STATUS_CONFIG[status] || STATUS_CONFIG.pending;
+const StatusBadge = React.memo(function StatusBadge({ status, quoteStatus, size = 'md', showDot = true }) {
+  // SINGLE SOURCE OF TRUTH: quote_status === ACCEPTED means confirmed. If the
+  // status string hasn't advanced past 'pending' but the quote was accepted,
+  // show the Confirmed badge (mirrors the backend gate for driver assignment).
+  const quote = (quoteStatus || 'PENDING').toUpperCase();
+  let effectiveStatus = status;
+  if (
+    quote === 'ACCEPTED' &&
+    !['confirmed', 'driver_assigned', 'pickup_completed', 'in_transit', 'delivered', 'completed', 'cancelled'].includes(status)
+  ) {
+    effectiveStatus = 'confirmed';
+  }
+  const config = STATUS_CONFIG[effectiveStatus] || STATUS_CONFIG.pending;
 
   const sizeClasses = useMemo(() => {
     switch (size) {

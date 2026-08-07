@@ -3,9 +3,14 @@ const router = express.Router();
 const { protect } = require('../middleware/auth');
 const { prisma } = require('../config/prisma');
 
-const { BookingService, ValidationError, NotFoundError } = require('../services/BookingService');
+const BookingService = require('../services/BookingService');
+const { ValidationError, NotFoundError } = require('../utils/AppError');
+const BookingAssignmentService = require('../services/BookingAssignmentService');
+const { createBookingController } = require('../controllers/bookingController');
 
 const bookingService = new BookingService();
+const bookingAssignmentService = new BookingAssignmentService();
+const bookingController = createBookingController();
 
 const mapDomainErrorToHttp = (err, res) => {
   if (err?.name === 'ValidationError' || err?.code === 'VALIDATION_ERROR') {
@@ -226,109 +231,12 @@ router.get('/users', protect, async (req, res) => {
 });
 
 // @route   GET /api/admin/drivers
-// @desc    Get all drivers (legacy — kept for backward compatibility)
-//          Note: The new driver management module at /api/admin/drivers (driverManagementRoutes)
-//          should be used for full-featured driver listing with search.
+// @desc    Get all drivers.
+//          Handled exclusively by driverManagementRoutes (single source of truth)
+//          mounted at /api/admin/drivers in server.js. This legacy inline handler
+//          was removed to (1) eliminate the duplicate/shadowed route and (2) remove
+//          direct Prisma access from the route layer (Route → Service → Repository → Prisma).
 // @access  Private (Admin)
-router.get('/drivers', protect, async (req, res) => {
-  try {
-    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied'
-      });
-    }
-
-    const { page = 1, limit = 20, status = '', search = '' } = req.query;
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-    const take = parseInt(limit);
-
-    // Build Prisma where clause
-    const where = {};
-    if (status === 'available') {
-      where.is_available = true;
-    } else if (status === 'busy') {
-      where.is_available = false;
-    }
-
-    // Support search across driver fields
-    if (search) {
-      const searchTerm = String(search).trim();
-      where.OR = [
-        { driver_name: { contains: searchTerm, mode: 'insensitive' } },
-        { driver_code: { contains: searchTerm, mode: 'insensitive' } },
-        { mobile: { contains: searchTerm } },
-        { city: { contains: searchTerm, mode: 'insensitive' } },
-      ];
-    }
-
-    const [drivers, total] = await Promise.all([
-      prisma.driver.findMany({
-        where,
-        include: {
-          user: {
-            select: {
-              first_name: true,
-              last_name: true,
-              email: true,
-              phone: true,
-              address: true,
-              city: true,
-            },
-          },
-        },
-        orderBy: { created_at: 'desc' },
-        skip,
-        take,
-      }),
-      prisma.driver.count({ where }),
-    ]);
-
-    // Flatten Prisma result to match original SQL response format
-    const flattened = drivers.map((d) => ({
-      driver_id: d.driver_id,
-      driver_code: d.driver_code,
-      driver_name: d.driver_name,
-      mobile: d.mobile,
-      user_id: d.user_id,
-      license_number: d.license_number,
-      license_expiry: d.license_expiry,
-      profile_image: d.profile_image,
-      is_available: d.is_available,
-      is_verified: d.is_verified,
-      rating: d.rating,
-      total_deliveries: d.total_deliveries,
-      status: d.status,
-      city: d.city,
-      state: d.state,
-      created_at: d.created_at,
-      updated_at: d.updated_at,
-      first_name: d.user?.first_name ?? null,
-      last_name: d.user?.last_name ?? null,
-      email: d.user?.email ?? null,
-      phone: d.user?.phone ?? null,
-      address: d.user?.address ?? null,
-      user_city: d.user?.city ?? null,
-    }));
-
-    res.json({
-      success: true,
-      data: flattened,
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total: total,
-        pages: Math.ceil(total / parseInt(limit)),
-      },
-    });
-  } catch (error) {
-    console.error('Get drivers error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-    });
-  }
-});
 
 // @route   GET /api/admin/vehicles
 // @desc    Get all vehicles
@@ -427,131 +335,10 @@ router.get('/vehicles', protect, async (req, res) => {
 // @route   GET /api/admin/bookings
 // @desc    Get all bookings
 // @access  Private (Admin)
-router.get('/bookings', protect, async (req, res) => {
-  try {
-    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied'
-      });
-    }
-
-    const { page = 1, limit = 20, status = '', search = '' } = req.query;
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-    const take = parseInt(limit);
-
-    // Build Prisma where clause
-    const where = {};
-
-    if (status) {
-      where.status = status;
-    }
-
-    if (search) {
-      where.OR = [
-        { booking_reference: { contains: search, mode: 'insensitive' } },
-        { pickup_city: { contains: search, mode: 'insensitive' } },
-        { drop_city: { contains: search, mode: 'insensitive' } },
-      ];
-    }
-
-    const [bookings, total] = await Promise.all([
-      prisma.booking.findMany({
-        where,
-        include: {
-          user: {
-            select: {
-              first_name: true,
-              last_name: true,
-              phone: true,
-            },
-          },
-          vehicle: {
-            select: {
-              vehicle_number: true,
-              vehicle_name: true,
-            },
-          },
-          driver: {
-            select: {
-              user_id: true,
-            },
-          },
-        },
-        orderBy: { created_at: 'desc' },
-        skip,
-        take,
-      }),
-      prisma.booking.count({ where }),
-    ]);
-
-    // Flatten Prisma result to match original SQL response format
-    const flattened = bookings.map((b) => ({
-      booking_id: b.booking_id,
-      booking_reference: b.booking_reference,
-      booking_number: b.booking_number,
-      user_id: b.user_id,
-      driver_id: b.driver_id,
-      vehicle_id: b.vehicle_id,
-      pickup_location: b.pickup_location,
-      pickup_address: b.pickup_address,
-      pickup_city: b.pickup_city,
-      pickup_state: b.pickup_state,
-      pickup_pincode: b.pickup_pincode,
-      pickup_date: b.pickup_date,
-      pickup_time: b.pickup_time,
-      drop_location: b.drop_location,
-      drop_address: b.drop_address,
-      drop_city: b.drop_city,
-      drop_state: b.drop_state,
-      drop_pincode: b.drop_pincode,
-      goods_description: b.goods_description,
-      goods_type: b.goods_type,
-      goods_weight_kg: b.goods_weight_kg,
-      goods_volume: b.goods_volume,
-      number_of_items: b.number_of_items,
-      fragile: b.fragile,
-      vehicle_type_required: b.vehicle_type_required,
-      estimated_distance_km: b.estimated_distance_km,
-      estimated_price: b.estimated_price,
-      final_price: b.final_price,
-      status: b.status,
-      quote_status: b.quote_status,
-      quote_remarks: b.quote_remarks,
-      quote_sent_at: b.quote_sent_at,
-      quote_accepted_at: b.quote_accepted_at,
-      created_at: b.created_at,
-      updated_at: b.updated_at,
-      confirmed_at: b.confirmed_at,
-      driver_assigned_at: b.driver_assigned_at,
-      pickup_completed_at: b.pickup_completed_at,
-      delivered_at: b.delivered_at,
-      customer_first_name: b.user?.first_name ?? null,
-      customer_last_name: b.user?.last_name ?? null,
-      customer_phone: b.user?.phone ?? null,
-      vehicle_number: b.vehicle?.vehicle_number ?? null,
-      vehicle_name: b.vehicle?.vehicle_name ?? null,
-      driver_user_id: b.driver?.user_id ?? null,
-    }));
-
-    res.json({
-      success: true,
-      data: flattened,
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total: total,
-        pages: Math.ceil(total / parseInt(limit)),
-      },
-    });
-  } catch (error) {
-    console.error('Get bookings error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-    });
-  }
-});
+// NOTE: The route only delegates to the controller. All query validation,
+// authorization, and error handling live in the controller (which forwards
+// errors to the centralized error handler via next(error)).
+router.get('/bookings', protect, bookingController.listBookings);
 
 // @route   POST /api/admin/bookings/:id/send-quote
 // @desc    Send a final quote to the customer (Final Transport Charge).
@@ -731,7 +518,74 @@ router.put('/users/:id/status', protect, async (req, res) => {
  * ===============================
  */
 
+// @route   POST /api/admin/bookings/bulk-status
+// @desc    Bulk update booking status in a single transaction
+// @access  Private (Admin)
+router.post('/bookings/bulk-status', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
 
+    const { bookingIds, status } = req.body || {};
+    if (!Array.isArray(bookingIds) || bookingIds.length === 0) {
+      return res.status(400).json({ success: false, message: 'bookingIds must be a non-empty array' });
+    }
+    if (!status) {
+      return res.status(400).json({ success: false, message: 'status is required' });
+    }
+
+    const result = await bookingService.bulkUpdateStatus(bookingIds, status);
+    return res.json({ success: true, updated: result.updated });
+  } catch (err) {
+    console.error('Bulk status error:', err);
+    return mapDomainErrorToHttp(err, res);
+  }
+});
+
+// @route   POST /api/admin/bookings/bulk-confirm
+// @desc    Bulk confirm bookings in a single transaction
+// @access  Private (Admin)
+router.post('/bookings/bulk-confirm', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const { bookingIds } = req.body || {};
+    if (!Array.isArray(bookingIds) || bookingIds.length === 0) {
+      return res.status(400).json({ success: false, message: 'bookingIds must be a non-empty array' });
+    }
+
+    const result = await bookingService.bulkUpdateStatus(bookingIds, 'confirmed');
+    return res.json({ success: true, updated: result.updated });
+  } catch (err) {
+    console.error('Bulk confirm error:', err);
+    return mapDomainErrorToHttp(err, res);
+  }
+});
+
+// @route   POST /api/admin/bookings/bulk-cancel
+// @desc    Bulk cancel bookings in a single transaction
+// @access  Private (Admin)
+router.post('/bookings/bulk-cancel', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const { bookingIds } = req.body || {};
+    if (!Array.isArray(bookingIds) || bookingIds.length === 0) {
+      return res.status(400).json({ success: false, message: 'bookingIds must be a non-empty array' });
+    }
+
+    const result = await bookingService.bulkUpdateStatus(bookingIds, 'cancelled');
+    return res.json({ success: true, updated: result.updated });
+  } catch (err) {
+    console.error('Bulk cancel error:', err);
+    return mapDomainErrorToHttp(err, res);
+  }
+});
 
 // @route   GET /api/admin/bookings/:id
 // @desc    Get a booking by id
@@ -747,7 +601,7 @@ router.get('/bookings/:id', protect, async (req, res) => {
 
     const bookingId = parseInt(req.params.id);
 
-    const booking = await prisma.booking.findUnique({
+const booking = await prisma.booking.findUnique({
       where: { booking_id: bookingId },
       include: {
         user: {
@@ -756,12 +610,6 @@ router.get('/bookings/:id', protect, async (req, res) => {
             last_name: true,
             email: true,
             phone: true,
-          },
-        },
-        vehicle: {
-          select: {
-            vehicle_number: true,
-            vehicle_name: true,
           },
         },
         driver: {
@@ -797,9 +645,8 @@ router.get('/bookings/:id', protect, async (req, res) => {
       booking_id: booking.booking_id,
       booking_reference: booking.booking_reference,
       booking_number: booking.booking_number,
-      user_id: booking.user_id,
+user_id: booking.user_id,
       driver_id: booking.driver_id,
-      vehicle_id: booking.vehicle_id,
       pickup_location: booking.pickup_location,
       pickup_address: booking.pickup_address,
       pickup_city: booking.pickup_city,
@@ -822,8 +669,9 @@ router.get('/bookings/:id', protect, async (req, res) => {
       estimated_distance_km: booking.estimated_distance_km,
       estimated_price: booking.estimated_price,
       final_price: booking.final_price,
-      status: booking.status,
+status: booking.status,
       quote_status: booking.quote_status,
+      confirmation_source: booking.confirmation_source ?? null,
       quote_remarks: booking.quote_remarks,
       quote_sent_at: booking.quote_sent_at,
       quote_accepted_at: booking.quote_accepted_at,
@@ -833,13 +681,13 @@ router.get('/bookings/:id', protect, async (req, res) => {
       driver_assigned_at: booking.driver_assigned_at,
       pickup_completed_at: booking.pickup_completed_at,
       delivered_at: booking.delivered_at,
-      customer_first_name: booking.user?.first_name ?? null,
+customer_first_name: booking.user?.first_name ?? null,
       customer_last_name: booking.user?.last_name ?? null,
       customer_email: booking.user?.email ?? null,
       customer_phone: booking.user?.phone ?? null,
-      vehicle_number: booking.vehicle?.vehicle_number ?? null,
-      vehicle_name: booking.vehicle?.vehicle_name ?? null,
-      vehicle_type: booking.vehicle?.vehicle_type ?? null,
+      vehicle_number: booking.truck_number_snapshot ?? null,
+      vehicle_name: null,
+      vehicle_type: null,
       driver_user_id: booking.driver?.user_id ?? null,
       driver_first_name: booking.driver?.user?.first_name ?? null,
       driver_last_name: booking.driver?.user?.last_name ?? null,
@@ -998,10 +846,26 @@ router.patch('/bookings/:id/status', protect, async (req, res) => {
       'completed'
     ];
 
-    if (!allowed.includes(status)) {
+if (!allowed.includes(status)) {
       return res.status(400).json({
         success: false,
         message: 'Invalid status'
+      });
+    }
+
+    // === Single source of truth ===
+    // Confirmation is DRIVEN BY quote_status. When an admin sets status to
+    // 'confirmed' (offline/phone/WhatsApp confirmation), we must atomically
+    // also set quote_status='ACCEPTED' + confirmation_source='ADMIN' +
+    // confirmed_at, and write a BOOKING_CONFIRMED_BY_ADMIN timeline event.
+    // This guarantees the DB is NEVER left in an inconsistent state
+    // (e.g. status=confirmed + quote_status=SENT/PENDING).
+    if (status === 'confirmed') {
+      const result = await bookingService.confirmBooking(bookingId);
+      return res.json({
+        success: true,
+        message: 'Booking confirmed successfully',
+        data: result,
       });
     }
 
@@ -1016,6 +880,12 @@ router.patch('/bookings/:id/status', protect, async (req, res) => {
     });
   } catch (error) {
     console.error('Update booking status error:', error);
+    if (error.name === 'ValidationError' || error.code === 'VALIDATION_ERROR') {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+    if (error.name === 'NotFoundError' || error.code === 'NOT_FOUND') {
+      return res.status(404).json({ success: false, message: error.message });
+    }
     res.status(500).json({
       success: false,
       message: 'Server error'
@@ -1028,6 +898,27 @@ router.patch('/bookings/:id/status', protect, async (req, res) => {
  * Driver Assignment API
  * ===============================
  */
+
+// @route   GET /api/admin/booking-drivers
+// @desc    Scalable driver lookup for the Booking Assignment picker (10k+ drivers).
+//          Server-side pagination + search + filters + trip stats in ONE call.
+//          Each driver carries its assigned vehicle (one-driver-one-vehicle),
+//          so the frontend never combines multiple APIs.
+// @query   page, limit, search, status, vehicle_type, min_rating
+// @access  Private (Admin)
+router.get('/booking-drivers', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+    const adminBookingController = require('../controllers/adminBookingController');
+    const ctrl = adminBookingController.createAdminBookingController();
+    await ctrl.getAssignableDrivers(req, res);
+  } catch (err) {
+    console.error('Get assignable drivers error:', err);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
 
 // @route   POST /api/admin/bookings/:id/assign-driver
 // @desc    Assign an available driver to a booking
@@ -1095,7 +986,10 @@ router.post('/bookings/:id/assign-driver', protect, async (req, res) => {
       });
     }
 
-    // Validate driver exists and is available
+// Validate driver exists and is available
+    // Brokerage model: each driver maps to exactly one primary registered
+    // vehicle (stored on the driver as vehicle_number / vehicle_type). We
+    // load those fields so the vehicle can be auto-associated on assignment.
     const driver = await prisma.driver.findUnique({
       where: { driver_id: parsedDriverId },
       include: {
@@ -1104,6 +998,11 @@ router.post('/bookings/:id/assign-driver', protect, async (req, res) => {
             first_name: true,
             last_name: true,
             phone: true,
+          },
+        },
+        currentPartner: {
+          select: {
+            partner_name: true,
           },
         },
       },
@@ -1118,6 +1017,16 @@ router.post('/bookings/:id/assign-driver', protect, async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'Driver is not available'
+      });
+    }
+
+    // Brokerage validation: a driver MUST have a registered vehicle before
+    // they can be assigned to a booking. Rejection happens BEFORE any DB
+    // write, so the booking is never partially updated.
+    if (!driver.vehicle_number) {
+      return res.status(400).json({
+        success: false,
+        message: 'Driver has no registered vehicle. Please assign a vehicle to the driver first.'
       });
     }
 
@@ -1136,15 +1045,24 @@ router.post('/bookings/:id/assign-driver', protect, async (req, res) => {
       });
     }
 
-    // Execute assignment within a Prisma interactive transaction
-    await prisma.$transaction(async (tx) => {
-      // 1. Update booking: set driver_id, status, driver_assigned_at
-      await tx.booking.update({
+    // Execute assignment within an atomic Prisma interactive transaction.
+    // Assigning the driver auto-associates the driver's registered vehicle
+    // (stored as immutable snapshots on the booking) in the SAME transaction.
+    // If any step fails, the whole transaction rolls back.
+    const assigned = await prisma.$transaction(async (tx) => {
+      // 1. Update booking: set driver_id, status, driver_assigned_at, and
+      //    auto-assign the driver's registered vehicle as immutable snapshots.
+      const updatedBooking = await tx.booking.update({
         where: { booking_id: bookingId },
         data: {
           driver_id: parsedDriverId,
           status: 'driver_assigned',
           driver_assigned_at: new Date(),
+          // Auto-assign driver's registered vehicle (brokerage snapshot model)
+          driver_name_snapshot: driver.driver_name || `${driver.user.first_name} ${driver.user.last_name}`.trim(),
+          mobile_snapshot: driver.mobile || driver.user.phone || null,
+truck_number_snapshot: driver.vehicle_number,
+          partner_name_snapshot: driver.currentPartner?.partner_name || null,
         },
       });
 
@@ -1154,7 +1072,7 @@ router.post('/bookings/:id/assign-driver', protect, async (req, res) => {
         data: { is_available: false },
       });
 
-      // 3. Insert booking_assignment record
+      // 3. Record the driver assignment
       await tx.bookingAssignment.create({
         data: {
           booking_id: bookingId,
@@ -1179,18 +1097,68 @@ router.post('/bookings/:id/assign-driver', protect, async (req, res) => {
           },
         });
       }
+
+      // 5. Timeline events: Driver Assigned → Vehicle Auto Assigned → Booking Ready
+      await tx.bookingEvent.create({
+        data: {
+          booking_id: bookingId,
+          event_type: 'driver_assigned',
+          event_payload: JSON.stringify({
+            driver_id: parsedDriverId,
+            driver_name: driver.driver_name || `${driver.user.first_name} ${driver.user.last_name}`.trim(),
+            driver_phone: driver.mobile || driver.user.phone || null,
+          }),
+        },
+      });
+      await tx.bookingEvent.create({
+        data: {
+          booking_id: bookingId,
+          event_type: 'vehicle_auto_assigned',
+          event_payload: JSON.stringify({
+            vehicle_number: driver.vehicle_number,
+            vehicle_type: driver.vehicle_type || null,
+            source: 'driver_primary_vehicle',
+          }),
+        },
+      });
+      await tx.bookingEvent.create({
+        data: {
+          booking_id: bookingId,
+          event_type: 'booking_ready',
+          event_payload: JSON.stringify({
+            status: 'driver_assigned',
+            message: 'Driver and vehicle assigned. Booking ready.',
+          }),
+        },
+      });
+
+      return updatedBooking;
+    });
+
+    // Fetch the fresh booking to return accurate snapshot data
+    const freshBooking = await prisma.booking.findUnique({
+      where: { booking_id: bookingId },
+      select: {
+        truck_number_snapshot: true,
+        driver_name_snapshot: true,
+        mobile_snapshot: true,
+        partner_name_snapshot: true,
+      },
     });
 
     res.json({
       success: true,
-      message: 'Driver assigned successfully',
+      message: 'Driver assigned successfully. The driver\'s registered vehicle was auto-assigned.',
       data: {
         booking_id: bookingId,
         driver_id: parsedDriverId,
-        driver_name: `${driver.user.first_name} ${driver.user.last_name}`,
-        driver_phone: driver.user.phone,
-        status: 'driver_assigned'
-      }
+        driver_name: freshBooking?.driver_name_snapshot || assigned?.driver_name_snapshot || null,
+        driver_phone: freshBooking?.mobile_snapshot || driver.mobile || driver.user.phone || null,
+        vehicle_number: freshBooking?.truck_number_snapshot || driver.vehicle_number,
+        vehicle_type: driver.vehicle_type || null,
+        owner_name: freshBooking?.partner_name_snapshot || driver.currentPartner?.partner_name || null,
+        status: 'driver_assigned',
+      },
     });
 
   } catch (error) {
@@ -1315,7 +1283,9 @@ router.post('/bookings/:id/assign-driver-details', protect, async (req, res) => 
  */
 
 // @route   POST /api/admin/bookings/:id/assign-vehicle
-// @desc    Assign an available vehicle to a booking
+// @desc    Assign a vehicle to a booking. Creates a BookingAssignment record
+//          with the assigned vehicle. The Booking model retains `vehicle_id`
+//          and `Delivery` retains `vehicle_id` in the current architecture.
 // @access  Private (Admin)
 router.post('/bookings/:id/assign-vehicle', protect, async (req, res) => {
   try {
@@ -1327,154 +1297,51 @@ router.post('/bookings/:id/assign-vehicle', protect, async (req, res) => {
     }
 
     const bookingId = parseInt(req.params.id);
-    const { vehicle_id } = req.body || {};
+    const { vehicle_id } = req.body;
 
-    if (!vehicle_id) {
+    if (!bookingId || !vehicle_id) {
       return res.status(400).json({
         success: false,
-        message: 'vehicle_id is required'
+        message: 'bookingId and vehicle_id are required'
       });
     }
 
-    const parsedVehicleId = parseInt(vehicle_id);
-
-    // Validate booking exists
+    // Verify booking exists
     const booking = await prisma.booking.findUnique({
       where: { booking_id: bookingId },
-      select: {
-        booking_id: true,
-        vehicle_id: true,
-        status: true,
-      },
+      select: { booking_id: true },
     });
     if (!booking) {
       return res.status(404).json({
         success: false,
-        message: 'Booking not found'
+        message: 'Booking not found',
       });
     }
 
-    // Prevent assigning to cancelled/completed bookings
-    if (['cancelled', 'completed', 'delivered'].includes(booking.status)) {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot assign vehicle to a booking with status: ${booking.status}`
-      });
-    }
-
-    // Prevent reassigning if vehicle already assigned
-    if (booking.vehicle_id) {
-      return res.status(400).json({
-        success: false,
-        message: 'Vehicle already assigned to this booking'
-      });
-    }
-
-    // Validate vehicle exists and is available
+    // Verify vehicle exists
     const vehicle = await prisma.transportVehicle.findUnique({
-      where: { vehicle_id: parsedVehicleId },
-      select: {
-        vehicle_id: true,
-        is_available: true,
-        vehicle_name: true,
-        vehicle_number: true,
-        vehicle_type: true,
-      },
+      where: { vehicle_id: parseInt(vehicle_id) },
+      select: { vehicle_id: true, is_available: true },
     });
     if (!vehicle) {
       return res.status(404).json({
         success: false,
-        message: 'Vehicle not found'
-      });
-    }
-    if (!vehicle.is_available) {
-      return res.status(400).json({
-        success: false,
-        message: 'Vehicle is not available'
+        message: 'Vehicle not found',
       });
     }
 
-    // Check vehicle is not already assigned to another active booking
-    const activeBooking = await prisma.booking.findFirst({
-      where: {
-        vehicle_id: parsedVehicleId,
-        status: { notIn: ['cancelled', 'completed', 'delivered'] },
-      },
-      select: { booking_id: true },
-    });
-    if (activeBooking) {
-      return res.status(400).json({
-        success: false,
-        message: 'Vehicle is already assigned to another active booking'
-      });
-    }
-
-    // Execute assignment within a Prisma interactive transaction
-    await prisma.$transaction(async (tx) => {
-      // 1. Update booking: set vehicle_id
-      await tx.booking.update({
-        where: { booking_id: bookingId },
-        data: { vehicle_id: parsedVehicleId },
-      });
-
-      // 2. Mark vehicle as unavailable
-      await tx.transportVehicle.update({
-        where: { vehicle_id: parsedVehicleId },
-        data: { is_available: false, current_status: 'on_trip' },
-      });
-
-      // 3. Upsert booking_assignment with vehicle_id
-      // Check if a booking_assignment record already exists (e.g., from driver assignment)
-      const existingAssignment = await tx.bookingAssignment.findFirst({
-        where: { booking_id: bookingId },
-        select: { booking_assignment_id: true },
-      });
-      if (existingAssignment) {
-        await tx.bookingAssignment.update({
-          where: { booking_assignment_id: existingAssignment.booking_assignment_id },
-          data: { assigned_vehicle_id: parsedVehicleId },
-        });
-      } else {
-        await tx.bookingAssignment.create({
-          data: {
-            booking_id: bookingId,
-            assigned_vehicle_id: parsedVehicleId,
-            assigned_by_admin_id: req.user.user_id,
-            assignment_status: 'active',
-          },
-        });
-      }
-
-      // 4. Update delivery record if exists
-      const delivery = await tx.delivery.findUnique({
-        where: { booking_id: bookingId },
-        select: { delivery_id: true },
-      });
-      if (delivery) {
-        await tx.delivery.update({
-          where: { booking_id: bookingId },
-          data: { vehicle_id: parsedVehicleId },
-        });
-      }
-    });
+    const result = await bookingAssignmentService.assignVehicle(bookingId, parseInt(vehicle_id), req.user.user_id);
 
     res.json({
       success: true,
       message: 'Vehicle assigned successfully',
-      data: {
-        booking_id: bookingId,
-        vehicle_id: parsedVehicleId,
-        vehicle_name: vehicle.vehicle_name,
-        vehicle_number: vehicle.vehicle_number,
-        vehicle_type: vehicle.vehicle_type,
-      },
+      data: result,
     });
-
-  } catch (error) {
-    console.error('Assign vehicle error:', error);
+  } catch (err) {
+    console.error('Assign vehicle error:', err);
     res.status(500).json({
       success: false,
-      message: error.message || 'Server error assigning vehicle',
+      message: err.message || 'Server error assigning vehicle',
     });
   }
 });

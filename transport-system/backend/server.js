@@ -11,6 +11,8 @@ const { validateEnv } = require('./utils/env');
 
 const { NotFoundError } = require('./utils/AppError');
 const errorHandler = require('./middleware/errorHandler');
+const { logger } = require('./utils/logger');
+const pinoHttp = require('pino-http');
 
 // Load environment variables (explicit backend .env path)
 dotenv.config({
@@ -95,8 +97,35 @@ app.use(compression());
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Request logging
-app.use(morgan(process.env.NODE_ENV === 'development' ? 'dev' : 'combined'));
+// Request logging (Pino with request IDs)
+app.use(pinoHttp({
+  logger,
+  genReqId: (req, res) => {
+    const provided = req.headers['x-request-id'];
+    if (provided) return provided;
+    let id = req.id;
+    if (!id) {
+      id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      req.id = id;
+    }
+    return id;
+  },
+  serializers: {
+    req(req) {
+      return {
+        id: req.id,
+        method: req.method,
+        url: req.url,
+        remoteAddress: req.remoteAddress,
+      };
+    },
+  },
+  customLogLevel(req, res, err) {
+    if (res.statusCode >= 500 || err) return 'error';
+    if (res.statusCode >= 400) return 'warn';
+    return 'info';
+  },
+}));
 
 // Rate limiting
 const globalLimiter = rateLimit({
@@ -134,6 +163,12 @@ app.use(globalLimiter);
 app.use('/api/auth', loginLimiter, authRoutes);
 app.use('/api/bookings', bookingLimiter, bookingRoutes);
 app.use('/api', bookingLimiter, bookingMvpRoutes);
+
+// Driver Management Routes (admin-limited and admin-checked internally).
+// MUST be mounted BEFORE /api/admin so this module is the single source of
+// truth for GET /api/admin/drivers and is never shadowed by adminRoutes.
+app.use('/api/admin/drivers', adminLimiter, driverManagementRoutes);
+
 app.use('/api/admin', adminLimiter, adminRoutes);
 app.use('/api/drivers', bookingLimiter, driverRoutes);
 app.use('/api/delivery', bookingLimiter, deliveryRoutes);
@@ -142,9 +177,6 @@ app.use('/api/licenses', bookingLimiter, licenseRoutes);
 app.use('/api/challans', bookingLimiter, challanRoutes);
 app.use('/api/appointments', bookingLimiter, appointmentRoutes);
 app.use('/api', mapsRoutes);
-
-// Driver Management Routes (admin-limited and admin-checked internally)
-app.use('/api/admin/drivers', adminLimiter, driverManagementRoutes);
 
 // Partner Management Routes
 app.use('/api/admin/partners', adminLimiter, partnerRoutes);

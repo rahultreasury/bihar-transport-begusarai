@@ -1,4 +1,4 @@
-/**
+  /**
  * DriverRepository
  * Database-only repository for driver-related operations.
  * Uses Prisma Client for all database operations.
@@ -7,7 +7,7 @@
 
 const { prisma } = require('../config/prisma');
 
-/**
+  /**
  * Retry wrapper for transient Prisma connection errors (e.g., pool exhausted, Closed connection).
  * Retries up to 3 times with 500ms delay between attempts.
  * Only retries on PrismaClientKnownRequestError or errors containing 'Closed' in the message.
@@ -87,10 +87,6 @@ class DriverRepository {
             phone: true,
           },
         },
-        transportVehicles: {
-          orderBy: { created_at: 'desc' },
-          take: 1,
-        },
         bookingAssignments: {
           include: {
             booking: {
@@ -126,13 +122,27 @@ class DriverRepository {
     });
   }
 
-  /**
+/**
    * Find driver by mobile number.
    */
   async findByMobile(mobile, tx = null) {
     const client = tx || prisma;
     return await client.driver.findFirst({
       where: { mobile: mobile },
+    });
+  }
+
+  /**
+   * Find driver by vehicle number (case-insensitive, normalized).
+   * NOTE: vehicle fields are temporary MVP storage on Driver; when a
+   * dedicated Vehicle entity is introduced this lookup moves there.
+   */
+  async findByVehicleNumber(vehicleNumber, tx = null) {
+    const client = tx || prisma;
+    const normalized = String(vehicleNumber || '').trim().toUpperCase();
+    if (!normalized) return null;
+    return await client.driver.findFirst({
+      where: { vehicle_number: normalized },
     });
   }
 
@@ -170,7 +180,8 @@ class DriverRepository {
         { alternate_mobile: { contains: searchTerm } },
         { city: { contains: searchTerm, mode: 'insensitive' } },
         { state: { contains: searchTerm, mode: 'insensitive' } },
-        { transportVehicles: { some: { vehicle_number: { contains: searchTerm, mode: 'insensitive' } } } },
+        { vehicle_number: { contains: searchTerm, mode: 'insensitive' } },
+        { vehicle_type: { contains: searchTerm, mode: 'insensitive' } },
       ];
     }
 
@@ -186,7 +197,7 @@ class DriverRepository {
 
     const result = await withRetry(async () => {
       const [drivers, total] = await Promise.all([
-        prisma.driver.findMany({
+prisma.driver.findMany({
           where,
           include: {
             user: {
@@ -195,17 +206,6 @@ class DriverRepository {
                 last_name: true,
                 phone: true,
               },
-            },
-            transportVehicles: {
-              where: { is_available: true },
-              select: {
-                vehicle_id: true,
-                vehicle_number: true,
-                vehicle_name: true,
-                vehicle_type: true,
-              },
-              take: 3,
-              orderBy: { created_at: 'desc' },
             },
             bookings: {
               where: { status: { in: ['confirmed', 'pickup_completed', 'in_transit'] } },
@@ -220,6 +220,11 @@ class DriverRepository {
               orderBy: { created_at: 'desc' },
               take: 1,
             },
+            // Needed by the Booking Details "Assign Driver / Send Quote" UX,
+            // which surfaces each driver's vehicle count in the dropdown.
+            _count: {
+              select: { transportVehicles: true },
+            },
           },
           orderBy: { [field]: order },
           skip,
@@ -230,6 +235,92 @@ class DriverRepository {
       return { drivers, total };
     }, 'findAll drivers');
 
+return {
+      drivers: result.drivers,
+      pagination: {
+        page: parseInt(page),
+        limit: take,
+        total: result.total,
+        pages: Math.ceil(result.total / take),
+      },
+    };
+  }
+
+  /**
+   * List available drivers with their vehicles for the booking assignment UX.
+   * Returns each driver plus an array of their vehicles (with availability),
+   * so the frontend renders Search → Expandable Driver Card → Assign without
+   * a second API call. Supports pagination + search + availability filter.
+   *
+   * @param {Object} filters { page, limit, search, onlyAvailable }
+   * @returns {Promise<{drivers: Array, pagination: Object}>}
+   */
+  async findAllWithVehicles(filters = {}) {
+    const {
+      page = 1,
+      limit = 20,
+      search = '',
+      onlyAvailable = false,
+    } = filters;
+
+    const skip = (page - 1) * limit;
+    const take = parseInt(limit);
+
+    const where = {};
+
+    // Only return drivers that can be assigned now (available + active)
+    if (onlyAvailable) {
+      where.is_available = true;
+      where.status = 'available';
+    }
+
+    // Search across driver identity fields
+    if (search) {
+      const searchTerm = String(search).trim();
+      where.OR = [
+        { driver_code: { contains: searchTerm, mode: 'insensitive' } },
+        { driver_name: { contains: searchTerm, mode: 'insensitive' } },
+        { mobile: { contains: searchTerm } },
+        { city: { contains: searchTerm, mode: 'insensitive' } },
+        { vehicle_number: { contains: searchTerm, mode: 'insensitive' } },
+      ];
+    }
+
+    const result = await withRetry(async () => {
+      const [drivers, total] = await Promise.all([
+        prisma.driver.findMany({
+          where,
+          include: {
+            user: {
+              select: {
+                first_name: true,
+                last_name: true,
+                phone: true,
+              },
+            },
+            // Critical missing join from before: the driver's vehicles.
+            transportVehicles: {
+              select: {
+                vehicle_id: true,
+                vehicle_number: true,
+                vehicle_type: true,
+                vehicle_name: true,
+                capacity_kg: true,
+                capacity_volume: true,
+                is_available: true,
+                current_status: true,
+              },
+            },
+          },
+          orderBy: { created_at: 'desc' },
+          skip,
+          take,
+        }),
+        prisma.driver.count({ where }),
+      ]);
+      return { drivers, total };
+    }, 'findAllWithVehicles drivers');
+
     return {
       drivers: result.drivers,
       pagination: {
@@ -239,6 +330,203 @@ class DriverRepository {
         pages: Math.ceil(result.total / take),
       },
     };
+  }
+
+/**
+   * Scalable driver lookup for the Booking Assignment picker (10,000+ drivers).
+   * Server-side pagination + search + filters + trip stats. Only a bounded
+   * page of drivers is ever loaded into memory — never the full table.
+   *
+   * Each returned driver includes:
+   *   - assigned vehicle (first transportVehicle) — one-driver-one-vehicle rule
+   *   - todayTrips (bookings created today for this driver)
+   *   - lifetime trips (total_deliveries)
+   *
+   * @param {Object} filters
+   *   page, limit, search, status, vehicle_type, min_rating
+   * @returns {Promise<{drivers: Array, pagination: Object}>}
+   */
+  async findAssignable(filters = {}) {
+    const {
+      page = 1,
+      limit = 20,
+      search = '',
+      status = '',
+      vehicle_type = '',
+      min_rating = 0,
+    } = filters;
+
+    const skip = (page - 1) * limit;
+    const take = parseInt(limit);
+
+    const where = {};
+
+    // Filter by status (available / on_trip / inactive)
+    if (status) {
+      where.status = status;
+      // Keep is_available in sync with status for the picker's availability
+      if (status === 'available') where.is_available = true;
+      else if (status === 'on_trip' || status === 'inactive') where.is_available = false;
+    }
+
+    // Filter by vehicle type
+    if (vehicle_type) {
+      where.vehicle_type = { contains: String(vehicle_type).trim(), mode: 'insensitive' };
+    }
+
+    // Filter by minimum rating (drivers with rating >= min_rating)
+    if (min_rating && Number(min_rating) > 0) {
+      where.rating = { gte: Number(min_rating) };
+    }
+
+// Server-side search across identity + vehicle fields (indexed on
+    // driver_code, mobile, vehicle_number, vehicle_type, driver_name).
+    // The driver's permanent vehicle is stored directly on the Driver
+    // (vehicle_type / vehicle_number at registration), so we search the
+    // denormalized driver fields — no separate assignment-table join.
+    if (search) {
+      const searchTerm = String(search).trim();
+      where.OR = [
+        { driver_code: { contains: searchTerm, mode: 'insensitive' } },
+        { driver_name: { contains: searchTerm, mode: 'insensitive' } },
+        { mobile: { contains: searchTerm } },
+        { vehicle_number: { contains: searchTerm, mode: 'insensitive' } },
+        { vehicle_type: { contains: searchTerm, mode: 'insensitive' } },
+      ];
+    }
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const result = await withRetry(async () => {
+      const [drivers, total] = await Promise.all([
+prisma.driver.findMany({
+          where,
+          include: {
+            user: {
+              select: {
+                first_name: true,
+                last_name: true,
+                phone: true,
+              },
+            },
+            // Today's trips: bookings created today for this driver.
+            _count: {
+              select: {
+                bookings: {
+                  where: {
+                    created_at: { gte: todayStart },
+                  },
+                },
+              },
+            },
+            // Linked TransportVehicle (one-driver-one-vehicle) so the picker
+            // can surface a real vehicle_id when one exists.
+            transportVehicles: {
+              select: {
+                vehicle_id: true,
+                vehicle_number: true,
+                vehicle_type: true,
+                capacity_kg: true,
+                capacity_volume: true,
+              },
+              orderBy: { created_at: 'desc' },
+              take: 1,
+            },
+          },
+          orderBy: { created_at: 'desc' },
+          skip,
+          take,
+        }),
+        prisma.driver.count({ where }),
+      ]);
+      return { drivers, total };
+    }, 'findAssignable drivers');
+
+// Flatten the shape for the picker: expose `vehicle` built from the
+    // driver's OWN registered vehicle (vehicle_type / vehicle_number stored at
+    // registration — one-driver-one-vehicle). If a TransportVehicle is linked
+    // to the driver, we also expose its vehicle_id (so reservations can still
+    // hold a real vehicle when available); otherwise vehicle_id is null.
+    // No separate assignment-table lookup is consulted.
+// `todayTrips` comes from _count.bookings; lifetime trips from total_deliveries.
+    const drivers = result.drivers.map((d) => {
+      const tv = d.transportVehicles?.[0] || null;
+      if (d.vehicle_number) {
+        return {
+          driver_id: d.driver_id,
+          driver_code: d.driver_code,
+          driver_name: d.driver_name,
+          mobile: d.mobile,
+          status: d.status,
+          is_available: d.is_available,
+          rating: d.rating,
+          total_deliveries: d.total_deliveries || 0,
+          todayTrips: d._count?.bookings ?? 0,
+          vehicle: {
+            vehicle_id: tv?.vehicle_id ?? null,
+            vehicle_number: d.vehicle_number,
+            vehicle_type: d.vehicle_type || tv?.vehicle_type || null,
+            capacity_kg: tv?.capacity_kg ?? null,
+            capacity_volume: tv?.capacity_volume ?? null,
+          },
+        };
+      }
+      // No driver vehicle_number — but a linked TransportVehicle may still exist.
+      if (tv) {
+        return {
+          driver_id: d.driver_id,
+          driver_code: d.driver_code,
+          driver_name: d.driver_name,
+          mobile: d.mobile,
+          status: d.status,
+          is_available: d.is_available,
+          rating: d.rating,
+          total_deliveries: d.total_deliveries || 0,
+          todayTrips: d._count?.bookings ?? 0,
+          vehicle: {
+            vehicle_id: tv.vehicle_id,
+            vehicle_number: tv.vehicle_number,
+            vehicle_type: tv.vehicle_type || null,
+            capacity_kg: tv.capacity_kg ?? null,
+            capacity_volume: tv.capacity_volume ?? null,
+          },
+        };
+      }
+      return {
+        driver_id: d.driver_id,
+        driver_code: d.driver_code,
+        driver_name: d.driver_name,
+        mobile: d.mobile,
+        status: d.status,
+        is_available: d.is_available,
+        rating: d.rating,
+        total_deliveries: d.total_deliveries || 0,
+        todayTrips: d._count?.bookings ?? 0,
+        vehicle: null,
+      };
+    });
+
+    return {
+      drivers,
+      pagination: {
+        page: parseInt(page),
+        limit: take,
+        total: result.total,
+        pages: Math.ceil(result.total / take),
+      },
+    };
+  }
+
+  /**
+   * Get a driver's current status (available / on_trip / inactive).
+   */
+  async findStatus(driverId, tx = null) {
+    const client = tx || prisma;
+    return await client.driver.findUnique({
+      where: { driver_id: driverId },
+      select: { status: true },
+    });
   }
 
   /**
@@ -278,12 +566,6 @@ class DriverRepository {
       prisma.booking.findMany({
         where,
         include: {
-          vehicle: {
-            select: {
-              vehicle_number: true,
-              vehicle_name: true,
-            },
-          },
           delivery: {
             select: {
               current_status: true,
@@ -474,40 +756,25 @@ class DriverRepository {
     };
   }
 
-  /**
-   * Assign a vehicle to a driver.
-   */
-  async assignVehicle(driverId, vehicleId) {
-    // Unassign from any previous driver
-    await prisma.transportVehicle.update({
-      where: { vehicle_id: parseInt(vehicleId) },
-      data: { driver_id: parseInt(driverId) },
-    });
-    return { success: true };
-  }
-
-  /**
-   * Get available vehicles for assignment.
-   */
-  async getAvailableVehicles() {
-    return await prisma.transportVehicle.findMany({
-      where: { is_available: true },
-      select: {
-        vehicle_id: true,
-        vehicle_number: true,
-        vehicle_name: true,
-        vehicle_type: true,
-      },
-      orderBy: { created_at: 'desc' },
-    });
-  }
-
-  /**
+/**
    * Soft delete a driver (set as inactive).
    */
-  async softDelete(driverId) {
-    return await prisma.driver.update({
+  async softDelete(driverId, tx = null) {
+    const client = tx || prisma;
+    return await client.driver.update({
       where: { driver_id: driverId },
+      data: { status: 'inactive', is_available: false },
+    });
+  }
+
+  /**
+   * Soft delete multiple drivers in one atomic statement (set as inactive).
+   * Used by the bulk-delete endpoint so the frontend sends ONE request.
+   */
+  async bulkSoftDelete(driverIds, tx = null) {
+    const client = tx || prisma;
+    return await client.driver.updateMany({
+      where: { driver_id: { in: driverIds } },
       data: { status: 'inactive', is_available: false },
     });
   }

@@ -5,7 +5,8 @@
  * IMPORTANT:
  * - No Express req/res usage.
  * - Services call repositories only.
- * - Throws typed exceptions.
+ * - Throws AppError exceptions.
+ * - All state transitions go through BookingStateMachine.
  */
 
 const BookingRepository = require('../repositories/BookingRepository');
@@ -13,39 +14,8 @@ const BookingTimelineRepository = require('../repositories/BookingTimelineReposi
 const ReservationRepository = require('../repositories/ReservationRepository');
 const InvoiceRepository = require('../repositories/InvoiceRepository');
 const { prisma } = require('../config/prisma');
-
-/**
- * @typedef {Object} ServiceResult
- * @property {boolean} ok
- * @property {string=} code
- * @property {any=} data
- */
-
-class BookingDomainError extends Error {
-  /**
-   * @param {string} code
-   * @param {string} message
-   */
-  constructor(code, message) {
-    super(message);
-    this.name = 'BookingDomainError';
-    this.code = code;
-  }
-}
-
-class NotFoundError extends BookingDomainError {
-  constructor(message = 'Not found') {
-    super('NOT_FOUND', message);
-    this.name = 'NotFoundError';
-  }
-}
-
-class ValidationError extends BookingDomainError {
-  constructor(message = 'Validation failed') {
-    super('VALIDATION_ERROR', message);
-    this.name = 'ValidationError';
-  }
-}
+const { AppError, ValidationError, NotFoundError } = require('../utils/AppError');
+const { validateTransition, isTerminal, canCancel, canConfirm, canSendQuote, canReject, canAssignDriver, canStartPickup, toDeliveryStatus } = require('../utils/BookingStateMachine');
 
 class BookingService {
   /**
@@ -64,11 +34,8 @@ class BookingService {
 
   /**
    * Create a new booking.
-   * Business rules:
-   * - booking_reference must be present
-   * - user_id must be present
-   * - vehicle_type_required must be present
    * @param {Object} input
+   * @returns {Promise<{booking_id: number}>}
    */
   async createBooking(input) {
     if (!input || !input.booking_reference) {
@@ -92,43 +59,31 @@ class BookingService {
       return booking;
     });
 
-    // Transactional lifecycle is handled upstream after repository tx support is enabled.
-    // (API contract: createBooking returns the booking_id wrapper from repository.)
     return bookingResult;
   }
 
   /**
    * Update a booking with status transitions.
-   * Business rules (basic):
-   * - status can be updated only to an allowed set
-   * - delivered/completed require final_price present (soft rule)
+   * @param {number} bookingId
+   * @param {Object} input
+   * @returns {Promise<Object>}
    */
   async updateBooking(bookingId, input) {
     if (!bookingId) throw new ValidationError('bookingId is required');
     if (!input || typeof input !== 'object') throw new ValidationError('input is required');
 
-    const allowedStatuses = [
-      'pending',
-      'confirmed',
-      'driver_assigned',
-      'pickup_completed',
-      'in_transit',
-      'delivered',
-      'cancelled',
-      'completed'
-    ];
-
-    if (input.status && !allowedStatuses.includes(input.status)) {
-      throw new ValidationError('Invalid status');
-    }
-
-    if (['delivered', 'completed'].includes(input.status) && (input.final_price == null)) {
-      // soft business validation to prevent inconsistent analytics
-      throw new ValidationError('final_price is required when delivered/completed');
-    }
-
     const existing = await this.bookingRepo.findById(bookingId);
     if (!existing) throw new NotFoundError('Booking not found');
+
+    // Validate status transition if status is being changed
+    if (input.status && input.status !== existing.status) {
+      validateTransition(existing.status, input.status);
+
+      // Additional business rules
+      if (['delivered', 'completed'].includes(input.status) && (input.final_price == null && existing.final_price == null)) {
+        throw new ValidationError('final_price is required when delivered/completed');
+      }
+    }
 
     const updated = await this.bookingRepo.update(bookingId, input);
 
@@ -144,7 +99,132 @@ class BookingService {
   }
 
   /**
+   * Bulk-update the status of multiple bookings inside a single transaction.
+   * @param {number[]} bookingIds
+   * @param {string} status
+   * @returns {Promise<{updated: number}>}
+   */
+  async bulkUpdateStatus(bookingIds, status) {
+    if (!Array.isArray(bookingIds) || bookingIds.length === 0) {
+      throw new ValidationError('bookingIds must be a non-empty array');
+    }
+
+    const ids = [...new Set(bookingIds.map(Number))].filter((n) => Number.isInteger(n) && n > 0);
+    if (ids.length === 0) {
+      throw new ValidationError('bookingIds must be a non-empty array of valid booking ids');
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const existing = await tx.booking.findMany({
+        where: { booking_id: { in: ids } },
+        select: { booking_id: true, status: true, quote_status: true },
+      });
+
+      if (existing.length !== ids.length) {
+        const found = new Set(existing.map((b) => b.booking_id));
+        const missing = ids.filter((id) => !found.has(id));
+        throw new NotFoundError(`Some bookings were not found: ${missing.join(', ')}`);
+      }
+
+      let updated = 0;
+      for (const booking of existing) {
+        if (booking.status === status) continue;
+
+        // Enterprise rule: bookings can only be confirmed after the customer
+        // has accepted the final quote. Admin cannot bypass this.
+        if (status === 'confirmed' && booking.quote_status !== 'ACCEPTED') {
+          throw new ValidationError(
+            `Booking ${booking.booking_id} cannot be confirmed: customer must accept the final quote first (current quote_status: ${booking.quote_status || 'PENDING'})`
+          );
+        }
+
+        // Validate transition
+        validateTransition(booking.status, status);
+
+        const data = { status };
+        const now = new Date();
+
+        if (status === 'confirmed') {
+          data.confirmed_at = now;
+        }
+
+        await tx.booking.update({
+          where: { booking_id: booking.booking_id },
+          data,
+        });
+
+        await this.timelineRepo.addEvent(
+          booking.booking_id,
+          'booking_status_changed',
+          JSON.stringify({ from: booking.status, to: status, bulk: true }),
+          tx
+        );
+
+        updated += 1;
+      }
+      return updated;
+    });
+
+    return { updated: result };
+  }
+
+  /**
+   * Manually confirm a booking (offline / phone / WhatsApp).
+   *
+   * Enterprise rule: A booking can ONLY be confirmed after the customer has
+   * accepted the final quote (quote_status === 'ACCEPTED'). Admin cannot
+   * bypass customer confirmation.
+   *
+   * @param {number} bookingId
+   * @returns {Promise<{ok: boolean, status: string, quote_status: string, confirmation_source: string}>}
+   */
+  async confirmBooking(bookingId) {
+    if (!bookingId) throw new ValidationError('bookingId is required');
+
+    const existing = await this.bookingRepo.findById(bookingId);
+    if (!existing) throw new NotFoundError('Booking not found');
+
+    if (isTerminal(existing.status)) {
+      throw new ValidationError(`Cannot confirm a booking with status: ${existing.status}`);
+    }
+
+    // Customer must have accepted the quote first.
+    if (existing.quote_status !== 'ACCEPTED') {
+      throw new ValidationError(
+        `Cannot confirm booking ${bookingId}: customer must accept the final quote first (current quote_status: ${existing.quote_status || 'PENDING'})`
+      );
+    }
+
+    // Already confirmed.
+    if (existing.status === 'confirmed') {
+      return { ok: true, status: existing.status, quote_status: 'ACCEPTED', confirmation_source: existing.confirmation_source || 'CUSTOMER' };
+    }
+
+    // Quote ACCEPTED but booking still in quote_sent → perform the confirmation
+    // transition (idempotent, transactional).
+    const now = new Date();
+    const result = await prisma.$transaction(async (tx) => {
+      await this.bookingRepo.update(bookingId, {
+        status: 'confirmed',
+        confirmed_at: now,
+      }, tx);
+
+      await this.timelineRepo.addEvent(
+        bookingId,
+        'booking_status_changed',
+        JSON.stringify({ from: existing.status, to: 'confirmed', source: 'admin_manual' }),
+        tx
+      );
+      return { ok: true };
+    });
+
+    return { ok: result.ok, status: 'confirmed', quote_status: 'ACCEPTED', confirmation_source: existing.confirmation_source || 'CUSTOMER' };
+  }
+
+  /**
    * Cancel a booking.
+   * @param {number} bookingId
+   * @returns {Promise<Object>}
    */
   async cancelBooking(bookingId) {
     if (!bookingId) throw new ValidationError('bookingId is required');
@@ -152,7 +232,7 @@ class BookingService {
     const booking = await this.bookingRepo.findById(bookingId);
     if (!booking) throw new NotFoundError('Booking not found');
 
-    if (['cancelled', 'completed', 'delivered'].includes(booking.status)) {
+    if (!canCancel(booking.status)) {
       throw new ValidationError('This booking cannot be cancelled');
     }
 
@@ -161,6 +241,8 @@ class BookingService {
 
   /**
    * Complete a booking.
+   * @param {number} bookingId
+   * @returns {Promise<Object>}
    */
   async completeBooking(bookingId) {
     if (!bookingId) throw new ValidationError('bookingId is required');
@@ -171,7 +253,6 @@ class BookingService {
       throw new ValidationError('Cancelled booking cannot be completed');
     }
 
-    // Business validation: ensure price exists
     if (booking.final_price == null) {
       throw new ValidationError('final_price is required');
     }
@@ -181,15 +262,9 @@ class BookingService {
 
   /**
    * Admin sends a final quote for a booking.
-   * Business rules:
-   * - booking must exist
-   * - only PENDING bookings can receive a quote (idempotent when already SENT with same price)
-   * - final_price (the Final Transport Charge) is required
-   * - moves quote_status PENDING → SENT and records quote_sent_at
-   * The booking stays `pending` until the customer accepts or rejects the quote.
-   *
    * @param {number} bookingId
    * @param {Object} input - { final_price, remarks }
+   * @returns {Promise<Object>}
    */
   async sendQuote(bookingId, input = {}) {
     if (!bookingId) throw new ValidationError('bookingId is required');
@@ -205,20 +280,20 @@ class BookingService {
     const existing = await this.bookingRepo.findById(bookingId);
     if (!existing) throw new NotFoundError('Booking not found');
 
-    if (['cancelled', 'completed', 'delivered'].includes(existing.status)) {
+    if (isTerminal(existing.status)) {
       throw new ValidationError(`Cannot send a quote for a booking with status: ${existing.status}`);
     }
 
-    // Idempotent re-send: allow SENT → SENT (e.g., admin corrects price before acceptance).
     if (existing.quote_status === 'ACCEPTED' || existing.quote_status === 'REJECTED') {
       throw new ValidationError(`Quote already ${existing.quote_status.toLowerCase()} for this booking`);
     }
 
+    const sentAt = new Date();
     const patch = {
       final_price: finalPrice,
       quote_status: 'SENT',
-      quote_sent_at: new Date(),
-      status: existing.status || 'pending',
+      quote_sent_at: sentAt,
+      status: 'quote_sent',
     };
     if (input.remarks != null) patch.quote_remarks = String(input.remarks);
 
@@ -233,19 +308,11 @@ class BookingService {
     return updated;
   }
 
-/**
+  /**
    * Customer responds to a sent quote.
-   * Business rules:
-   * - booking must exist
-   * - quote must be SENT
-   * - quote must not be expired
-   * - accept → within ONE transaction: quote_status = ACCEPTED, status = confirmed,
-   *   reserved driver/vehicle assigned, booking_assignment created, delivery updated,
-   *   invoice generated, timeline updated, ETA computed.
-   * - reject → quote_status = REJECTED, reserved driver/vehicle released.
-   *
    * @param {number} bookingId
    * @param {'ACCEPT'|'REJECT'} action
+   * @returns {Promise<Object>}
    */
   async respondToQuote(bookingId, action) {
     if (!bookingId) throw new ValidationError('bookingId is required');
@@ -264,7 +331,6 @@ class BookingService {
 
     // Quote expiry check
     if (existing.quote_valid_until && new Date(existing.quote_valid_until) < new Date()) {
-      // Auto-expire: release reservations and mark quote expired
       await prisma.$transaction(async (tx) => {
         await this.reservationRepo.releaseAllActive(bookingId, tx);
         await this.bookingRepo.update(bookingId, { quote_status: 'EXPIRED' }, tx);
@@ -287,13 +353,11 @@ class BookingService {
 
   /**
    * Atomically accept a quote and confirm the booking.
-   * All write operations happen in ONE Prisma transaction.
    * @private
    */
   async acceptQuote(bookingId, existing) {
     const finalPrice = existing.final_price != null ? Number(existing.final_price) : 0;
 
-    // Load active reservation (driver + vehicle) created when the quote was sent.
     const activeReservation = await this.reservationRepo.getActiveByBooking(bookingId);
     const reservedDriverId = activeReservation?.driver_id || null;
     const reservedVehicleId = activeReservation?.vehicle_id || null;
@@ -302,20 +366,18 @@ class BookingService {
     const invoiceNumber = `INV-${existing.booking_reference || bookingId}-${Date.now().toString().slice(-6)}`;
 
     const result = await prisma.$transaction(async (tx) => {
-      // 1. Confirm booking + mark quote accepted
       await this.bookingRepo.update(bookingId, {
         quote_status: 'ACCEPTED',
         quote_accepted_at: now,
         status: 'confirmed',
         confirmed_at: now,
+        confirmation_source: 'CUSTOMER',
         driver_id: reservedDriverId,
         vehicle_id: reservedVehicleId,
       }, tx);
 
-      // 2. Convert reservations ACTIVE → CONVERTED
       await this.reservationRepo.convertAllActive(bookingId, tx);
 
-      // 3. Create booking_assignment with reserved driver + vehicle
       if (reservedDriverId || reservedVehicleId) {
         await tx.bookingAssignment.create({
           data: {
@@ -327,7 +389,6 @@ class BookingService {
         });
       }
 
-      // 4. Mark driver + vehicle as unavailable (assigned)
       if (reservedDriverId) {
         await tx.driver.update({
           where: { driver_id: reservedDriverId },
@@ -341,11 +402,23 @@ class BookingService {
         });
       }
 
-      // 5. Update delivery record
+      // Ensure a delivery record exists so the driver workflow can proceed
+      // (pickup_started → pickup_completed → in_transit → out_for_delivery
+      //  → delivered → completed). If one was created earlier (e.g. legacy
+      //  flow), update it with the reserved driver/vehicle.
       const delivery = await tx.delivery.findUnique({
         where: { booking_id: bookingId },
         select: { delivery_id: true },
       });
+
+      const deliveryData = {
+        booking_id: bookingId,
+        driver_id: reservedDriverId,
+        vehicle_id: reservedVehicleId,
+        current_status: 'booking_confirmed',
+        status_description: 'Booking confirmed',
+      };
+
       if (delivery) {
         await tx.delivery.update({
           where: { booking_id: bookingId },
@@ -353,12 +426,13 @@ class BookingService {
             driver_id: reservedDriverId,
             vehicle_id: reservedVehicleId,
             current_status: 'booking_confirmed',
-            status_description: 'Booking confirmed, driver and vehicle assigned',
+            status_description: 'Booking confirmed',
           },
         });
+      } else {
+        await tx.delivery.create({ data: deliveryData });
       }
 
-      // 6. Generate invoice
       await this.invoiceRepo.create({
         booking_id: bookingId,
         invoice_number: invoiceNumber,
@@ -366,7 +440,12 @@ class BookingService {
         status: 'PENDING',
       }, tx);
 
-      // 7. Timeline event
+      await this.timelineRepo.addEvent(
+        bookingId,
+        'booking_confirmed',
+        JSON.stringify({ final_price: finalPrice, confirmed_at: now }),
+        tx
+      );
       await this.timelineRepo.addEvent(
         bookingId,
         'quote_accepted',
@@ -376,6 +455,12 @@ class BookingService {
           vehicle_id: reservedVehicleId,
           invoice_number: invoiceNumber,
         }),
+        tx
+      );
+      await this.timelineRepo.addEvent(
+        bookingId,
+        'QUOTE_ACCEPTED_BY_CUSTOMER',
+        JSON.stringify({ confirmation_source: 'CUSTOMER', confirmed_at: now }),
         tx
       );
 
@@ -393,7 +478,8 @@ class BookingService {
   }
 
   /**
-   * Reject a quote and release reserved driver/vehicle.
+   * Reject a quote, release reserved driver/vehicle, and move the booking
+   * to the terminal 'rejected' state.
    * @private
    */
   async rejectQuote(bookingId, existing) {
@@ -401,32 +487,27 @@ class BookingService {
       await this.bookingRepo.update(bookingId, {
         quote_status: 'REJECTED',
         quote_rejected_at: new Date(),
+        status: 'rejected',
       }, tx);
 
-      // Release reserved driver + vehicle
       await this.reservationRepo.releaseAllActive(bookingId, tx);
 
-      await this.timelineRepo.addEvent(bookingId, 'quote_rejected', JSON.stringify({}));
+      await this.timelineRepo.addEvent(
+        bookingId,
+        'quote_rejected',
+        JSON.stringify({ booking_status: 'rejected', rejected_at: new Date() }),
+        tx
+      );
     });
 
-    return { ok: true, quote_status: 'REJECTED', status: existing.status };
+    return { ok: true, quote_status: 'REJECTED', status: 'rejected' };
   }
 
   /**
    * Admin sends a quote with reservation of driver + vehicle.
-   * This is the core of the enterprise workflow:
-   *   driver/vehicle are RESERVED (not assigned) before the quote is sent.
-   *   The booking is NOT confirmed until the customer accepts.
-   *
-   * Business rules:
-   * - booking must exist
-   * - final_price required
-   * - driver_id and vehicle_id (reserved) required, or at least one
-   * - quote_validity_hours (default 2) sets quote_valid_until
-   * - sets quote_status → SENT, status → (stays pending / quote_requested)
-   *
    * @param {number} bookingId
    * @param {Object} input - { final_price, remarks, driver_id, vehicle_id, quote_validity_hours, reserved_by }
+   * @returns {Promise<Object>}
    */
   async sendQuoteWithReservation(bookingId, input = {}) {
     if (!bookingId) throw new ValidationError('bookingId is required');
@@ -439,64 +520,118 @@ class BookingService {
       throw new ValidationError('final_price must be a positive number');
     }
 
+// Enterprise workflow: a driver is REQUIRED, but a vehicle is OPTIONAL.
+    // The booking module automatically uses the driver's CURRENT ACTIVE VEHICLE.
+    // Admin selects only the driver — never a vehicle separately.
+    const reservedDriverId = input.driver_id ? parseInt(input.driver_id, 10) : null;
+    const providedVehicleId = input.vehicle_id ? parseInt(input.vehicle_id, 10) : null;
+
+    if (!reservedDriverId) {
+      throw new ValidationError('driver_id is required to send a final quote');
+    }
+
     const existing = await this.bookingRepo.findById(bookingId);
     if (!existing) throw new NotFoundError('Booking not found');
 
-    if (['cancelled', 'completed', 'delivered'].includes(existing.status)) {
+    if (isTerminal(existing.status)) {
       throw new ValidationError(`Cannot send a quote for a booking with status: ${existing.status}`);
     }
     if (existing.quote_status === 'ACCEPTED') {
       throw new ValidationError('Quote already accepted for this booking');
     }
-
-    const reservedDriverId = input.driver_id ? parseInt(input.driver_id, 10) : null;
-    const reservedVehicleId = input.vehicle_id ? parseInt(input.vehicle_id, 10) : null;
-
-    if (!reservedDriverId && !reservedVehicleId) {
-      throw new ValidationError('At least one of driver_id or vehicle_id must be reserved');
+    if (existing.quote_status === 'SENT' && !input.force_resend) {
+      throw new ValidationError('A quote is already sent and awaiting customer approval. Use force_resend to send a new one.');
     }
 
-    // Validate driver + vehicle availability
-    if (reservedDriverId) {
-      const driver = await prisma.driver.findUnique({
-        where: { driver_id: reservedDriverId },
-        select: { driver_id: true, is_available: true },
-      });
-      if (!driver) throw new NotFoundError('Reserved driver not found');
-      if (!driver.is_available) {
-        throw new ValidationError('Reserved driver is not available');
-      }
+    // Load the driver from the existing Driver record.
+    const driver = await prisma.driver.findUnique({
+      where: { driver_id: reservedDriverId },
+      select: {
+        driver_id: true,
+        is_available: true,
+        vehicle_number: true,
+        vehicle_type: true,
+      },
+    });
+    if (!driver) throw new NotFoundError('Reserved driver not found');
+    if (!driver.is_available) {
+      throw new ValidationError('Reserved driver is not available');
     }
-    if (reservedVehicleId) {
+
+    // Prevent reserving a driver who is already assigned to another active booking
+    const activeBooking = await prisma.booking.findFirst({
+      where: {
+        driver_id: reservedDriverId,
+        status: { notIn: ['cancelled', 'completed', 'delivered'] },
+      },
+      select: { booking_id: true },
+    });
+    if (activeBooking) {
+      throw new ValidationError('Driver is already assigned to another active booking');
+    }
+
+    // vehicle_id is OPTIONAL. If provided, validate the fleet vehicle path.
+    // If missing, auto-resolve the driver's current active vehicle from the
+    // Driver record. Validate ONLY that driver.vehicle_number exists.
+    // There is ONE validation path — no duplication.
+    let reservedVehicleId = providedVehicleId;
+
+    if (providedVehicleId) {
       const vehicle = await prisma.transportVehicle.findUnique({
-        where: { vehicle_id: reservedVehicleId },
-        select: { vehicle_id: true, is_available: true },
+        where: { vehicle_id: providedVehicleId },
+        select: { vehicle_id: true, driver_id: true, is_available: true },
       });
       if (!vehicle) throw new NotFoundError('Reserved vehicle not found');
       if (!vehicle.is_available) {
         throw new ValidationError('Reserved vehicle is not available');
       }
+      if (vehicle.driver_id !== reservedDriverId) {
+        throw new ValidationError('The selected vehicle does not belong to the selected driver');
+      }
+      reservedVehicleId = providedVehicleId;
+    } else {
+      // Auto-resolve from the Driver record.
+      // Validate only: driver.vehicle_number exists.
+      if (!driver.vehicle_number) {
+        throw new ValidationError('This driver does not have an active vehicle.');
+      }
+      // reservedVehicleId stays null — the driver's registered vehicle
+      // is not a fleet TransportVehicle record.
     }
 
     const validityHours = Number(input.quote_validity_hours) || 2;
     const quoteValidUntil = new Date(Date.now() + validityHours * 60 * 60 * 1000);
+    const sentAt = new Date();
 
     const result = await prisma.$transaction(async (tx) => {
-      // 1. Persist quote + validity
       const patch = {
         final_price: finalPrice,
         quote_status: 'SENT',
         quote_sent_at: new Date(),
         quote_valid_until: quoteValidUntil,
-        status: existing.status || 'pending',
+        status: 'quote_sent',
       };
       if (input.remarks != null) patch.quote_remarks = String(input.remarks);
+
+      // Set driver/vehicle snapshots so the admin drawer can display the
+      // reserved driver immediately after sending the quote. These are
+      // immutable snapshots that persist until the quote is rejected or
+      // a new quote is sent with a different driver.
+      if (reservedDriverId) {
+        patch.driver_id = reservedDriverId;
+        patch.driver_name_snapshot = driver.driver_name || `${driver.user?.first_name || ''} ${driver.user?.last_name || ''}`.trim() || null;
+        patch.mobile_snapshot = driver.mobile || driver.user?.phone || null;
+        patch.truck_number_snapshot = driver.vehicle_number || null;
+        patch.partner_name_snapshot = driver.currentPartner?.partner_name || null;
+      }
+      if (reservedVehicleId) {
+        patch.vehicle_id = reservedVehicleId;
+      }
+
       await this.bookingRepo.update(bookingId, patch, tx);
 
-      // 2. Release any stale ACTIVE reservations (re-send / re-quote)
       await this.reservationRepo.releaseAllActive(bookingId, tx);
 
-      // 3. Create reservation (driver + vehicle held)
       await this.reservationRepo.create({
         booking_id: bookingId,
         driver_id: reservedDriverId,
@@ -506,7 +641,6 @@ class BookingService {
         reserved_by: input.reserved_by || null,
       }, tx);
 
-      // 4. Timeline
       await this.timelineRepo.addEvent(
         bookingId,
         'quote_sent',
@@ -520,14 +654,15 @@ class BookingService {
         tx
       );
 
-      return { quote_valid_until: quoteValidUntil };
+      return { quote_valid_until: quoteValidUntil, quote_sent_at: sentAt };
     });
 
     return {
       ok: true,
       quote_status: 'SENT',
-      status: existing.status || 'pending',
+      status: 'quote_sent',
       final_price: finalPrice,
+      quote_sent_at: sentAt,
       quote_valid_until: result.quote_valid_until,
       driver_id: reservedDriverId,
       vehicle_id: reservedVehicleId,
@@ -536,8 +671,8 @@ class BookingService {
 
   /**
    * Check a booking's quote and auto-expire if past validity.
-   * Safe to call on every tracking read.
    * @param {number} bookingId
+   * @returns {Promise<{expired: boolean}>}
    */
   async checkAndExpireQuote(bookingId) {
     const existing = await this.bookingRepo.findById(bookingId);
@@ -563,21 +698,30 @@ class BookingService {
 
   /**
    * Get a booking with full quote context for the tracking page.
-   * Includes active reservation, driver + vehicle details, ETA.
    * @param {string} reference
+   * @returns {Promise<Object>}
    */
   async getBookingForTracking(reference) {
     if (!reference) throw new ValidationError('reference is required');
 
-    const booking = await prisma.booking.findUnique({
+const booking = await prisma.booking.findUnique({
       where: { booking_reference: reference },
       include: {
+        user: {
+          select: {
+            first_name: true,
+            last_name: true,
+            phone: true,
+          },
+        },
         vehicle: {
           select: {
+            vehicle_id: true,
             vehicle_number: true,
             vehicle_name: true,
             vehicle_type: true,
             capacity_kg: true,
+            current_status: true,
           },
         },
         delivery: {
@@ -604,7 +748,7 @@ class BookingService {
             },
           },
         },
-reservations: {
+        reservations: {
           where: { status: 'ACTIVE' },
           orderBy: { created_at: 'desc' },
           take: 1,
@@ -641,69 +785,130 @@ reservations: {
 
     if (!booking) throw new NotFoundError('Booking not found');
 
-    // Auto-expire if needed
-    if (booking.quote_status === 'SENT' && booking.quote_valid_until) {
-      if (new Date(booking.quote_valid_until) < new Date()) {
-        await this.checkAndExpireQuote(booking.booking_id);
-        booking.quote_status = 'EXPIRED';
-      }
-    }
-
+    // NOTE: Auto-expiry is handled by a scheduled job or explicit admin action,
+    // NOT in this read-only tracking endpoint. Mutating quote_status here causes
+    // the customer tracking page to never show the QuoteCard (BUG 2 / BUG 3).
     const activeReservation = booking.reservations?.[0] || null;
-    const driverInfo = booking.driver
+
+    // ============================================================
+    // ENTERPRISE DRIVER INFO GATING
+    // ------------------------------------------------------------
+    // Driver + vehicle details are ONLY exposed to the customer after
+    // the quote has been ACCEPTED (booking confirmed). Before that:
+    //   - driver / vehicle / reservation are null (hidden from tracking)
+    //   - a `driver_quote` object is returned with the driver name,
+    //     phone, vehicle number, vehicle type, final price and remarks
+    //     so the QuoteCard can display them for the Accept/Reject step.
+    // ============================================================
+    const isConfirmed = booking.quote_status === 'ACCEPTED' ||
+      ['confirmed', 'pickup_started', 'pickup_completed', 'in_transit', 'out_for_delivery', 'delivered', 'completed']
+        .includes(booking.status);
+
+    const driverInfo = isConfirmed && booking.driver
       ? {
           driver_id: booking.driver.driver_id,
           rating: booking.driver.rating,
           total_deliveries: booking.driver.total_deliveries,
           profile_image: booking.driver.profile_image,
-          first_name: booking.driver.user.first_name,
-          last_name: booking.driver.user.last_name,
-          phone: booking.driver.user.phone,
+          first_name: booking.driver.user?.first_name || null,
+          last_name: booking.driver.user?.last_name || null,
+          phone: booking.driver.user?.phone || null,
         }
       : null;
 
-    const snapshotDriverInfo = booking.driver_name_snapshot
+    const snapshotDriverInfo = isConfirmed && booking.driver_name_snapshot
       ? {
           driver_name: booking.driver_name_snapshot,
           phone: booking.mobile_snapshot,
           vehicle_number: booking.truck_number_snapshot,
-          vehicle_type: booking.vehicle?.vehicle_type || null,
+          vehicle_type: null,
           owner_name: booking.partner_name_snapshot,
         }
       : null;
 
+    // Quote preview info — shown to the customer while awaiting approval.
+    // Contains driver name, phone, vehicle number/type, price and remarks
+    // so the customer can make an informed Accept/Reject decision.
+    // Vehicle info falls back to the driver's registered vehicle when the
+    // reservation's vehicle record is null (driver's own vehicle, not fleet).
+    const driverQuoteInfo = activeReservation
+      ? {
+          driver_name: activeReservation.driver?.driver_name || null,
+          driver_phone: activeReservation.driver?.mobile || null,
+          driver_rating: activeReservation.driver?.rating || null,
+          vehicle_number: activeReservation.vehicle?.vehicle_number || activeReservation.driver?.vehicle_number || null,
+          vehicle_name: activeReservation.vehicle?.vehicle_name || null,
+          vehicle_type: activeReservation.vehicle?.vehicle_type || activeReservation.driver?.vehicle_type || null,
+          final_price: booking.final_price != null ? Number(booking.final_price) : null,
+          remarks: booking.quote_remarks || null,
+          quote_valid_until: booking.quote_valid_until || null,
+        }
+      : null;
+
+// ============================================================
+    // TRACKING DATA CONTRACT
+    // ------------------------------------------------------------
+    // The tracking components (BookingHeader, BookingDetails, StatusCard,
+    // QuoteCard, ActivityFeed, ProgressTimeline, DriverVehicleCard) read a
+    // specific set of fields. Every field they reference MUST be returned
+    // here so the tracking page never white-screens due to a missing key.
+    // ============================================================
     return {
       booking_id: booking.booking_id,
       booking_reference: booking.booking_reference,
+      booking_number: booking.booking_number || null,
+      user_id: booking.user_id,
+      created_at: booking.created_at,
+      updated_at: booking.updated_at,
+      customer_first_name: booking.user?.first_name || null,
+      customer_last_name: booking.user?.last_name || null,
+      customer_phone: booking.user?.phone || null,
       pickup_location: booking.pickup_location,
+      pickup_address: booking.pickup_address || null,
       pickup_city: booking.pickup_city,
+      pickup_state: booking.pickup_state || null,
+      pickup_pincode: booking.pickup_pincode || null,
       drop_location: booking.drop_location,
+      drop_address: booking.drop_address || null,
       drop_city: booking.drop_city,
+      drop_state: booking.drop_state || null,
+      drop_pincode: booking.drop_pincode || null,
       goods_description: booking.goods_description,
+      goods_type: booking.goods_type || null,
+      goods_weight_kg: booking.goods_weight_kg != null ? Number(booking.goods_weight_kg) : null,
+      goods_volume: booking.goods_volume != null ? Number(booking.goods_volume) : null,
+      number_of_items: booking.number_of_items != null ? Number(booking.number_of_items) : null,
+      fragile: booking.fragile == null ? false : Boolean(booking.fragile),
+      vehicle_type_required: booking.vehicle_type_required || null,
+      estimated_distance_km: booking.estimated_distance_km != null ? Number(booking.estimated_distance_km) : null,
       status: booking.status,
       estimated_price: booking.estimated_price,
       final_price: booking.final_price,
       quote_status: booking.quote_status,
+      confirmation_source: booking.confirmation_source || null,
       quote_remarks: booking.quote_remarks,
+      quote_message: booking.quote_remarks,
+      sent_quote_at: booking.quote_sent_at,
       quote_sent_at: booking.quote_sent_at,
       quote_accepted_at: booking.quote_accepted_at,
       quote_rejected_at: booking.quote_rejected_at,
       quote_valid_until: booking.quote_valid_until,
       pickup_date: booking.pickup_date,
       pickup_time: booking.pickup_time,
-      driver_id: booking.driver_id,
-      vehicle_id: booking.vehicle_id,
-      vehicle_number: booking.vehicle?.vehicle_number || booking.truck_number_snapshot || null,
-      vehicle_name: booking.vehicle?.vehicle_name || null,
-      vehicle_type: booking.vehicle?.vehicle_type || null,
-current_status: booking.delivery?.current_status || null,
+      driver_id: isConfirmed ? booking.driver_id : null,
+      vehicle_id: isConfirmed ? (booking.vehicle?.vehicle_id ?? null) : null,
+      vehicle_number: isConfirmed ? ((booking.vehicle?.vehicle_number ?? booking.truck_number_snapshot) || null) : null,
+      vehicle_name: isConfirmed ? (booking.vehicle?.vehicle_name ?? null) : null,
+      vehicle_type: isConfirmed ? (booking.vehicle?.vehicle_type ?? null) : null,
+      current_status: booking.delivery?.current_status || null,
       status_description: booking.delivery?.status_description || null,
       estimated_pickup_time: booking.delivery?.estimated_pickup_time || null,
       estimated_delivery_time: booking.delivery?.estimated_delivery_time || null,
       driver: driverInfo,
       snapshot_driver: snapshotDriverInfo,
+      driver_quote: driverQuoteInfo,
       bookingEvents: booking.bookingEvents || [],
-      reservation: activeReservation
+      reservation: isConfirmed && activeReservation
         ? {
             driver_id: activeReservation.driver_id,
             vehicle_id: activeReservation.vehicle_id,
@@ -733,16 +938,11 @@ current_status: booking.delivery?.current_status || null,
   /**
    * Search bookings.
    * @param {Object} filters
+   * @returns {Promise<Object[]>}
    */
   async searchBookings(filters) {
     return await this.bookingRepo.search(filters);
   }
 }
 
-module.exports = {
-  BookingService,
-  BookingDomainError,
-  NotFoundError,
-  ValidationError
-};
-
+module.exports = BookingService;

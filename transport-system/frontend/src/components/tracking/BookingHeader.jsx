@@ -19,9 +19,15 @@ const VEHICLE_ICONS = {
 const BookingHeader = React.memo(function BookingHeader({ booking }) {
   if (!booking) return null;
 
-  const vehicleIcon = VEHICLE_ICONS[booking.vehicle_type_required] || '🚛';
+const vehicleIcon = VEHICLE_ICONS[booking.vehicle_type_required] || '🚛';
   const quoteStatus = (booking.quote_status || 'PENDING').toUpperCase();
-  const isConfirmed = quoteStatus === 'ACCEPTED' || booking.status === 'confirmed';
+  // SINGLE SOURCE OF TRUTH: a booking is only "confirmed" once the customer has
+  // ACCEPTED the final quote. quote_status is authoritative; booking.status is
+  // a derived mirror. Any downstream status (driver_assigned, in_transit, etc.)
+  // also implies the quote was accepted.
+  const isConfirmed =
+    quoteStatus === 'ACCEPTED' ||
+    ['driver_assigned', 'pickup_completed', 'in_transit', 'delivered', 'completed'].includes(booking.status);
 
   const formatDate = (dateStr) => {
     if (!dateStr) return '—';
@@ -90,7 +96,7 @@ const BookingHeader = React.memo(function BookingHeader({ booking }) {
         </div>
         <div className="rounded-xl bg-white/10 backdrop-blur-sm p-3">
           <div className="text-amber-200 text-xs font-medium uppercase tracking-wider">Cost</div>
-          {isConfirmed && booking.final_price != null ? (
+          {booking.final_price != null ? (
             <div className="font-semibold mt-1 text-sm md:text-base">
               ₹{Number(booking.final_price).toLocaleString('en-IN')}
             </div>

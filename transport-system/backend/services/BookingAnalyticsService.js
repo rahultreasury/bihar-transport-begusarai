@@ -76,9 +76,5 @@ class BookingAnalyticsService {
   }
 }
 
-module.exports = {
-  BookingAnalyticsService,
-  BookingAnalyticsDomainError,
-  ValidationError
-};
+module.exports = BookingAnalyticsService;
 

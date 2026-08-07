@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { bookingAPI } from '../services/api';
 import { LiveTrackingMap } from '../components/MapComponents';
+import QuoteCard from '../components/tracking/QuoteCard';
 
 function DeliveryTracking() {
   const [searchParams] = useSearchParams();
@@ -71,26 +72,46 @@ function DeliveryTracking() {
   const getStatusStep = (status) => {
     const steps = {
       'pending': 0,
-      'confirmed': 1,
-      'driver_assigned': 2,
-      'pickup_completed': 3,
-      'in_transit': 4,
-      'delivered': 5,
-      'completed': 5
+      'quote_sent': 2,
+      'confirmed': 3,
+      'driver_assigned': 4,
+      'pickup_completed': 4,
+      'in_transit': 5,
+      'delivered': 6,
+      'completed': 6
     };
     return steps[status] || 0;
   };
 
   const statusSteps = [
-    { key: 'pending', label: 'Booking Created', icon: '📋' },
-    { key: 'confirmed', label: 'Confirmed', icon: '✅' },
-    { key: 'driver_assigned', label: 'Driver Assigned', icon: '👨‍💼' },
-    { key: 'pickup_completed', label: 'Pickup Completed', icon: '📦' },
+    { key: 'pending', label: 'Booking Received', icon: '📋' },
+    { key: 'quote_requested', label: 'Finding Best Price', icon: '🔍' },
+    { key: 'quote_sent', label: 'Waiting For Your Approval', icon: '⏳' },
+    { key: 'confirmed', label: 'Booking Confirmed', icon: '✅' },
+    { key: 'driver_assigned', label: 'Pickup', icon: '👨‍💼' },
     { key: 'in_transit', label: 'In Transit', icon: '🚚' },
     { key: 'delivered', label: 'Delivered', icon: '🏁' }
   ];
 
   const currentStep = booking ? getStatusStep(booking.status) : 0;
+
+  const handleAcceptQuote = async () => {
+    try {
+      await bookingAPI.acceptQuote(booking.id);
+      setBooking(prev => prev ? { ...prev, status: 'confirmed' } : prev);
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to accept quote');
+    }
+  };
+
+  const handleRejectQuote = async () => {
+    try {
+      await bookingAPI.rejectQuote(booking.id);
+      setBooking(prev => prev ? { ...prev, status: 'pending' } : prev);
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to reject quote');
+    }
+  };
 
   // Calculate mock locations for demo (in production, use real coordinates)
   const getMockLocation = (city, isPickup = true) => {
@@ -204,6 +225,20 @@ function DeliveryTracking() {
               </div>
             </div>
 
+            {/* Quote Card - Show when quote has been sent */}
+            {booking.quote_status === 'SENT' && (
+              <QuoteCard
+                booking={booking}
+                final_price={booking.final_price}
+                quote_valid_until={booking.quote_valid_until}
+                quote_remarks={booking.quote_remarks}
+                driver_quote={booking.driver_quote}
+                bookingReference={booking.booking_reference}
+                onAccept={handleAcceptQuote}
+                onReject={handleRejectQuote}
+              />
+            )}
+
             {/* Live Tracking Map - Show when in transit */}
             {currentStep >= 2 && (pickupCoords || dropCoords) && (
               <div className="card">
@@ -258,7 +293,7 @@ function DeliveryTracking() {
                 <div className="absolute top-6 left-0 right-0 h-1 bg-gray-200">
                   <div 
                     className="h-full bg-amber-500 transition-all duration-500"
-                    style={{ width: `${(currentStep / 5) * 100}%` }}
+                     style={{ width: `${(currentStep / 6) * 100}%` }}
                   ></div>
                 </div>
 

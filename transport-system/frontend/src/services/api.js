@@ -62,7 +62,11 @@ export const bookingAPI = {
   trackBooking: (reference) => api.get(`/bookings/track/${reference}`),
   // Quote-based booking workflow — customer responses
   acceptQuote: (id) => api.post(`/bookings/${id}/quote/accept`),
-  rejectQuote: (id) => api.post(`/bookings/${id}/quote/reject`)
+  rejectQuote: (id) => api.post(`/bookings/${id}/quote/reject`),
+  // Public quote responses keyed by booking reference — no authentication
+  // required so guest customers (public tracking page) can accept/reject.
+  acceptQuoteByReference: (reference) => api.post(`/bookings/track/${reference}/quote/accept`),
+  rejectQuoteByReference: (reference) => api.post(`/bookings/track/${reference}/quote/reject`)
 };
 
 // Driver APIs
@@ -86,12 +90,22 @@ export const adminAPI = {
   getBooking: (id) => api.get(`/admin/bookings/${id}`),
   updateBooking: (id, data) => api.put(`/admin/bookings/${id}`, data),
   deleteBooking: (id) => api.delete(`/admin/bookings/${id}`),
-  updateBookingStatus: (id, status) => api.patch(`/admin/bookings/${id}/status`, { status }),
+updateBookingStatus: (id, status) => api.patch(`/admin/bookings/${id}/status`, { status }),
+  bulkConfirm: (bookingIds) => api.post('/admin/bookings/bulk-confirm', { bookingIds }),
+  bulkCancel: (bookingIds) => api.post('/admin/bookings/bulk-cancel', { bookingIds }),
+  bulkUpdateStatus: (bookingIds, status) => api.post('/admin/bookings/bulk-status', { bookingIds, status }),
   verifyDriver: (id) => api.put(`/admin/drivers/${id}/verify`),
   verifyVehicle: (id) => api.put(`/admin/vehicles/${id}/verify`),
 toggleUserStatus: (id, isActive) => api.put(`/admin/users/${id}/status`, { is_active: isActive }),
   assignDriver: (bookingId, driverId) => api.post(`/admin/bookings/${bookingId}/assign-driver`, { driver_id: driverId }),
-  getAvailableDrivers: () => api.get('/admin/drivers', { params: { status: 'available', limit: 100 } }),
+getAvailableDrivers: () => api.get('/admin/drivers', { params: { status: 'available', limit: 100 } }),
+  // Returns available drivers WITH their associated vehicles in one call
+  // (used by the Booking Details "Send Quote" driver/vehicle selection).
+getDriversWithVehicles: (params) => api.get('/admin/drivers/drivers-with-vehicles', { params }),
+  // Scalable driver lookup for the Booking Assignment picker (10k+ drivers).
+  // Server-side pagination + search + filters + trip stats in ONE call.
+  // Each driver carries its assigned vehicle (one-driver-one-vehicle).
+  getAssignableDrivers: (params) => api.get('/admin/booking-drivers', { params }),
   assignVehicle: (bookingId, vehicleId) => api.post(`/admin/bookings/${bookingId}/assign-vehicle`, { vehicle_id: vehicleId }),
   // Quote workflow — admin reserves driver + vehicle and sends final quote
   sendQuote: (bookingId, data) => api.post(`/admin/bookings/${bookingId}/send-quote`, data),
@@ -100,8 +114,9 @@ toggleUserStatus: (id, isActive) => api.put(`/admin/users/${id}/status`, { is_ac
   getDriverStats: () => api.get('/admin/drivers/stats'),
   getDriver: (id) => api.get(`/admin/drivers/${id}`),
   createDriver: (data) => api.post('/admin/drivers', data),
-  updateDriver: (id, data) => api.put(`/admin/drivers/${id}`, data),
+updateDriver: (id, data) => api.put(`/admin/drivers/${id}`, data),
   deleteDriver: (id) => api.delete(`/admin/drivers/${id}`),
+  bulkDeleteDrivers: (ids) => api.post('/admin/drivers/bulk-delete', { ids }),
   toggleDriverStatus: (id, status) => api.patch(`/admin/drivers/${id}/status`, { status }),
   getDriverTrips: (id, params) => api.get(`/admin/drivers/${id}/trips`, { params }),
   getDriverTimeline: (id) => api.get(`/admin/drivers/${id}/timeline`),

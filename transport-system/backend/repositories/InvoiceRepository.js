@@ -30,7 +30,7 @@ class InvoiceRepository {
         data: {
           booking_id: data.booking_id,
           invoice_number: data.invoice_number,
-          amount: Number(data.amount),
+          final_price: Number(data.amount),
           status: data.status || 'PENDING',
           tax_amount: data.tax_amount != null ? Number(data.tax_amount) : null,
           total_amount: data.total_amount != null ? Number(data.total_amount) : null,

@@ -1,4 +1,10 @@
-import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import React, {
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  useRef
+} from 'react';
 import { adminAPI } from '../services/api';
 import AdminShell from '../components/admin-premium/layout/AdminShell';
 import { LoadingSkeleton } from '../components/admin-premium/ui/LoadingSkeleton';
@@ -173,19 +179,25 @@ function AdminBookings() {
     openDrawer(bookingId);
   }, [openDrawer]);
 
-  // Bulk actions
+// Bulk actions
   const handleBulkStatusUpdate = useCallback(async (newStatus) => {
     if (selection.selectedCount === 0) return;
+    const ids = selection.selectedBookings.map((b) => b.booking_id);
     try {
-      for (const booking of selection.selectedBookings) {
-        await adminAPI.updateBookingStatus(booking.booking_id, newStatus);
+      if (newStatus === 'confirmed') {
+        await adminAPI.bulkConfirm(ids);
+      } else if (newStatus === 'cancelled') {
+        await adminAPI.bulkCancel(ids);
+      } else {
+        await adminAPI.bulkUpdateStatus(ids, newStatus);
       }
       selection.clearSelection();
       fetchBookings(pagination.page);
     } catch (err) {
       console.error('Bulk status update error:', err);
+      setError(err?.response?.data?.message || err.message || 'Bulk update failed. Please try again.');
     }
-  }, [selection, fetchBookings, pagination.page]);
+  }, [selection, fetchBookings, pagination.page, setError]);
 
   // Export CSV
   const handleExportCSV = useCallback(() => {
@@ -286,7 +298,7 @@ function AdminBookings() {
       key: 'status',
       header: 'Status',
       sortable: true,
-      render: (r) => <StatusBadge status={r.status} size="sm" />
+render: (r) => <StatusBadge status={r.status} quoteStatus={r.quote_status} size="sm" />
     },
     {
       key: 'final_price',
@@ -362,7 +374,7 @@ function AdminBookings() {
         >
           {booking.booking_reference}
         </button>
-        <StatusBadge status={booking.status} size="sm" />
+<StatusBadge status={booking.status} quoteStatus={booking.quote_status} size="sm" />
       </div>
       <div className="text-sm">
         <span className="text-muted">Customer: </span>
@@ -472,19 +484,17 @@ function AdminBookings() {
               <span className="text-amber-600 dark:text-amber-400">{selection.selectedCount}</span> selected
             </div>
             <div className="flex items-center gap-2">
-              <button
+<button
                 onClick={() => handleBulkStatusUpdate('confirmed')}
                 className="px-3 py-1.5 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 text-xs font-medium hover:bg-blue-500/20 transition"
-                disabled // No backend bulk endpoint
-                title="Not available — no bulk API endpoint"
+                title={`Confirm ${selection.selectedCount} booking(s)`}
               >
                 Confirm
               </button>
               <button
                 onClick={() => handleBulkStatusUpdate('cancelled')}
                 className="px-3 py-1.5 rounded-lg bg-red-500/10 text-red-600 dark:text-red-400 text-xs font-medium hover:bg-red-500/20 transition"
-                disabled
-                title="Not available — no bulk API endpoint"
+                title={`Cancel ${selection.selectedCount} booking(s)`}
               >
                 Cancel
               </button>

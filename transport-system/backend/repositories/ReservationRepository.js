@@ -1,6 +1,6 @@
 /**
  * ReservationRepository
- * Database-only repository for reservations (driver/vehicle held before
+ * Database-only repository for reservations (driver held before
  * customer approval of a quote). Single source of truth for reserved resources.
  *
  * Uses Prisma Client for all database operations.
@@ -15,7 +15,6 @@ class ReservationRepository {
    * @param {Object} data
    * @param {number} data.booking_id
    * @param {number=} data.driver_id
-   * @param {number=} data.vehicle_id
    * @param {string=} data.status
    * @param {Date=} data.expires_at
    * @param {number=} data.reserved_by
@@ -65,6 +64,8 @@ class ReservationRepository {
               rating: true,
               total_deliveries: true,
               profile_image: true,
+              vehicle_number: true,
+              vehicle_type: true,
               user: {
                 select: { first_name: true, last_name: true, phone: true },
               },
@@ -89,7 +90,7 @@ class ReservationRepository {
   /**
    * Update a reservation by id.
    * @param {number} reservationId
-   * @param {Object} data - partial fields to update (status, driver_id, vehicle_id, expires_at, released_at, converted_at)
+   * @param {Object} data - partial fields to update (status, driver_id, expires_at, released_at, converted_at)
    * @param {object=} tx - Prisma transaction client
    * @returns {Promise<{changes:number}>}
    */
@@ -97,7 +98,6 @@ class ReservationRepository {
     const client = tx || prisma;
     const allowedFields = [
       'driver_id',
-      'vehicle_id',
       'status',
       'expires_at',
       'released_at',
@@ -185,4 +185,3 @@ class ReservationRepository {
 }
 
 module.exports = ReservationRepository;
-

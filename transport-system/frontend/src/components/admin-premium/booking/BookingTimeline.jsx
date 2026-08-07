@@ -97,8 +97,18 @@ function BookingTimeline({ booking }) {
   const steps = useMemo(() => {
     if (!booking) return [];
 
-    return TIMELINE_STEPS.map((step, idx) => {
-      const statusValue = booking.status;
+return TIMELINE_STEPS.map((step, idx) => {
+      // SINGLE SOURCE OF TRUTH: quote_status === ACCEPTED means the booking is
+      // confirmed. If the booking.status string hasn't yet advanced past
+      // 'pending' but the quote was accepted, treat it as 'confirmed'.
+      const quote = (booking.quote_status || 'PENDING').toUpperCase();
+      let statusValue = booking.status;
+      if (
+        quote === 'ACCEPTED' &&
+        !['confirmed', 'driver_assigned', 'pickup_completed', 'in_transit', 'delivered', 'completed', 'cancelled'].includes(statusValue)
+      ) {
+        statusValue = 'confirmed';
+      }
       const statusOrder = TIMELINE_STEPS.findIndex(s => s.key === statusValue);
 
       // Map status to the appropriate timestamp field

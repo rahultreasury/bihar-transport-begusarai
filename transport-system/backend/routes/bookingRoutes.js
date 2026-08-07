@@ -46,7 +46,8 @@ const estimateDistance = (fromCity, toCity) => {
 const { protect } = require('../middleware/auth');
 const { body, validationResult } = require('express-validator');
 
-const { BookingService, ValidationError, NotFoundError } = require('../services/BookingService');
+const BookingService = require('../services/BookingService');
+const { ValidationError, NotFoundError } = require('../utils/AppError');
 
 const bookingService = new BookingService();
 
@@ -195,7 +196,7 @@ router.get('/user/:id', protect, async (req, res) => {
       });
     }
 
-    const bookings = await prisma.booking.findMany({
+const bookings = await prisma.booking.findMany({
       where: { user_id: userId },
       include: {
         user: {
@@ -219,13 +220,6 @@ router.get('/user/:id', protect, async (req, res) => {
             },
           },
         },
-        vehicle: {
-          select: {
-            vehicle_number: true,
-            vehicle_type: true,
-            vehicle_name: true,
-          },
-        },
       },
       orderBy: { created_at: 'desc' },
     });
@@ -236,7 +230,6 @@ router.get('/user/:id', protect, async (req, res) => {
       booking_number: b.booking_number,
       user_id: b.user_id,
       driver_id: b.driver_id,
-      vehicle_id: b.vehicle_id,
       pickup_location: b.pickup_location,
       pickup_address: b.pickup_address,
       pickup_city: b.pickup_city,
@@ -272,9 +265,9 @@ router.get('/user/:id', protect, async (req, res) => {
       driver_first_name: b.driver?.user?.first_name ?? null,
       driver_last_name: b.driver?.user?.last_name ?? null,
       driver_phone: b.driver?.user?.phone ?? null,
-      vehicle_number: b.vehicle?.vehicle_number ?? null,
-      vehicle_type: b.vehicle?.vehicle_type ?? null,
-      vehicle_name: b.vehicle?.vehicle_name ?? null,
+      vehicle_number: b.truck_number_snapshot ?? null,
+      vehicle_type: null,
+      vehicle_name: null,
     }));
 
     res.json({
@@ -296,16 +289,9 @@ router.get('/user/:id', protect, async (req, res) => {
 // @access  Private
 router.get('/my-bookings', protect, async (req, res) => {
   try {
-    const bookings = await prisma.booking.findMany({
+const bookings = await prisma.booking.findMany({
       where: { user_id: req.user.user_id },
       include: {
-        vehicle: {
-          select: {
-            vehicle_number: true,
-            vehicle_type: true,
-            vehicle_name: true,
-          },
-        },
         delivery: {
           select: {
             current_status: true,
@@ -322,7 +308,6 @@ router.get('/my-bookings', protect, async (req, res) => {
       booking_number: b.booking_number,
       user_id: b.user_id,
       driver_id: b.driver_id,
-      vehicle_id: b.vehicle_id,
       pickup_location: b.pickup_location,
       pickup_address: b.pickup_address,
       pickup_city: b.pickup_city,
@@ -352,9 +337,9 @@ router.get('/my-bookings', protect, async (req, res) => {
       driver_assigned_at: b.driver_assigned_at,
       pickup_completed_at: b.pickup_completed_at,
       delivered_at: b.delivered_at,
-      vehicle_number: b.vehicle?.vehicle_number ?? null,
-      vehicle_type: b.vehicle?.vehicle_type ?? null,
-      vehicle_name: b.vehicle?.vehicle_name ?? null,
+      vehicle_number: b.truck_number_snapshot ?? null,
+      vehicle_type: null,
+      vehicle_name: null,
       current_status: b.delivery?.current_status ?? null,
       status_description: b.delivery?.status_description ?? null,
     }));
@@ -406,18 +391,7 @@ router.get('/:id', protect, async (req, res) => {
             },
           },
         },
-        vehicle: {
-          select: {
-            vehicle_number: true,
-            vehicle_type: true,
-            vehicle_name: true,
-            vehicle_make: true,
-            vehicle_model: true,
-            capacity_kg: true,
-            per_km_rate: true,
-          },
-        },
-        delivery: {
+delivery: {
           select: {
             current_status: true,
             status_description: true,
@@ -453,10 +427,9 @@ router.get('/:id', protect, async (req, res) => {
     const flatBooking = {
       booking_id: booking.booking_id,
       booking_reference: booking.booking_reference,
-      booking_number: booking.booking_number,
+booking_number: booking.booking_number,
       user_id: booking.user_id,
       driver_id: booking.driver_id,
-      vehicle_id: booking.vehicle_id,
       pickup_location: booking.pickup_location,
       pickup_address: booking.pickup_address,
       pickup_city: booking.pickup_city,
@@ -495,15 +468,15 @@ router.get('/:id', protect, async (req, res) => {
       rating: booking.driver?.rating || null,
       total_deliveries: booking.driver?.total_deliveries || null,
       driver_first_name: booking.driver?.user?.first_name || null,
-      driver_last_name: booking.driver?.user?.last_name || null,
+driver_last_name: booking.driver?.user?.last_name || null,
       driver_phone: booking.driver?.user?.phone || null,
-      vehicle_number: booking.vehicle?.vehicle_number || null,
-      vehicle_type: booking.vehicle?.vehicle_type || null,
-      vehicle_name: booking.vehicle?.vehicle_name || null,
-      vehicle_make: booking.vehicle?.vehicle_make || null,
-      vehicle_model: booking.vehicle?.vehicle_model || null,
-      capacity_kg: booking.vehicle?.capacity_kg || null,
-      per_km_rate: booking.vehicle?.per_km_rate || null,
+      vehicle_number: booking.truck_number_snapshot || null,
+      vehicle_type: null,
+      vehicle_name: null,
+      vehicle_make: null,
+      vehicle_model: null,
+      capacity_kg: null,
+      per_km_rate: null,
       current_status: booking.delivery?.current_status || null,
       status_description: booking.delivery?.status_description || null,
       estimated_pickup_time: booking.delivery?.estimated_pickup_time || null,
@@ -585,19 +558,20 @@ router.put('/:id/cancel', protect, async (req, res) => {
         });
       }
 
-      // If driver was assigned, make driver available again
+// If driver was assigned, make driver available again.
       if (booking.driver_id) {
         await tx.driver.update({
           where: { driver_id: booking.driver_id },
           data: { is_available: true },
         });
+      }
 
-        if (booking.vehicle_id) {
-          await tx.transportVehicle.update({
-            where: { vehicle_id: booking.vehicle_id },
-            data: { is_available: true, current_status: 'available' },
-          });
-        }
+      // If vehicle was assigned, make vehicle available again.
+      if (booking.vehicle_id) {
+        await tx.transportVehicle.update({
+          where: { vehicle_id: booking.vehicle_id },
+          data: { is_available: true, current_status: 'available' },
+        });
       }
     });
 
@@ -687,11 +661,71 @@ router.get('/track/:reference', async (req, res) => {
 
     res.json({
       success: true,
+      message: 'Booking retrieved successfully',
       data,
+      errors: null,
     });
   } catch (err) {
     console.error('Track booking error:', err);
     return mapDomainErrorToHttp(err, res, { message: 'Server error tracking booking' });
+  }
+});
+
+// @route   POST /api/bookings/track/:reference/quote/accept
+// @desc    Public quote acceptance by booking reference (guest customers).
+//          No authentication required — the booking_reference is the secret.
+//          The existing protected numeric-id endpoint remains for logged-in users.
+// @access  Public
+router.post('/track/:reference/quote/accept', async (req, res) => {
+  try {
+    const reference = req.params.reference;
+    if (!reference || typeof reference !== 'string' || reference.trim() === '') {
+      return res.status(400).json({ success: false, message: 'booking_reference is required', data: null, errors: null });
+    }
+
+    const booking = await prisma.booking.findUnique({
+      where: { booking_reference: reference },
+      select: { booking_id: true },
+    });
+
+    if (!booking) {
+      return res.status(404).json({ success: false, message: 'Booking not found', data: null, errors: null });
+    }
+
+    const result = await bookingService.respondToQuote(booking.booking_id, 'ACCEPT');
+    return res.json({ success: true, message: 'Quote accepted successfully', data: result, errors: null });
+  } catch (err) {
+    console.error('Public accept quote error:', err);
+    return mapDomainErrorToHttp(err, res);
+  }
+});
+
+// @route   POST /api/bookings/track/:reference/quote/reject
+// @desc    Public quote rejection by booking reference (guest customers).
+//          No authentication required — the booking_reference is the secret.
+//          The existing protected numeric-id endpoint remains for logged-in users.
+// @access  Public
+router.post('/track/:reference/quote/reject', async (req, res) => {
+  try {
+    const reference = req.params.reference;
+    if (!reference || typeof reference !== 'string' || reference.trim() === '') {
+      return res.status(400).json({ success: false, message: 'booking_reference is required', data: null, errors: null });
+    }
+
+    const booking = await prisma.booking.findUnique({
+      where: { booking_reference: reference },
+      select: { booking_id: true },
+    });
+
+    if (!booking) {
+      return res.status(404).json({ success: false, message: 'Booking not found', data: null, errors: null });
+    }
+
+    const result = await bookingService.respondToQuote(booking.booking_id, 'REJECT');
+    return res.json({ success: true, message: 'Quote rejected', data: result, errors: null });
+  } catch (err) {
+    console.error('Public reject quote error:', err);
+    return mapDomainErrorToHttp(err, res);
   }
 });
 

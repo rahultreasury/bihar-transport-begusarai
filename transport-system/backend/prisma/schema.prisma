@@ -24,20 +24,6 @@ enum UserRole {
   admin
 }
 
-enum VehicleType {
-  truck
-  mini_truck
-  pickup
-  tempo
-  lorry
-}
-
-enum VehicleStatus {
-  available
-  on_trip
-  maintenance
-}
-
 enum BookingStatus {
   pending
   confirmed
@@ -187,6 +173,16 @@ model Driver {
   driver_name       String
   mobile            String
   alternate_mobile  String?
+  // ------------------------------------------------------------------
+  // VEHICLE FIELDS (TEMPORARY MVP SOLUTION)
+  // Stored directly on Driver for the current MVP. In a future release
+  // these should move into a dedicated Vehicle entity (vehicle_number
+  // unique, vehicle_type, owner_id, status, insurance/permit/fitness
+  // details) and drivers linked via DriverAssignment. See
+  // TODO_DRIVER_VEHICLE_FIELDS.md for the migration path.
+  // ------------------------------------------------------------------
+  vehicle_type      String?   // e.g. "Mahindra Bolero Pickup", "Tata Ace", "14 ft Truck"
+  vehicle_number    String?   @unique // e.g. "BR09AB1234" (uppercase, trimmed)
   address           String?
   city              String?
   state             String?   @default("Bihar")
@@ -231,6 +227,8 @@ bookingAssignments   BookingAssignment[] @relation("assigned_driver")
   @@index([alternate_mobile], name: "idx_drivers_alt_mobile")
   @@index([city], name: "idx_drivers_city")
   @@index([state], name: "idx_drivers_state")
+  @@index([vehicle_type], name: "idx_drivers_vehicle_type")
+  @@index([vehicle_number], name: "idx_drivers_vehicle_number")
   @@map("drivers")
 }
 
@@ -310,12 +308,12 @@ model TransportVehicle {
   created_at           DateTime?     @default(now())
   updated_at           DateTime?     @default(now())
 
-  // Relations
+// Relations
   driver              Driver?         @relation(fields: [driver_id], references: [driver_id], onDelete: SetNull)
   ownerPartner        Partner?        @relation("partner_vehicles", fields: [partner_id], references: [partner_id], onDelete: SetNull)
-bookings            Booking[]
+  bookings            Booking[]
   deliveries          Delivery[]
-  bookingAssignments  BookingAssignment[] @relation("assigned_vehicle")
+  bookingAssignments  BookingAssignment[]
   reservations        Reservation[]
 
   @@index([driver_id], name: "idx_vehicles_driver")
@@ -333,7 +331,7 @@ model Booking {
   booking_number        String?
   user_id               Int
   driver_id             Int?
-  vehicle_id            Int?
+  vehicle_id            Int?                  // Assigned transport vehicle (nullable)
   partner_id            Int?                  // Assigned transport partner
 
   // Snapshot data (immutable - preserves historical accuracy)
@@ -373,10 +371,14 @@ model Booking {
   estimated_distance_km Float?
   estimated_price       Float?
   final_price           Float?
-  status                String?   @default("pending")
+status                String?   @default("pending")
   // Quote-based brokerage workflow fields.
   // quote_status: PENDING → SENT → ACCEPTED | REJECTED
   quote_status          String?   @default("PENDING")
+  // Who confirmed this booking: CUSTOMER (online accept) or ADMIN (offline /
+  // phone/WhatsApp manual confirmation). Single source: quote_status is the
+  // driver of confirmation; this field records the confirmation channel.
+  confirmation_source    String?  // "CUSTOMER" | "ADMIN"
   quote_remarks         String?
   quote_sent_at         DateTime?
   quote_accepted_at     DateTime?
@@ -404,6 +406,7 @@ delivery           Delivery?
 
   @@index([user_id], name: "idx_bookings_user")
   @@index([driver_id], name: "idx_bookings_driver")
+  @@index([vehicle_id], name: "idx_bookings_vehicle")
   @@index([partner_id], name: "idx_bookings_partner")
   @@index([booking_reference], name: "idx_bookings_reference")
   @@index([status], name: "idx_bookings_status")
@@ -443,6 +446,7 @@ model Delivery {
 
   @@index([booking_id], name: "idx_deliveries_booking")
   @@index([driver_id], name: "idx_deliveries_driver")
+  @@index([vehicle_id], name: "idx_deliveries_vehicle")
   @@index([current_status], name: "idx_deliveries_status")
   @@map("deliveries")
 }
@@ -496,12 +500,12 @@ model BookingAssignment {
   // Relations
   booking       Booking?          @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
   assignedDriver Driver?          @relation("assigned_driver", fields: [assigned_driver_id], references: [driver_id], onDelete: SetNull)
-  assignedVehicle TransportVehicle? @relation("assigned_vehicle", fields: [assigned_vehicle_id], references: [vehicle_id], onDelete: SetNull)
+  assignedVehicle TransportVehicle? @relation(fields: [assigned_vehicle_id], references: [vehicle_id], onDelete: SetNull)
   assignedByAdmin Admin?          @relation("assigned_by_admin", fields: [assigned_by_admin_id], references: [admin_id], onDelete: SetNull)
 
   @@index([booking_id], name: "idx_booking_assignments_booking_id")
   @@index([assigned_driver_id], name: "idx_booking_assignments_driver_id")
-@@index([assigned_vehicle_id], name: "idx_booking_assignments_vehicle_id")
+  @@index([assigned_vehicle_id], name: "idx_booking_assignments_vehicle_id")
   @@index([created_at], name: "idx_booking_assignments_created_at")
   @@map("booking_assignments")
 }

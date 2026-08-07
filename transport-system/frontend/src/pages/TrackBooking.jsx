@@ -54,16 +54,19 @@ function TrackBooking() {
         setBooking(response.data.data);
       } else {
         setNotFound(true);
+        setBooking(null);
       }
     } catch (err) {
       const status = err.response?.status;
       if (status === 404) {
         setNotFound(true);
+        setBooking(null);
       } else {
         setError(
           err.response?.data?.message ||
           'Unable to fetch booking details. Please try again later.'
         );
+        setBooking(null);
       }
     } finally {
       setLoading(false);
@@ -107,22 +110,24 @@ function TrackBooking() {
 
   /**
    * Accept the final quote → booking becomes confirmed.
-   * After success, re-fetch the booking so the UI transitions to the
-   * "Booking Confirmed" + driver/vehicle/ETA state immediately.
+   * Uses the PUBLIC reference-based endpoint so guest customers (no JWT)
+   * can accept. After success, re-fetch the booking so the UI transitions to
+   * the "Booking Confirmed" + driver/vehicle/ETA state immediately.
    */
   const handleAcceptQuote = async () => {
     if (!booking) return;
-    await bookingAPI.acceptQuote(booking.booking_id);
+    await bookingAPI.acceptQuoteByReference(booking.booking_reference);
     await fetchBooking(booking.booking_reference);
   };
 
   /**
    * Reject the final quote → releases reservations, booking stays pending.
-   * After success, re-fetch so the UI reflects the REJECTED state.
+   * Uses the PUBLIC reference-based endpoint so guest customers (no JWT)
+   * can reject. After success, re-fetch so the UI reflects the REJECTED state.
    */
   const handleRejectQuote = async () => {
     if (!booking) return;
-    await bookingAPI.rejectQuote(booking.booking_id);
+    await bookingAPI.rejectQuoteByReference(booking.booking_reference);
     await fetchBooking(booking.booking_reference);
   };
 
@@ -135,11 +140,16 @@ function TrackBooking() {
     }
   };
 
-  // Derived booking state for quote-aware rendering
+// Derived booking state for quote-aware rendering.
+  // SINGLE SOURCE OF TRUTH: quote_status drives every decision until the
+  // customer responds. quote_status === 'SENT' → show the Quote Approval Card.
+  // quote_status === 'ACCEPTED' OR a downstream status (CONFIRMED,
+  // driver_assigned, pickup, in_transit, delivered) → show Confirmed UI.
   const quoteStatus = (booking?.quote_status || 'PENDING').toUpperCase();
   const isConfirmed =
-    booking?.status === 'confirmed' ||
     quoteStatus === 'ACCEPTED' ||
+    booking?.status === 'CONFIRMED' ||
+    booking?.status === 'confirmed' ||
     ['driver_assigned', 'pickup_completed', 'in_transit', 'delivered', 'completed'].includes(booking?.status);
   const isQuoteSent = quoteStatus === 'SENT' && !isConfirmed;
 
@@ -307,7 +317,23 @@ function TrackBooking() {
   // RENDER: BOOKING DASHBOARD
   // ==============================
   if (!booking) {
-    return null;
+    // Safety: if loading finished but booking is null, show error state
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white">
+        <div className="max-w-lg mx-auto px-4 sm:px-6 py-16 md:py-24">
+          <div className="rounded-2xl border-2 border-red-200 bg-red-50 p-6 md:p-8 text-center">
+            <h2 className="text-lg font-bold text-gray-900 mb-2">Unable to load booking</h2>
+            <p className="text-sm text-gray-600 mb-6">The booking data could not be loaded. Please try again.</p>
+            <button
+              onClick={handleRetry}
+              className="inline-flex items-center gap-2 px-5 py-2.5 bg-amber-500 text-white rounded-xl font-semibold hover:bg-amber-600 transition-colors shadow-sm cursor-pointer"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (

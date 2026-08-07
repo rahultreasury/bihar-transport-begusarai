@@ -8,9 +8,68 @@
 const DriverRepository = require('../repositories/DriverRepository');
 const { prisma } = require('../config/prisma');
 
+// ==================================================================
+// VEHICLE FIELD HELPERS (TEMPORARY MVP SOLUTION)
+// ------------------------------------------------------------------
+// Vehicle fields currently live directly on the Driver model for the
+// MVP. All vehicle-specific normalization / validation / uniqueness
+// logic is isolated here so it can be lifted into a dedicated Vehicle
+// entity + DriverAssignment relation in a future release without
+// touching the rest of the driver module.
+// ==================================================================
+
+/**
+ * Normalize an Indian vehicle number for storage.
+ * - Trims surrounding whitespace
+ * - Collapses internal whitespace
+ * - Converts to uppercase
+ * e.g. "  br09  ab1234 " → "BR09AB1234"
+ */
+function normalizeVehicleNumber(value) {
+  if (value == null) return null;
+  const normalized = String(value).trim().replace(/\s+/g, ' ').toUpperCase();
+  return normalized || null;
+}
+
+/**
+ * Validate an Indian vehicle registration number format.
+ * Supports the standard format: <2 letter state><2 digit rto><optional
+ * 1-letter series><4 digits>, e.g. BR09AB1234, BR09A1234, BR01A1234.
+ * Returns true when valid.
+ */
+function isValidIndianVehicleNumber(value) {
+  if (!value) return false;
+  const normalized = String(value).trim().toUpperCase().replace(/\s+/g, '');
+  // Examples: BR09AB1234, BR09A1234, DL01C1234, MH12AB1234
+  return /^[A-Z]{2}\d{2}[A-Z]{1,2}\d{4}$/.test(normalized);
+}
+
 class DriverManagementService {
   constructor() {
     this.repo = new DriverRepository();
+  }
+
+  /**
+   * Check that a vehicle number is not already registered to another driver.
+   * Throws a VEHICLE_ALREADY_EXISTS error (maps to HTTP 409) if found.
+   * `excludeDriverId` is used on update so a driver can keep their own vehicle.
+   */
+  async assertVehicleNumberUnique(vehicleNumber, excludeDriverId = null) {
+    const normalized = normalizeVehicleNumber(vehicleNumber);
+    if (!normalized) return;
+
+    const existing = await this.repo.findByVehicleNumber(normalized);
+    if (existing && existing.driver_id !== excludeDriverId) {
+      const err = new Error('Vehicle number already registered.');
+      err.code = 'VEHICLE_ALREADY_EXISTS';
+      err.data = {
+        vehicle_number: normalized,
+        driver_id: existing.driver_id,
+        driver_name: existing.driver_name,
+        driver_code: existing.driver_code,
+      };
+      throw err;
+    }
   }
 
   /**
@@ -23,6 +82,8 @@ async registerDriver(data) {
       driver_name,
       mobile,
       alternate_mobile,
+      vehicle_type,
+      vehicle_number,
       city,
       state,
       address,
@@ -42,6 +103,12 @@ async registerDriver(data) {
         mobile: existingDriver.mobile,
       };
       throw err;
+    }
+
+    // Check vehicle number uniqueness (if provided)
+    const normalizedVehicleNumber = normalizeVehicleNumber(vehicle_number);
+    if (normalizedVehicleNumber) {
+      await this.assertVehicleNumberUnique(normalizedVehicleNumber);
     }
 
     // Check if mobile already has a user
@@ -73,6 +140,8 @@ const driver = await this.repo.create({
       driver_name,
       mobile,
       alternate_mobile: alternate_mobile || null,
+      vehicle_type: vehicle_type || null,
+      vehicle_number: normalizedVehicleNumber,
       city: city || null,
       state: state || 'Bihar',
       address: address || null,
@@ -101,11 +170,31 @@ const driver = await this.repo.create({
     return driver;
   }
 
-  /**
+/**
    * List drivers with filters.
    */
   async listDrivers(filters = {}) {
     return await this.repo.findAll(filters);
+  }
+
+/**
+   * List drivers with their vehicles for the booking assignment UX.
+   * Single endpoint — returns driver + all their vehicles (with availability)
+   * so the frontend never makes a second API call. Supports pagination,
+   * search, and an availability-only filter.
+   */
+  async listDriversWithVehicles(filters = {}) {
+    return await this.repo.findAllWithVehicles(filters);
+  }
+
+  /**
+   * Scalable driver lookup for the Booking Assignment picker (10,000+ drivers).
+   * Server-side pagination + search + filters + per-driver trip stats. Only a
+   * bounded page is loaded — never the full table. Each driver carries its
+   * assigned vehicle so the frontend never makes a second API call.
+   */
+  async listAssignableDrivers(filters = {}) {
+    return await this.repo.findAssignable(filters);
   }
 
   /**
@@ -116,6 +205,7 @@ const driver = await this.repo.create({
       'driver_name', 'mobile', 'alternate_mobile', 'city',
       'state', 'address',
       'status', 'profile_image',
+      'vehicle_type', 'vehicle_number',
     ];
 
     const updateData = {};
@@ -127,6 +217,15 @@ const driver = await this.repo.create({
 
     if (Object.keys(updateData).length === 0) {
       throw new Error('No valid fields provided for update');
+    }
+
+    // Normalize + validate vehicle number uniqueness when it changes
+    if (data.vehicle_number !== undefined) {
+      const normalized = normalizeVehicleNumber(data.vehicle_number);
+      updateData.vehicle_number = normalized;
+      if (normalized) {
+        await this.assertVehicleNumberUnique(normalized, driverId);
+      }
     }
 
     // If status is changing, also update is_available
@@ -148,32 +247,72 @@ const driver = await this.repo.create({
     return driver;
   }
 
-  /**
-   * Delete a driver (soft delete).
+/**
+   * Delete a driver (soft delete) inside a single DB transaction so the
+   * status update and timeline event are atomic — no partial state, no
+   * foreign-key failures, and only one round-trip to the database.
    */
   async deleteDriver(driverId) {
     const driver = await this.repo.findById(driverId);
     if (!driver) throw new Error('Driver not found');
 
-    const updated = await this.repo.softDelete(driverId);
-
-    await this.repo.createTimelineEvent({
-      driver_id: driverId,
-      event_type: 'status_changed',
-      description: `Driver ${driver.driver_name} marked as inactive`,
+    const updated = await prisma.$transaction(async (tx) => {
+      await tx.driver.update({
+        where: { driver_id: driverId },
+        data: { status: 'inactive', is_available: false },
+      });
+      await tx.driverTimeline.create({
+        data: {
+          driver_id: driverId,
+          event_type: 'status_changed',
+          description: `Driver ${driver.driver_name} marked as inactive`,
+        },
+      });
+      return { driver_id: driverId, status: 'inactive' };
     });
 
     return updated;
   }
 
   /**
+   * Bulk soft-delete multiple drivers in ONE database transaction.
+   * The frontend sends a single request for N drivers — this eliminates the
+   * N-request loop that previously caused duplicate deletes and HTTP 429.
+   */
+  async bulkDeleteDrivers(driverIds) {
+    const ids = Array.isArray(driverIds) ? driverIds.map(Number).filter(Number.isFinite) : [];
+    if (ids.length === 0) throw new Error('No valid driver IDs provided');
+
+    const result = await prisma.$transaction(async (tx) => {
+      const { count } = await tx.driver.updateMany({
+        where: { driver_id: { in: ids } },
+        data: { status: 'inactive', is_available: false },
+      });
+      // Record a single timeline event per deleted driver (atomic).
+      const names = await tx.driver.findMany({
+        where: { driver_id: { in: ids } },
+        select: { driver_id: true, driver_name: true },
+      });
+      for (const d of names) {
+        await tx.driverTimeline.create({
+          data: {
+            driver_id: d.driver_id,
+            event_type: 'status_changed',
+            description: `Driver ${d.driver_name} marked as inactive`,
+          },
+        });
+      }
+      return { count };
+    });
+
+    return result;
+  }
+
+/**
    * Toggle driver status.
    */
   async toggleStatus(driverId) {
-    const driver = await prisma.driver.findUnique({
-      where: { driver_id: driverId },
-      select: { status: true },
-    });
+    const driver = await this.repo.findStatus(driverId);
 
     if (!driver) throw new Error('Driver not found');
 
@@ -235,20 +374,6 @@ const driver = await this.repo.create({
    */
   async getDriverTransactions(driverId, filters = {}) {
     return await this.repo.getTransactions(driverId, filters);
-  }
-
-  /**
-   * Assign a vehicle to a driver.
-   */
-  async assignVehicle(driverId, vehicleId) {
-    return await this.repo.assignVehicle(driverId, vehicleId);
-  }
-
-  /**
-   * Get available vehicles for assignment.
-   */
-  async getAvailableVehicles() {
-    return await this.repo.getAvailableVehicles();
   }
 
   /**
