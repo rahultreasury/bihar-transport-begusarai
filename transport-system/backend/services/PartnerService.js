@@ -123,10 +123,86 @@ class PartnerService {
     return await this.repo.update(partnerId, updateData);
   }
 
-  async deletePartner(partnerId) {
+async deletePartner(partnerId) {
     const partner = await this.repo.findById(partnerId);
     if (!partner) throw new Error('Partner not found');
     return await this.repo.softDelete(partnerId);
+  }
+
+  /**
+   * Permanently delete a Transport Owner (Partner) — but only when safe.
+   *
+   * Business rule:
+   *   - Financial / payment / settlement / ledger / document history is
+   *     PROTECTED. If any exists, we REJECT hard deletion
+   *     (OWNER_HAS_DEPENDENCIES) rather than silently destroying history.
+   *   - If the owner still has drivers or vehicles linked, or active
+   *     bookings → REJECT hard deletion (OWNER_HAS_DEPENDENCIES).
+   *   - If the owner has only historical bookings (SET NULL on delete) and
+   *     NO protected financial/module records, we may hard-delete.
+   *
+   * Only returns success AFTER the DB confirms the row is gone.
+   *
+   * @param {number} partnerId
+   * @param {number|null} adminId  admin performing the delete (for audit)
+   * @returns {Promise<{partner_id:number}>}
+   * @throws {Error} with `.code` = structured rejection code
+   */
+  async permanentlyDeletePartner(partnerId, adminId = null) {
+    const { prisma } = require('../config/prisma');
+    const partner = await this.repo.findById(partnerId);
+    if (!partner) {
+      const err = new Error('Transport owner not found');
+      err.code = 'OWNER_NOT_FOUND';
+      throw err;
+    }
+
+    const deps = await this.repo.findDependencyCounts(partnerId);
+
+    // Protected financial / historical records → reject hard delete.
+    if (deps.hasProtectedFinancialHistory) {
+      const err = new Error(
+        'This transport owner cannot be deleted because financial records (ledger, payments or settlements) are still associated with this account.'
+      );
+      err.code = 'OWNER_HAS_DEPENDENCIES';
+      err.data = {
+        ledgerEntries: deps.ledgerEntries,
+        payments: deps.payments,
+        settlements: deps.settlements,
+      };
+      throw err;
+    }
+
+    // Operational dependencies that must not be destroyed → reject.
+    if (deps.hasOperationalDependency) {
+      const parts = [];
+      if (deps.drivers > 0) parts.push(`${deps.drivers} driver(s)`);
+      if (deps.vehicles > 0) parts.push(`${deps.vehicles} vehicle(s)`);
+      if (deps.activeBookings > 0) parts.push(`${deps.activeBookings} active booking(s)`);
+      const err = new Error(
+        `This transport owner cannot be deleted because ${parts.join(', ')} are still associated with this account.`
+      );
+      err.code = 'OWNER_HAS_DEPENDENCIES';
+      err.data = deps;
+      throw err;
+    }
+
+    // Safe to hard-delete. Use a transaction + verification.
+    const result = await prisma.$transaction(async (tx) => {
+      await this.repo.hardDelete(partnerId, tx);
+      const stillThere = await tx.partner.findUnique({
+        where: { partner_id: partnerId },
+        select: { partner_id: true },
+      });
+      if (stillThere) {
+        const err = new Error('Transport owner could not be fully removed from the database.');
+        err.code = 'OWNER_DELETE_FAILED';
+        throw err;
+      }
+      return { partner_id: partnerId };
+    });
+
+    return result;
   }
 
   async toggleStatus(partnerId, status) {

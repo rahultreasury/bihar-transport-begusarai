@@ -4,8 +4,16 @@ const bcrypt = require('bcryptjs');
 
 const { sendBookingNotification } = require('../services/emailService');
 const { prisma } = require('../config/prisma');
+const BookingService = require('../services/BookingService');
 
 const router = express.Router();
+
+// Canonical booking-creation path. Booking numbers (BTB-YYYY-NNNNN) are
+// generated ONCE by BookingService.createBooking → BookingNumberService, which
+// derives the number from the DB primary key. All booking-creation endpoints
+// share this single service so no two parts of the system can produce
+// different identifiers.
+const bookingService = new BookingService();
 
 
 const requiredString = (fieldLabel) =>
@@ -52,7 +60,8 @@ router.post('/booking', validateMvpBooking, async (req, res) => {
     return res.status(400).json({
       success: false,
       message: 'Validation failed',
-      fields,
+      data: null,
+      errors: fields,
     });
   }
 
@@ -73,7 +82,7 @@ router.post('/booking', validateMvpBooking, async (req, res) => {
     }
 
 
-const mobile = req.body.mobile;
+    const mobile = req.body.mobile;
     const placeholderEmail = `guest_${mobile}@btb.local`;
 
     // Lookup or create guest user (Prisma/PostgreSQL)
@@ -100,58 +109,45 @@ const mobile = req.body.mobile;
       user = { user_id: newUser.user_id };
     }
 
-    const estimated_distance_km = Number(req.body.distance);
+const estimated_distance_km = Number(req.body.distance);
     const estimated_price = Number(req.body.price);
 
-    const { booking_id, booking_reference } = await prisma.$transaction(async (tx) => {
-      const booking = await tx.booking.create({
-        data: {
-          booking_reference: 'TEMP',
-          user_id: user.user_id,
-          pickup_location: req.body.pickup,
-          pickup_address: null,
-          pickup_city: req.body.pickup,
-          pickup_state: 'Bihar',
-          pickup_pincode: null,
-          pickup_date: req.body.pickupDate || null,
-          pickup_time: req.body.pickupTime || '00:00:00',
-          drop_location: req.body.drop,
-          drop_address: null,
-          drop_city: req.body.drop,
-          drop_state: 'Bihar',
-          drop_pincode: null,
-          goods_description: req.body.goodsType,
-          goods_type: req.body.goodsType,
-          goods_weight_kg: null,
-          goods_volume: null,
-          number_of_items: 1,
-          fragile: false,
-          vehicle_type_required: req.body.vehicle,
-          estimated_distance_km,
-          estimated_price,
-          final_price: estimated_price,
-          status: 'pending',
-        },
-      });
-
-      const year = new Date().getFullYear();
-      const ref = `BTB${year}${String(booking.booking_id).padStart(5, '0')}`;
-
-      await tx.booking.update({
-        where: { booking_id: booking.booking_id },
-        data: { booking_reference: ref, booking_number: ref },
-      });
-
-      await tx.delivery.create({
-        data: {
-          booking_id: booking.booking_id,
-          current_status: 'booking_confirmed',
-          status_description: 'Booking confirmed, waiting for driver assignment',
-        },
-      });
-
-      return { booking_id: booking.booking_id, booking_reference: ref };
+    // Delegate to the single canonical creation service. BookingService
+    // derives the booking_number (BTB-YYYY-NNNNN) from the DB primary key,
+    // persists it atomically, and creates the delivery record + timeline
+    // event. No UUID / Math.random() / inline Prisma transaction here.
+    const created = await bookingService.createBooking({
+      user_id: user.user_id,
+      pickup_location: req.body.pickup,
+      pickup_address: null,
+      pickup_city: req.body.pickup,
+      pickup_state: 'Bihar',
+      pickup_pincode: null,
+      pickup_date: req.body.pickupDate || null,
+      pickup_time: req.body.pickupTime || '00:00:00',
+      drop_location: req.body.drop,
+      drop_address: null,
+      drop_city: req.body.drop,
+      drop_state: 'Bihar',
+      drop_pincode: null,
+      goods_description: req.body.goodsType,
+      goods_type: req.body.goodsType,
+      goods_weight_kg: null,
+      goods_volume: null,
+      number_of_items: 1,
+      fragile: false,
+      vehicle_type_required: req.body.vehicle,
+      estimated_distance_km,
+      estimated_price,
+      final_price: estimated_price,
+      status: 'pending',
+      // Explicit quote lifecycle start so the tracking UI is consistent
+      // (Pending → Sent → Accepted/Rejected) even for guest bookings.
+      quote_status: 'PENDING',
     });
+
+    const booking_id = created.booking_id;
+    const booking_reference = created.booking_reference || created.booking_number;
 
     console.log('Booking saved with id:', booking_id);
 
@@ -177,17 +173,45 @@ const mobile = req.body.mobile;
 
     return res.status(201).json({
       success: true,
-      bookingReference: booking_reference,
       message: 'Booking submitted successfully.',
+      data: {
+        booking_id,
+        booking_reference,
+        status: 'pending',
+        quote_status: 'PENDING',
+      },
+      errors: null,
     });
 
   } catch (err) {
-    // Do not expose stack traces
-    console.error('[booking][error]', err);
+    // Log the real cause server-side; never expose stack traces to clients.
+    console.error('[booking][error]', {
+      message: err?.message,
+      stack: err?.stack,
+      code: err?.code,
+      name: err?.name,
+    });
+
+    // Distinguish database / validation failures from an unreliable WhatsApp
+    // delivery. A booking that failed to save MUST NOT claim success.
+    const isDuplicate =
+      err?.code === 'P2002' || // Prisma unique constraint
+      /duplicate/i.test(err?.message || '');
+
+    if (isDuplicate) {
+      return res.status(409).json({
+        success: false,
+        message: 'A booking with this reference already exists. Please try again.',
+        data: null,
+        errors: [{ field: 'booking_reference', message: 'Duplicate booking reference' }],
+      });
+    }
 
     return res.status(500).json({
       success: false,
-      message: 'Booking received but WhatsApp delivery failed.',
+      message: 'We could not save your booking. Please try again.',
+      data: null,
+      errors: null,
     });
   }
 });

@@ -58,9 +58,5 @@ class BookingTimelineService {
   }
 }
 
-module.exports = {
-  BookingTimelineService,
-  BookingTimelineDomainError,
-  ValidationError
-};
+module.exports = BookingTimelineService;
 

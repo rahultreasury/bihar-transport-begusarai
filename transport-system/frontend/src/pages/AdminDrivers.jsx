@@ -114,11 +114,15 @@ function AdminDrivers() {
   const [showTransactionModal, setShowTransactionModal] = useState(false);
   const [showVehicleAssignModal, setShowVehicleAssignModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
-  const [selectedDriver, setSelectedDriver] = useState(null);
+const [selectedDriver, setSelectedDriver] = useState(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
   const [transactionType, setTransactionType] = useState('advance');
-  const searchInputRef = useRef(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState(null);
+  const [toast, setToast] = useState(null);
+const searchInputRef = useRef(null);
+  const deletingRef = useRef(false);
 
   // Debounce search input
   const debouncedSearchValue = useDebounce(search, 300);
@@ -203,7 +207,7 @@ function AdminDrivers() {
     }
   }, [debouncedSearch, statusFilter, availabilityFilter, balanceFilter, tripsFilter, recentlyActiveFilter, activeQuickFilter, sortField, sortDirection]);
 
-  // Fetch dashboard stats
+// Fetch dashboard stats
   const fetchStats = useCallback(async () => {
     try {
       const response = await adminAPI.getDriverStats();
@@ -214,6 +218,70 @@ function AdminDrivers() {
       console.error('Error fetching driver stats:', err);
     }
   }, []);
+
+  // Toast helper
+  const showToast = useCallback((message, type = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4000);
+  }, []);
+
+  // Bulk delete: ONE request for all selected drivers, guarded against
+  // duplicate clicks (ref guard + disabled state). Prevents the old
+  // N-request loop that caused duplicates and HTTP 429.
+  const handleBulkDelete = useCallback(async () => {
+    if (deletingRef.current) return;          // ignore duplicate clicks
+    if (!selectedIds.length) return;
+    deletingRef.current = true;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await adminAPI.bulkDeleteDrivers(selectedIds);
+      setSelectedIds([]);
+      showToast(`✓ ${selectedIds.length} driver${selectedIds.length !== 1 ? 's' : ''} deleted.`, 'success');
+      fetchDrivers(pagination.page);
+      fetchStats();
+    } catch (err) {
+      const msg = err?.response?.data?.message || err?.message || 'Failed to delete drivers.';
+      setDeleteError(msg);
+      showToast('✗ ' + msg, 'error');
+    } finally {
+      deletingRef.current = false;
+      setDeleting(false);
+    }
+  }, [selectedIds, fetchDrivers, fetchStats, pagination.page, showToast]);
+
+// Single delete: guarded, with loading + error handling.
+  // The backend only returns success AFTER the database confirms the row is
+  // gone. We show "deleted" ONLY on a resolved success. Rejections surface the
+  // structured error.code / error.message from the API.
+  const handleSingleDelete = useCallback(async () => {
+    if (deletingRef.current || !showDeleteConfirm) return;
+    deletingRef.current = true;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const response = await adminAPI.deleteDriver(showDeleteConfirm);
+      const data = response.data || {};
+      setShowDeleteConfirm(null);
+      if (data.archived) {
+        // Driver was archived (financial history retained), not hard-deleted.
+        showToast('⚠️ Driver archived (financial records retained).', 'error');
+      } else {
+        showToast('✓ Driver deleted.', 'success');
+      }
+      fetchDrivers(pagination.page);
+      fetchStats();
+    } catch (err) {
+      const data = err?.response?.data;
+      const structured = data?.error;
+      const msg = structured?.message || data?.message || err?.message || 'Failed to delete driver.';
+      setDeleteError(msg);
+      showToast('✗ ' + msg, 'error');
+    } finally {
+      deletingRef.current = false;
+      setDeleting(false);
+    }
+  }, [showDeleteConfirm, fetchDrivers, fetchStats, pagination.page, showToast]);
 
   // Initial load — only runs once on mount
   useEffect(() => {
@@ -324,9 +392,36 @@ function AdminDrivers() {
       sortable: true,
       render: (r) => <DriverStatusBadge status={r.status} size="sm" showIcon={true} />
     },
+{
+      key: 'vehicle_type',
+      header: 'Vehicle Type',
+      render: (r) => (
+        <div className="text-sm">
+          <div className="font-medium">{r.vehicle_type || '—'}</div>
+        </div>
+      )
+    },
+    {
+      key: 'vehicle_number',
+      header: 'Vehicle Number',
+      render: (r) => {
+        const raw = r.vehicle_number || r.transportVehicles?.[0]?.vehicle_number || '';
+        return (
+          <div className="text-sm">
+            {raw ? (
+              <div className="font-mono font-semibold text-amber-600 dark:text-amber-400">
+                <HighlightText text={raw} highlight={debouncedSearch} />
+              </div>
+            ) : (
+              <span className="text-muted text-xs">—</span>
+            )}
+          </div>
+        );
+      }
+    },
     {
       key: 'assigned_vehicle',
-      header: 'Vehicle',
+      header: 'Assigned Vehicle',
       render: (r) => {
         const vehicle = r.transportVehicles?.[0];
         return (
@@ -470,7 +565,7 @@ function AdminDrivers() {
           </div>
           <DriverStatusBadge status={driver.status} size="sm" />
         </div>
-        <div className="grid grid-cols-2 gap-2 text-sm">
+<div className="grid grid-cols-2 gap-2 text-sm">
           <div>
             <span className="text-muted text-xs">Mobile</span>
             <div className="font-medium">{driver.mobile || '—'}</div>
@@ -479,9 +574,13 @@ function AdminDrivers() {
             <span className="text-muted text-xs">City</span>
             <div className="font-medium">{driver.city || '—'}</div>
           </div>
-          <div className="col-span-2">
-            <span className="text-muted text-xs">Vehicle</span>
-            <div className="font-medium">{vehicle?.vehicle_number || 'Not assigned'}</div>
+          <div>
+            <span className="text-muted text-xs">Vehicle Type</span>
+            <div className="font-medium">{driver.vehicle_type || '—'}</div>
+          </div>
+          <div>
+            <span className="text-muted text-xs">Vehicle No.</span>
+            <div className="font-medium font-mono">{driver.vehicle_number || vehicle?.vehicle_number || '—'}</div>
           </div>
         </div>
       </div>
@@ -489,8 +588,33 @@ function AdminDrivers() {
   }, [navigate, debouncedSearch]);
 
   return (
-    <AdminShell navItems={NAV_ITEMS} activeKey="drivers" onNav={(k) => {}}>
+<AdminShell navItems={NAV_ITEMS} activeKey="drivers" onNav={(k) => {}}>
       <div className="space-y-5">
+        {/* Toast notification */}
+        {toast && (
+          <div className="fixed top-6 right-6 z-[100] animate-slide-down">
+            <div className={`px-5 py-3.5 rounded-2xl shadow-2xl border text-sm font-semibold flex items-center gap-3 backdrop-blur-sm ${
+              toast.type === 'success'
+                ? 'bg-emerald-50 dark:bg-emerald-900/50 border-emerald-200 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300'
+                : 'bg-red-50 dark:bg-red-900/50 border-red-200 dark:border-red-700 text-red-700 dark:text-red-300'
+            }`}>
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                {toast.type === 'success' ? (
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                ) : (
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                )}
+              </svg>
+              <span>{toast.message}</span>
+              <button onClick={() => setToast(null)} className="ml-3 opacity-50 hover:opacity-100 transition">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
           <div>
@@ -535,7 +659,7 @@ function AdminDrivers() {
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by name, driver code, mobile, city, vehicle..."
+placeholder="Search by name, driver code, mobile, vehicle number, city..."
               className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-border/60 bg-card/40 backdrop-blur-xl text-sm font-medium placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500/50 transition-all"
               aria-label="Search drivers"
             />
@@ -649,7 +773,7 @@ function AdminDrivers() {
               <>
                 <h3 className="text-lg font-bold text-text mb-2">No driver found matching "<span className="text-amber-600 dark:text-amber-400">{debouncedSearch}</span>"</h3>
                 <p className="text-sm text-muted max-w-md mx-auto mb-4">Try searching by:</p>
-                <ul className="text-sm text-muted mx-auto max-w-xs text-left space-y-1.5 mb-6">
+<ul className="text-sm text-muted mx-auto max-w-xs text-left space-y-1.5 mb-6">
                   <li className="flex items-center gap-2">
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
                     Driver Name
@@ -661,6 +785,10 @@ function AdminDrivers() {
                   <li className="flex items-center gap-2">
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
                     Mobile Number
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
+                    Vehicle Number
                   </li>
                 </ul>
                 <button
@@ -778,18 +906,18 @@ function AdminDrivers() {
               <span className="text-amber-600 dark:text-amber-400">{selectedIds.length}</span> driver{selectedIds.length !== 1 ? 's' : ''} selected
             </div>
             <div className="flex items-center gap-2">
-              <button
-                onClick={async () => {
-                  for (const id of selectedIds) {
-                    try { await adminAPI.deleteDriver(id); } catch (e) { console.error(e); }
-                  }
-                  setSelectedIds([]);
-                  fetchDrivers(pagination.page);
-                  fetchStats();
-                }}
-                className="px-3 py-1.5 rounded-lg bg-red-500/10 text-red-600 dark:text-red-400 text-xs font-medium hover:bg-red-500/20 transition"
+<button
+                onClick={handleBulkDelete}
+                disabled={deleting}
+                className="px-3 py-1.5 rounded-lg bg-red-500/10 text-red-600 dark:text-red-400 text-xs font-medium hover:bg-red-500/20 transition disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
               >
-                Delete Selected
+                {deleting && (
+                  <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                )}
+                {deleting ? 'Deleting...' : 'Delete Selected'}
               </button>
               <button
                 onClick={() => {
@@ -884,31 +1012,37 @@ function AdminDrivers() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
                   </svg>
                 </div>
-                <h3 className="text-lg font-bold mb-2">Delete Driver?</h3>
+<h3 className="text-lg font-bold mb-2">Delete Driver?</h3>
                 <p className="text-sm text-muted mb-6">
-                  This will mark the driver as inactive. Their trip history will be preserved.
+                  This permanently removes the driver. It is only allowed when the driver has
+                  no active bookings, reservations, assignments or protected financial records.
+                  If such records exist, deletion will be rejected and the driver will be archived instead.
                 </p>
+{deleteError && (
+                  <div className="mb-4 rounded-xl border border-red-200 bg-red-50 dark:bg-red-500/10 dark:border-red-500/20 px-4 py-2.5 text-sm text-red-700 dark:text-red-400">
+                    {deleteError}
+                  </div>
+                )}
                 <div className="flex gap-3">
                   <button
                     onClick={() => setShowDeleteConfirm(null)}
-                    className="flex-1 px-4 py-2.5 rounded-xl border border-border/60 text-sm font-semibold hover:bg-hover/60 transition"
+                    disabled={deleting}
+                    className="flex-1 px-4 py-2.5 rounded-xl border border-border/60 text-sm font-semibold hover:bg-hover/60 transition disabled:opacity-50"
                   >
                     Cancel
                   </button>
                   <button
-                    onClick={async () => {
-                      try {
-                        await adminAPI.deleteDriver(showDeleteConfirm);
-                        setShowDeleteConfirm(null);
-                        fetchDrivers(pagination.page);
-                        fetchStats();
-                      } catch (err) {
-                        console.error('Delete driver error:', err);
-                      }
-                    }}
-                    className="flex-1 px-4 py-2.5 rounded-xl bg-red-500 text-white text-sm font-semibold hover:bg-red-600 transition"
+                    onClick={handleSingleDelete}
+                    disabled={deleting}
+                    className="flex-1 px-4 py-2.5 rounded-xl bg-red-500 text-white text-sm font-semibold hover:bg-red-600 transition disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2"
                   >
-                    Delete Driver
+                    {deleting && (
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                    )}
+                    {deleting ? 'Deleting...' : 'Delete Driver'}
                   </button>
                 </div>
               </div>

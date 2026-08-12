@@ -1,26 +1,21 @@
-# TODO — Fix Vehicle Dropdown Selection & Per-Kilometre Pricing
+# Bihar Transport — Booking System Fixes (Approved Plan)
 
-## Bug 1 — Vehicle dropdown selection (Home.jsx)
-- [x] Investigate root cause: `<option value={v.type}>` used non-unique `type` (e.g. 13 vehicles share `type: 'truck'`), so the browser selected the first match.
-- [x] Home.jsx: default `quickBooking.vehicleType` → unique id `truck-17ft`
-- [x] Home.jsx: default `priceCalc.vehicleType` → unique id `truck-17ft`
-- [x] Home.jsx: `<option value={v.id}>` (unique slug)
-- [x] Home.jsx: `handleVehicleClick` sets `selectedVehicle`/`quickBooking.vehicleType` by `vehicle.id`
-- [x] Home.jsx: card highlight `isSelected = selectedVehicle === vehicle.id`
-- [x] Home.jsx: `latestQuote` stores `vehicleType` (id) + `vehicleName` (display name); modal displays name
+Booking-number canonicalization (BTB-YYYY-NNNNN) is ALREADY implemented and verified.
+Do NOT restructure it. Focus on confirmed remaining gaps.
 
-## Bug 2 — Per-kilometre pricing (old 5-vehicle logic)
-- [x] Backend: created shared `services/vehiclePricing.js` — 18-vehicle catalogue (rate, min, max) + legacy type aliases
-- [x] Backend: `controllers/mapsController.js` — uses shared pricing; returns `rate`/`rateMin`/`rateMax`
-- [x] Backend: `routes/bookingRoutes.js` — removed hardcoded 5-type map; uses shared pricing; validates all valid ids
+## Backend
+- [ ] 1. `getBookingForTracking` → accept canonical `booking_number` (legacy `booking_reference` still works)
+- [ ] 2. `bookingController.js` → remove leftover random `booking_reference` generation
+- [ ] 3. `BookingMapper.js` → add camelCase `bookingNumber` field
+- [ ] 4. Structured error contract (`error: { code, message }`) for quote + assignment APIs
+- [ ] 5. Driver assignment → auto-assign driver's registered vehicle (verify backend already does this)
 
-## Verification
-- [x] Node sanity check of `vehiclePricing.js`
-- [x] Confirm every listed vehicle returns correct rate range and selected rate
+## Frontend
+- [ ] 6. `App.jsx` → wire `/admin/bookings/:bookingNumber` and `/admin/bookings/:bookingNumber/assign-driver`
+- [ ] 7. `AdminBookings.jsx` → View → read-only page; Assign Driver → dedicated page; remove Assign Vehicle button
+- [ ] 8. `AdminBookingDetail.jsx` → remove Assign Vehicle button (read-only stays)
+- [ ] 9. `AdminAssignDriver.jsx` → confirm vehicle is info-only (no dropdown)
 
-## Summary of changes
-- `transport-system/frontend/src/pages/Home.jsx` — unique `id` (slug) is the single identifier for dropdown, selection, quote, and booking state.
-- `transport-system/backend/services/vehiclePricing.js` — new single source of truth for all 18 vehicles' per-km pricing (rate/min/max), plus legacy `truck/mini_truck/pickup/tempo/lorry` aliases for backward compatibility.
-- `transport-system/backend/controllers/mapsController.js` — `/api/calculate-price` now resolves any vehicle's own rate and returns `rate`, `rateMin`, `rateMax`.
-- `transport-system/backend/routes/bookingRoutes.js` — legacy hardcoded 5-rate map removed; price computed from shared catalogue; validation accepts all 18 ids + legacy types.
-
+## Testing
+- [ ] 10. Backend tests pass
+- [ ] 11. Frontend build passes

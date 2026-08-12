@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { adminAPI } from '../../../services/api';
 
@@ -6,10 +6,119 @@ const INITIAL_FORM = {
   driver_name: '',
   mobile: '',
   alternate_mobile: '',
+  vehicle_type: '',
+  vehicle_number: '',
   city: '',
   state: 'Bihar',
   address: ''
 };
+
+// Vehicle type options for the searchable dropdown (Vehicle Type field)
+const VEHICLE_TYPES = [
+  'Mahindra Bolero Pickup',
+  'Tata Ace (Chhota Hathi)',
+  'Tata Yodha',
+  'Ashok Leyland Dost',
+  'Mahindra Jeeto',
+  'Pickup Truck',
+  'Mini Truck',
+  '14 ft Truck',
+  '17 ft Truck',
+  '19 ft Truck',
+  '22 ft Truck',
+  'Trailer',
+  'Container',
+  'Other'
+];
+
+// Normalize for case-insensitive search filtering
+function toSearchable(text) {
+  return (text || '').toLowerCase();
+}
+
+// Searchable select dropdown (reuses the CityAutocomplete pattern from OwnerRegisterModal)
+function SearchableSelect({ value, onChange, options, placeholder, inputClass, error }) {
+  const [query, setQuery] = useState(value);
+  const [filtered, setFiltered] = useState([]);
+  const [open, setOpen] = useState(false);
+  const wrapperRef = useRef(null);
+
+  // Keep local query in sync with the controlled value
+  useEffect(() => {
+    setQuery(value);
+  }, [value]);
+
+  // Close on outside click
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Filter options based on query
+  useEffect(() => {
+    if (open) {
+      const q = toSearchable(query);
+      setFiltered(options.filter(o => toSearchable(o).includes(q)));
+    } else {
+      setFiltered([]);
+    }
+  }, [query, open, options]);
+
+  const select = (option) => {
+    onChange({ target: { name: 'vehicle_type', value: option } });
+    setQuery(option);
+    setOpen(false);
+  };
+
+  return (
+    <div ref={wrapperRef} className="relative">
+      <div className="relative">
+        <input
+          type="text"
+          name="vehicle_type"
+          value={query}
+          onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              if (filtered.length === 1) select(filtered[0]);
+              else if (query.trim()) { onChange({ target: { name: 'vehicle_type', value: query.trim() } }); setOpen(false); }
+            }
+          }}
+          placeholder={placeholder || 'Select...'}
+          autoComplete="off"
+          className={`${inputClass} ${error ? 'border-red-500/50' : 'border-border/60'}`}
+        />
+        <svg className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </div>
+      {open && filtered.length > 0 && (
+        <div className="absolute z-30 w-full mt-1.5 bg-white dark:bg-gray-800 border border-border/60 rounded-xl shadow-2xl max-h-48 overflow-y-auto">
+          {filtered.map(option => (
+            <button
+              key={option}
+              type="button"
+              onClick={() => select(option)}
+              className="w-full text-left px-4 py-2.5 text-sm hover:bg-amber-50 dark:hover:bg-amber-500/10 transition"
+            >
+              {option}
+            </button>
+          ))}
+        </div>
+      )}
+      {open && filtered.length === 0 && (
+        <div className="absolute z-30 w-full mt-1.5 bg-white dark:bg-gray-800 border border-border/60 rounded-xl shadow-2xl">
+          <div className="px-4 py-3 text-sm text-muted">No matching vehicle types</div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function DriverRegisterModal({ isOpen, onClose, onSuccess, driver, mode = 'create' }) {
   const navigate = useNavigate();
@@ -29,6 +138,8 @@ export default function DriverRegisterModal({ isOpen, onClose, onSuccess, driver
           driver_name: driver.driver_name || '',
           mobile: driver.mobile || '',
           alternate_mobile: driver.alternate_mobile || '',
+          vehicle_type: driver.vehicle_type || '',
+          vehicle_number: driver.vehicle_number || '',
           city: driver.city || '',
           state: driver.state || 'Bihar',
           address: driver.address || ''
@@ -44,7 +155,12 @@ export default function DriverRegisterModal({ isOpen, onClose, onSuccess, driver
 
   const handleChange = useCallback((e) => {
     const { name, value } = e.target;
-    setForm(prev => ({ ...prev, [name]: value }));
+    let nextValue = value;
+    // Auto-uppercase + trim spaces for vehicle number
+    if (name === 'vehicle_number') {
+      nextValue = value.toUpperCase().replace(/\s+/g, '').slice(0, 10);
+    }
+    setForm(prev => ({ ...prev, [name]: nextValue }));
     if (errors[name]) {
       setErrors(prev => ({ ...prev, [name]: '' }));
     }
@@ -61,7 +177,14 @@ export default function DriverRegisterModal({ isOpen, onClose, onSuccess, driver
     } else if (!/^[6-9]\d{9}$/.test(form.mobile.trim())) {
       newErrors.mobile = 'Enter a valid 10-digit mobile number';
     }
-    // All other fields are optional - no validation needed
+    if (!form.vehicle_type.trim()) {
+      newErrors.vehicle_type = 'Vehicle type is required';
+    }
+    if (!form.vehicle_number.trim()) {
+      newErrors.vehicle_number = 'Vehicle number is required';
+    } else if (!/^[A-Z]{2}\d{2}[A-Z]{1,2}\d{4}$/.test(form.vehicle_number.trim())) {
+      newErrors.vehicle_number = 'Enter a valid vehicle number (e.g. BR09AB1234)';
+    }
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   }, [form]);
@@ -78,6 +201,8 @@ const payload = {
         driver_name: form.driver_name.trim(),
         mobile: form.mobile.trim(),
         alternate_mobile: form.alternate_mobile.trim() || undefined,
+        vehicle_type: form.vehicle_type.trim(),
+        vehicle_number: form.vehicle_number.trim().toUpperCase(),
         city: form.city.trim() || undefined,
         state: form.state || 'Bihar',
         address: form.address.trim() || undefined
@@ -134,9 +259,9 @@ const payload = {
             <div>
               <h3 className="text-lg font-bold">{isEdit ? 'Edit Driver' : 'Register New Driver'}</h3>
               <p className="text-sm text-muted mt-0.5">
-                {isEdit
+{isEdit
                   ? `Updating ${driver.driver_name}`
-                  : 'Register a driver from your transport network. Only name and mobile are required.'}
+                  : 'Register a driver from your transport network with their vehicle details.'}
               </p>
             </div>
             <button onClick={handleClose} className="h-8 w-8 rounded-lg border border-border/60 flex items-center justify-center hover:bg-hover/60 transition" aria-label="Close">
@@ -245,7 +370,7 @@ const payload = {
                 {errors.mobile && <p className="text-xs text-red-500 mt-1">{errors.mobile}</p>}
               </div>
 
-              {/* Alternate Mobile */}
+{/* Alternate Mobile */}
               <div>
                 <label className="block text-sm font-medium mb-1.5">
                   Alternate Mobile <span className="text-muted text-[10px]">(Optional)</span>
@@ -259,6 +384,41 @@ const payload = {
                   maxLength={10}
                   className="w-full px-3 py-2.5 rounded-xl border border-border/60 text-sm bg-card/40 focus:outline-none focus:ring-2 focus:ring-amber-500/30 transition"
                 />
+              </div>
+
+              {/* Vehicle Type */}
+              <div>
+                <label className="block text-sm font-medium mb-1.5">
+                  Vehicle Type <span className="text-red-500">*</span>
+                </label>
+                <SearchableSelect
+                  value={form.vehicle_type}
+                  onChange={handleChange}
+                  options={VEHICLE_TYPES}
+                  placeholder="Select Vehicle Type"
+                  inputClass="w-full px-3 py-2.5 rounded-xl text-sm bg-card/40 focus:outline-none focus:ring-2 focus:ring-amber-500/30 transition"
+                  error={errors.vehicle_type}
+                />
+                {errors.vehicle_type && <p className="text-xs text-red-500 mt-1">{errors.vehicle_type}</p>}
+              </div>
+
+              {/* Vehicle Number */}
+              <div>
+                <label className="block text-sm font-medium mb-1.5">
+                  Vehicle Number <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  name="vehicle_number"
+                  value={form.vehicle_number}
+                  onChange={handleChange}
+                  placeholder="BR09AB1234"
+                  maxLength={10}
+                  className={`w-full px-3 py-2.5 rounded-xl border text-sm bg-card/40 font-mono tracking-wider focus:outline-none focus:ring-2 focus:ring-amber-500/30 transition ${
+                    errors.vehicle_number ? 'border-red-500/50' : 'border-border/60'
+                  }`}
+                />
+                {errors.vehicle_number && <p className="text-xs text-red-500 mt-1">{errors.vehicle_number}</p>}
               </div>
             </div>
           </div>
@@ -269,21 +429,7 @@ const payload = {
               <div className="h-1.5 w-1.5 rounded-full bg-muted" />
               <span className="text-xs font-semibold text-muted uppercase tracking-wider">Contact & Location (Optional)</span>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium mb-1.5">
-                  Alternate Mobile <span className="text-muted text-[10px]">(Optional)</span>
-                </label>
-                <input
-                  type="tel"
-                  name="alternate_mobile"
-                  value={form.alternate_mobile}
-                  onChange={handleChange}
-                  placeholder="Alternate contact number"
-                  maxLength={10}
-                  className="w-full px-3 py-2.5 rounded-xl border border-border/60 text-sm bg-card/40 focus:outline-none focus:ring-2 focus:ring-amber-500/30 transition"
-                />
-              </div>
+<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium mb-1.5">
                   City <span className="text-muted text-[10px]">(Optional)</span>

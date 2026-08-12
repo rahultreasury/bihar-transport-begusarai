@@ -135,16 +135,31 @@ router.put('/:id', protect, adminCheck, async (req, res) => {
   }
 });
 
-// Soft delete partner
+// Permanently delete transport owner (dependency-aware). Only returns success
+// AFTER the database confirms the row is gone. Rejects with a structured error
+// when the owner has protected financial/historical or operational records.
 router.delete('/:id', protect, adminCheck, async (req, res) => {
   try {
     const partnerId = parseInt(req.params.id);
     if (isNaN(partnerId)) return res.status(400).json({ success: false, message: 'Invalid partner ID' });
 
-    await partnerService.deletePartner(partnerId);
-    res.json({ success: true, message: 'Partner deleted successfully' });
+    const result = await partnerService.permanentlyDeletePartner(partnerId, req.user?.user_id || null);
+    res.json({ success: true, message: 'Transport owner deleted successfully.', data: { partner_id: partnerId } });
   } catch (error) {
-    handleError(res, error);
+    console.error('Delete partner error:', error);
+    if (error.code === 'OWNER_NOT_FOUND') {
+      return res.status(404).json({ success: false, error: { code: error.code, message: error.message } });
+    }
+    if (error.code === 'OWNER_HAS_DEPENDENCIES') {
+      return res.status(409).json({
+        success: false,
+        error: { code: error.code, message: error.message, data: error.data || null },
+      });
+    }
+    if (error.code === 'OWNER_DELETE_FAILED') {
+      return res.status(500).json({ success: false, error: { code: error.code, message: error.message } });
+    }
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Server error' } });
   }
 });
 

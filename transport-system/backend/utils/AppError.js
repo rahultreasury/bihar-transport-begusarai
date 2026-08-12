@@ -68,11 +68,28 @@ class NotFoundError extends AppError {
 }
 
 class ValidationError extends AppError {
-  constructor({ message = 'Validation failed', details = [] } = {}) {
+  constructor(messageOrObject = 'Validation failed', details = []) {
+    let message = messageOrObject;
+    if (typeof messageOrObject === 'object' && messageOrObject !== null) {
+      message = messageOrObject.message || 'Validation failed';
+      details = messageOrObject.details || details;
+    }
     super({
       message,
       errorCode: 'VALIDATION_ERROR',
       statusCode: 400,
+      details,
+      isOperational: true,
+    });
+  }
+}
+
+class ConflictError extends AppError {
+  constructor({ message = 'Conflict', details = [] } = {}) {
+    super({
+      message,
+      errorCode: 'CONFLICT',
+      statusCode: 409,
       details,
       isOperational: true,
     });
@@ -86,5 +103,6 @@ module.exports = {
   ForbiddenError,
   NotFoundError,
   ValidationError,
+  ConflictError,
 };
 

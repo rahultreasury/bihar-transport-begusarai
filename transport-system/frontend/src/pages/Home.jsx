@@ -507,7 +507,7 @@ function Home() {
         throw new Error(res?.data?.message || 'Failed to submit booking');
       }
 
-      const bookingRef = res.data.bookingReference;
+      const bookingRef = res.data.data?.booking_reference;
       setBookNowSuccess('Booking Submitted Successfully.');
 
       setBookNowForm({ name: '', mobile: '', goods_type: '' });

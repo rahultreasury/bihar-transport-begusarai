@@ -1,4 +1,4 @@
-/**
+  /**
  * BookingAnalyticsRepository
  * Database-only repository for booking analytics.
  * Uses Prisma Client for all database operations.
@@ -106,34 +106,6 @@ class BookingAnalyticsRepository {
         pickup_city: r.pickup_city,
         drop_city: r.drop_city,
         count: r._count.booking_id,
-      }));
-    } catch (err) {
-      throw err;
-    }
-  }
-
-  /**
-   * Vehicle utilization: number of bookings per vehicle.
-   * @param {Object=} opts
-   * @param {number=} opts.limit
-   * @returns {Promise<Object[]>} rows: { vehicle_id, bookingCount }
-   */
-  async getVehicleUtilization(opts = {}) {
-    const { limit = 20 } = opts;
-    try {
-      const rows = await prisma.booking.groupBy({
-        by: ['vehicle_id'],
-        where: {
-          vehicle_id: { not: null },
-        },
-        _count: { booking_id: true },
-        orderBy: { _count: { booking_id: 'desc' } },
-        take: limit,
-      });
-
-      return rows.map((r) => ({
-        vehicle_id: r.vehicle_id,
-        bookingCount: r._count.booking_id,
       }));
     } catch (err) {
       throw err;

@@ -324,6 +324,44 @@ router.get('/me', protect, async (req, res) => {
   }
 });
 
+// @route   GET /api/auth/admin/me
+// @desc    Validate an admin JWT and return the authenticated admin.
+//          Restores a persisted admin session on app startup.
+//          Looks up the `admins` table (NOT the `users` table).
+// @access  Private (Admin)
+router.get('/admin/me', protect, async (req, res) => {
+  try {
+    // `protect` sets req.user. Admin tokens decode with type='admin' and are
+    // looked up against the `admins` table. If the token was a user token,
+    // req.user.role will not be an admin role — reject it.
+    const adminRoles = ['admin', 'super_admin', 'operator'];
+    if (!adminRoles.includes(req.user?.role)) {
+      return res.status(401).json({
+        success: false,
+        error: { code: 'UNAUTHORIZED', message: 'Authentication required.' },
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        id: req.user.user_id,
+        admin_id: req.user.user_id,
+        name: req.user.first_name || req.user.email || 'Administrator',
+        full_name: req.user.first_name || req.user.email || 'Administrator',
+        email: req.user.email,
+        role: req.user.role,
+      },
+    });
+  } catch (error) {
+    console.error('Admin me error:', error);
+    return res.status(401).json({
+      success: false,
+      error: { code: 'UNAUTHORIZED', message: 'Authentication required.' },
+    });
+  }
+});
+
 // @route   PUT /api/auth/profile
 // @desc    Update user profile
 // @access  Private

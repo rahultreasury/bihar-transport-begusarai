@@ -3,6 +3,10 @@ const router = express.Router();
 const { prisma } = require('../config/prisma');
 const { protect } = require('../middleware/auth');
 const { body, validationResult } = require('express-validator');
+const { validateTransition } = require('../utils/BookingStateMachine');
+const BookingTimelineRepository = require('../repositories/BookingTimelineRepository');
+
+const timelineRepo = new BookingTimelineRepository();
 
 // @route   GET /api/drivers/available-jobs
 // @desc    Get available transport jobs
@@ -41,10 +45,15 @@ router.get('/available-jobs', protect, async (req, res) => {
       });
     }
 
-    // Get available bookings matching driver's vehicle types
+    // Get available bookings matching driver's vehicle types.
+    // Enterprise rule: only bookings that have NOT entered the quote workflow
+    // (quote_status === 'PENDING') are shown as available jobs. Once an admin
+    // has sent a quote (quote_status = SENT), the driver/vehicle are reserved
+    // and the job is no longer available for self-acceptance.
     const jobs = await prisma.booking.findMany({
       where: {
         status: 'pending',
+        quote_status: 'PENDING',
         vehicle_type_required: { in: vehicleTypes },
       },
       include: {
@@ -181,10 +190,35 @@ router.post('/accept-job/:bookingId', protect, async (req, res) => {
       });
     }
 
-    if (booking.status !== 'pending') {
+    // Enterprise rule: a driver may ONLY accept a booking AFTER the customer
+    // has accepted the final quote (quote_status === 'ACCEPTED'). This prevents
+    // a driver from starting a trip before the customer has confirmed.
+    if (booking.quote_status !== 'ACCEPTED') {
+      return res.status(400).json({
+        success: false,
+        message: 'This booking cannot be accepted yet. Customer must accept the final quote first.'
+      });
+    }
+
+if (booking.status !== 'pending' && booking.status !== 'quote_sent') {
       return res.status(400).json({
         success: false,
         message: 'This booking is no longer available'
+      });
+    }
+
+    // Enforce the canonical state machine. Reaching the driver-assigned and
+    // then confirmed state must go through a valid transition. A driver
+    // accepting a job moves the booking from pending/quote_sent to
+    // 'driver_assigned' (the canonical state), then immediately to
+    // 'confirmed' (the booked state) once the driver + vehicle are set.
+    try {
+      validateTransition(booking.status, 'driver_assigned');
+      validateTransition('driver_assigned', 'confirmed');
+    } catch (err) {
+      return res.status(409).json({
+        success: false,
+        message: err.message,
       });
     }
 
@@ -193,7 +227,7 @@ router.post('/accept-job/:bookingId', protect, async (req, res) => {
 
     // Perform all updates in a transaction
     await prisma.$transaction(async (tx) => {
-      // Update booking
+      // Update booking to confirmed (driver accepted + assigned the job).
       await tx.booking.update({
         where: { booking_id: bookingId },
         data: {
@@ -203,6 +237,14 @@ router.post('/accept-job/:bookingId', protect, async (req, res) => {
           driver_assigned_at: new Date(),
         },
       });
+
+      // Record the transition in the booking timeline.
+      await timelineRepo.addEvent(
+        bookingId,
+        'booking_status_changed',
+        JSON.stringify({ from: booking.status, to: 'confirmed', actor: 'driver', actorId: driver.driver_id, vehicle_id: parseInt(vehicle_id) }),
+        tx
+      );
 
       // Update or create delivery record
       const existingDelivery = await tx.delivery.findUnique({
@@ -327,11 +369,19 @@ router.get('/my-jobs', protect, async (req, res) => {
       },
     });
 
-    // Sort: confirmed first, then pickup_completed, then in_transit, then others
-    const statusOrder = { 'confirmed': 1, 'pickup_completed': 2, 'in_transit': 3 };
+    // Sort: confirmed → pickup_started → pickup_completed → in_transit → out_for_delivery → delivered → completed → others
+    const statusOrder = {
+      'confirmed': 1,
+      'pickup_started': 2,
+      'pickup_completed': 3,
+      'in_transit': 4,
+      'out_for_delivery': 5,
+      'delivered': 6,
+      'completed': 7,
+    };
     const sorted = [...jobs].sort((a, b) => {
-      const aOrder = statusOrder[a.status] || 4;
-      const bOrder = statusOrder[b.status] || 4;
+      const aOrder = statusOrder[a.status] || 8;
+      const bOrder = statusOrder[b.status] || 8;
       return aOrder - bOrder;
     });
 
@@ -405,10 +455,10 @@ router.get('/my-jobs', protect, async (req, res) => {
 });
 
 // @route   PUT /api/drivers/update-status/:bookingId
-// @desc    Update delivery status
+// @desc    Update delivery status (validated through BookingStateMachine)
 // @access  Private (Driver)
 router.put('/update-status/:bookingId', protect, [
-  body('status').isIn(['pickup_completed', 'in_transit', 'delivered']).withMessage('Invalid status')
+  body('status').isIn(['pickup_started', 'pickup_completed', 'in_transit', 'out_for_delivery', 'delivered']).withMessage('Invalid status')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -449,11 +499,28 @@ router.put('/update-status/:bookingId', protect, [
       });
     }
 
+    // Enterprise rule: validate every status transition through the state machine.
+    // A driver cannot skip stages (e.g. jump to delivered from confirmed) and
+    // cannot start a trip before the customer has accepted the quote.
+    try {
+      validateTransition(booking.status, status);
+    } catch (err) {
+      return res.status(400).json({
+        success: false,
+        message: err.message,
+      });
+    }
+
     let bookingStatus = '';
     let deliveryStatus = '';
     let statusDescription = '';
 
     switch (status) {
+      case 'pickup_started':
+        bookingStatus = 'pickup_started';
+        deliveryStatus = 'pickup_in_progress';
+        statusDescription = 'Driver started pickup';
+        break;
       case 'pickup_completed':
         bookingStatus = 'pickup_completed';
         deliveryStatus = 'pickup_completed';
@@ -463,6 +530,11 @@ router.put('/update-status/:bookingId', protect, [
         bookingStatus = 'in_transit';
         deliveryStatus = 'in_transit';
         statusDescription = 'Vehicle in transit to destination';
+        break;
+      case 'out_for_delivery':
+        bookingStatus = 'out_for_delivery';
+        deliveryStatus = 'out_for_delivery';
+        statusDescription = 'Out for delivery to destination';
         break;
       case 'delivered':
         bookingStatus = 'delivered';
@@ -480,10 +552,18 @@ router.put('/update-status/:bookingId', protect, [
       if (status === 'delivered') {
         bookingUpdateData.delivered_at = new Date();
       }
-      await tx.booking.update({
+await tx.booking.update({
         where: { booking_id: bookingId },
         data: bookingUpdateData,
       });
+
+      // Record the transition in the booking timeline.
+      await timelineRepo.addEvent(
+        bookingId,
+        'booking_status_changed',
+        JSON.stringify({ from: booking.status, to: status, actor: 'driver', actorId: driver.driver_id, notes: notes || null }),
+        tx
+      );
 
       // Update delivery
       const deliveryUpdateData = {

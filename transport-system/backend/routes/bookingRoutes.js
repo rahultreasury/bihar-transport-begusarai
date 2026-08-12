@@ -3,13 +3,6 @@ const router = express.Router();
 const { prisma } = require('../config/prisma');
 const { getVehiclePricing, getValidVehicleIds, LEGACY_TYPE_FALLBACK } = require('../services/vehiclePricing');
 
-// Legacy helpers for backward compatible request/response fields
-const generateBookingRef = () => {
-  const timestamp = Date.now().toString(36).toUpperCase();
-  const random = Math.random().toString(36).substring(2, 5).toUpperCase();
-  return `BTB-${timestamp.slice(-4)}${random}`;
-};
-
 // Every vehicle uses its own per-km rate (from the shared pricing catalogue).
 // Legacy generic types (truck/mini_truck/pickup/tempo/lorry) are resolved to a
 // representative vehicle for backward compatibility.
@@ -46,9 +39,13 @@ const estimateDistance = (fromCity, toCity) => {
 const { protect } = require('../middleware/auth');
 const { body, validationResult } = require('express-validator');
 
-const { BookingService, ValidationError, NotFoundError } = require('../services/BookingService');
+const BookingService = require('../services/BookingService');
+const BookingRepository = require('../repositories/BookingRepository');
+const { normalizeBookingIdentifier } = require('../services/BookingNumberService');
+const { ValidationError, NotFoundError } = require('../utils/AppError');
 
 const bookingService = new BookingService();
+const bookingRepo = new BookingRepository();
 
 const mapDomainErrorToHttp = (err, res, fallback = {}) => {
   const name = err?.name;
@@ -109,55 +106,39 @@ router.post('/create', protect, [
       vehicle_type_required
     } = req.body;
 
-    // Estimate distance and price
+// Estimate distance and price
     const estimated_distance_km = estimateDistance(pickup_city, drop_city);
     const estimated_price = calculatePrice(estimated_distance_km, vehicle_type_required);
 
-    // Generate booking reference
-    const booking_reference = generateBookingRef();
-
-    // Insert booking and delivery into PostgreSQL via Prisma transaction
-    const result = await prisma.$transaction(async (tx) => {
-      const booking = await tx.booking.create({
-        data: {
-          booking_reference,
-          booking_number: booking_reference,
-          user_id: req.user.user_id,
-          pickup_location,
-          pickup_address: pickup_address || null,
-          pickup_city,
-          pickup_state: pickup_state || 'Bihar',
-          pickup_pincode: pickup_pincode || null,
-          pickup_date,
-          pickup_time,
-          drop_location,
-          drop_address: drop_address || null,
-          drop_city,
-          drop_state: drop_state || 'Bihar',
-          drop_pincode: drop_pincode || null,
-          goods_description,
-          goods_type: goods_type || null,
-          goods_weight_kg: goods_weight_kg ? Number(goods_weight_kg) : null,
-          goods_volume: goods_volume ? Number(goods_volume) : null,
-          number_of_items: number_of_items || 1,
-          fragile: fragile ? true : false,
-          vehicle_type_required,
-          estimated_distance_km,
-          estimated_price,
-          final_price: estimated_price,
-          status: 'pending',
-        },
-      });
-
-      await tx.delivery.create({
-        data: {
-          booking_id: booking.booking_id,
-          current_status: 'booking_confirmed',
-          status_description: 'Booking confirmed, waiting for driver assignment',
-        },
-      });
-
-      return booking;
+    // Delegate to the single canonical creation service. BookingService
+    // derives the booking_number (BTB-YYYY-NNNNN) from the DB primary key,
+    // persists it atomically, and creates the delivery record + timeline
+    // event. No inline Prisma transaction / random identifier here.
+    const result = await bookingService.createBooking({
+      user_id: req.user.user_id,
+      pickup_location,
+      pickup_address: pickup_address || null,
+      pickup_city,
+      pickup_state: pickup_state || 'Bihar',
+      pickup_pincode: pickup_pincode || null,
+      pickup_date,
+      pickup_time,
+      drop_location,
+      drop_address: drop_address || null,
+      drop_city,
+      drop_state: drop_state || 'Bihar',
+      drop_pincode: drop_pincode || null,
+      goods_description,
+      goods_type: goods_type || null,
+      goods_weight_kg: goods_weight_kg ? Number(goods_weight_kg) : null,
+      goods_volume: goods_volume ? Number(goods_volume) : null,
+      number_of_items: number_of_items || 1,
+      fragile: fragile ? true : false,
+      vehicle_type_required,
+      estimated_distance_km,
+      estimated_price,
+      final_price: estimated_price,
+      status: 'pending',
     });
 
     res.status(201).json({
@@ -165,7 +146,8 @@ router.post('/create', protect, [
       message: 'Booking created successfully',
       data: {
         booking_id: result.booking_id,
-        booking_reference,
+        booking_number: result.booking_number,
+        booking_reference: result.booking_reference || result.booking_number,
         estimated_distance_km,
         estimated_price,
         status: 'pending'
@@ -195,7 +177,7 @@ router.get('/user/:id', protect, async (req, res) => {
       });
     }
 
-    const bookings = await prisma.booking.findMany({
+const bookings = await prisma.booking.findMany({
       where: { user_id: userId },
       include: {
         user: {
@@ -219,13 +201,6 @@ router.get('/user/:id', protect, async (req, res) => {
             },
           },
         },
-        vehicle: {
-          select: {
-            vehicle_number: true,
-            vehicle_type: true,
-            vehicle_name: true,
-          },
-        },
       },
       orderBy: { created_at: 'desc' },
     });
@@ -236,7 +211,6 @@ router.get('/user/:id', protect, async (req, res) => {
       booking_number: b.booking_number,
       user_id: b.user_id,
       driver_id: b.driver_id,
-      vehicle_id: b.vehicle_id,
       pickup_location: b.pickup_location,
       pickup_address: b.pickup_address,
       pickup_city: b.pickup_city,
@@ -272,9 +246,9 @@ router.get('/user/:id', protect, async (req, res) => {
       driver_first_name: b.driver?.user?.first_name ?? null,
       driver_last_name: b.driver?.user?.last_name ?? null,
       driver_phone: b.driver?.user?.phone ?? null,
-      vehicle_number: b.vehicle?.vehicle_number ?? null,
-      vehicle_type: b.vehicle?.vehicle_type ?? null,
-      vehicle_name: b.vehicle?.vehicle_name ?? null,
+      vehicle_number: b.truck_number_snapshot ?? null,
+      vehicle_type: null,
+      vehicle_name: null,
     }));
 
     res.json({
@@ -296,16 +270,9 @@ router.get('/user/:id', protect, async (req, res) => {
 // @access  Private
 router.get('/my-bookings', protect, async (req, res) => {
   try {
-    const bookings = await prisma.booking.findMany({
+const bookings = await prisma.booking.findMany({
       where: { user_id: req.user.user_id },
       include: {
-        vehicle: {
-          select: {
-            vehicle_number: true,
-            vehicle_type: true,
-            vehicle_name: true,
-          },
-        },
         delivery: {
           select: {
             current_status: true,
@@ -322,7 +289,6 @@ router.get('/my-bookings', protect, async (req, res) => {
       booking_number: b.booking_number,
       user_id: b.user_id,
       driver_id: b.driver_id,
-      vehicle_id: b.vehicle_id,
       pickup_location: b.pickup_location,
       pickup_address: b.pickup_address,
       pickup_city: b.pickup_city,
@@ -352,9 +318,9 @@ router.get('/my-bookings', protect, async (req, res) => {
       driver_assigned_at: b.driver_assigned_at,
       pickup_completed_at: b.pickup_completed_at,
       delivered_at: b.delivered_at,
-      vehicle_number: b.vehicle?.vehicle_number ?? null,
-      vehicle_type: b.vehicle?.vehicle_type ?? null,
-      vehicle_name: b.vehicle?.vehicle_name ?? null,
+      vehicle_number: b.truck_number_snapshot ?? null,
+      vehicle_type: null,
+      vehicle_name: null,
       current_status: b.delivery?.current_status ?? null,
       status_description: b.delivery?.status_description ?? null,
     }));
@@ -406,18 +372,7 @@ router.get('/:id', protect, async (req, res) => {
             },
           },
         },
-        vehicle: {
-          select: {
-            vehicle_number: true,
-            vehicle_type: true,
-            vehicle_name: true,
-            vehicle_make: true,
-            vehicle_model: true,
-            capacity_kg: true,
-            per_km_rate: true,
-          },
-        },
-        delivery: {
+delivery: {
           select: {
             current_status: true,
             status_description: true,
@@ -453,10 +408,9 @@ router.get('/:id', protect, async (req, res) => {
     const flatBooking = {
       booking_id: booking.booking_id,
       booking_reference: booking.booking_reference,
-      booking_number: booking.booking_number,
+booking_number: booking.booking_number,
       user_id: booking.user_id,
       driver_id: booking.driver_id,
-      vehicle_id: booking.vehicle_id,
       pickup_location: booking.pickup_location,
       pickup_address: booking.pickup_address,
       pickup_city: booking.pickup_city,
@@ -495,15 +449,15 @@ router.get('/:id', protect, async (req, res) => {
       rating: booking.driver?.rating || null,
       total_deliveries: booking.driver?.total_deliveries || null,
       driver_first_name: booking.driver?.user?.first_name || null,
-      driver_last_name: booking.driver?.user?.last_name || null,
+driver_last_name: booking.driver?.user?.last_name || null,
       driver_phone: booking.driver?.user?.phone || null,
-      vehicle_number: booking.vehicle?.vehicle_number || null,
-      vehicle_type: booking.vehicle?.vehicle_type || null,
-      vehicle_name: booking.vehicle?.vehicle_name || null,
-      vehicle_make: booking.vehicle?.vehicle_make || null,
-      vehicle_model: booking.vehicle?.vehicle_model || null,
-      capacity_kg: booking.vehicle?.capacity_kg || null,
-      per_km_rate: booking.vehicle?.per_km_rate || null,
+      vehicle_number: booking.truck_number_snapshot || null,
+      vehicle_type: null,
+      vehicle_name: null,
+      vehicle_make: null,
+      vehicle_model: null,
+      capacity_kg: null,
+      per_km_rate: null,
       current_status: booking.delivery?.current_status || null,
       status_description: booking.delivery?.status_description || null,
       estimated_pickup_time: booking.delivery?.estimated_pickup_time || null,
@@ -585,19 +539,20 @@ router.put('/:id/cancel', protect, async (req, res) => {
         });
       }
 
-      // If driver was assigned, make driver available again
+// If driver was assigned, make driver available again.
       if (booking.driver_id) {
         await tx.driver.update({
           where: { driver_id: booking.driver_id },
           data: { is_available: true },
         });
+      }
 
-        if (booking.vehicle_id) {
-          await tx.transportVehicle.update({
-            where: { vehicle_id: booking.vehicle_id },
-            data: { is_available: true, current_status: 'available' },
-          });
-        }
+      // If vehicle was assigned, make vehicle available again.
+      if (booking.vehicle_id) {
+        await tx.transportVehicle.update({
+          where: { vehicle_id: booking.vehicle_id },
+          data: { is_available: true, current_status: 'available' },
+        });
       }
     });
 
@@ -673,118 +628,79 @@ router.post('/:id/quote/reject', protect, async (req, res) => {
 });
 
 // @route   GET /api/bookings/track/:reference
-// @desc    Track booking by reference number
+// @desc    Track booking by reference number (full quote workflow context)
 // @access  Public
 router.get('/track/:reference', async (req, res) => {
   try {
     const reference = req.params.reference;
 
-    const booking = await prisma.booking.findUnique({
-      where: { booking_reference: reference },
-      include: {
-        vehicle: {
-          select: {
-            vehicle_number: true,
-            vehicle_name: true,
-            vehicle_type: true,
-          },
-        },
-        delivery: {
-          select: {
-            current_status: true,
-            status_description: true,
-            estimated_pickup_time: true,
-            estimated_delivery_time: true,
-          },
-        },
-        driver: {
-          select: {
-            driver_id: true,
-            rating: true,
-            total_deliveries: true,
-            user: {
-              select: {
-                user_id: true,
-                first_name: true,
-                last_name: true,
-                phone: true,
-              },
-            },
-          },
-        },
-      },
-    });
-
-    if (!booking) {
-      return res.status(404).json({
-        success: false,
-        message: 'Booking not found',
-      });
-    }
-
-    const driverInfo = booking.driver
-      ? {
-          driver_id: booking.driver.driver_id,
-          rating: booking.driver.rating,
-          total_deliveries: booking.driver.total_deliveries,
-          first_name: booking.driver.user.first_name,
-          last_name: booking.driver.user.last_name,
-          phone: booking.driver.user.phone,
-        }
-      : null;
-
-    // Brokerage model: driver details are often captured as snapshots
-    // (driver_name_snapshot, mobile_snapshot, truck_number_snapshot,
-    //  partner_name_snapshot) rather than linked accounts. Expose them so the
-    // customer always sees the assigned driver's contact + vehicle.
-    const snapshotDriverInfo = booking.driver_name_snapshot
-      ? {
-          driver_name: booking.driver_name_snapshot,
-          phone: booking.mobile_snapshot,
-          vehicle_number: booking.truck_number_snapshot,
-          vehicle_type: booking.vehicle?.vehicle_type || null,
-          owner_name: booking.partner_name_snapshot,
-        }
-      : null;
+    // Use the service which enriches the response with:
+    //   - active reservation (driver + vehicle held for approval)
+    //   - quote lifecycle fields (sent_at, valid_until, accepted/rejected)
+    //   - auto-expiry handling
+    const data = await bookingService.getBookingForTracking(reference);
 
     res.json({
       success: true,
-      data: {
-        booking_id: booking.booking_id,
-        booking_reference: booking.booking_reference,
-        pickup_location: booking.pickup_location,
-        pickup_city: booking.pickup_city,
-        drop_location: booking.drop_location,
-        drop_city: booking.drop_city,
-        goods_description: booking.goods_description,
-        status: booking.status,
-        estimated_price: booking.estimated_price,
-        final_price: booking.final_price,
-        quote_status: booking.quote_status,
-        quote_remarks: booking.quote_remarks,
-        quote_sent_at: booking.quote_sent_at,
-        quote_accepted_at: booking.quote_accepted_at,
-        pickup_date: booking.pickup_date,
-        pickup_time: booking.pickup_time,
-        driver_id: booking.driver_id,
-        vehicle_id: booking.vehicle_id,
-        vehicle_number: booking.vehicle?.vehicle_number || booking.truck_number_snapshot || null,
-        vehicle_name: booking.vehicle?.vehicle_name || null,
-        vehicle_type: booking.vehicle?.vehicle_type || null,
-        current_status: booking.delivery?.current_status || null,
-        status_description: booking.delivery?.status_description || null,
-        estimated_pickup_time: booking.delivery?.estimated_pickup_time || null,
-        estimated_delivery_time: booking.delivery?.estimated_delivery_time || null,
-        driver: driverInfo,
-        snapshot_driver: snapshotDriverInfo,
-      },
+      message: 'Booking retrieved successfully',
+      data,
+      errors: null,
     });
-  } catch (error) {
-    console.error('Track booking error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error tracking booking',
-    });
+  } catch (err) {
+    console.error('Track booking error:', err);
+    return mapDomainErrorToHttp(err, res, { message: 'Server error tracking booking' });
+  }
+});
+
+// @route   POST /api/bookings/track/:reference/quote/accept
+// @desc    Public quote acceptance by booking reference (guest customers).
+//          No authentication required — the booking_reference is the secret.
+//          The existing protected numeric-id endpoint remains for logged-in users.
+// @access  Public
+router.post('/track/:reference/quote/accept', async (req, res) => {
+  try {
+    const reference = req.params.reference;
+    if (!reference || typeof reference !== 'string' || reference.trim() === '') {
+      return res.status(400).json({ success: false, message: 'booking identifier is required', data: null, errors: null });
+    }
+
+    const identifier = normalizeBookingIdentifier(reference);
+    const found = await bookingRepo.findByIdentifier(identifier);
+    if (!found) {
+      return res.status(404).json({ success: false, message: 'Booking not found', data: null, errors: null });
+    }
+
+    const result = await bookingService.respondToQuote(found.booking_id, 'ACCEPT');
+    return res.json({ success: true, message: 'Quote accepted successfully', data: result, errors: null });
+  } catch (err) {
+    console.error('Public accept quote error:', err);
+    return mapDomainErrorToHttp(err, res);
+  }
+});
+
+// @route   POST /api/bookings/track/:reference/quote/reject
+// @desc    Public quote rejection by booking reference (guest customers).
+//          No authentication required — the booking_reference is the secret.
+//          The existing protected numeric-id endpoint remains for logged-in users.
+// @access  Public
+router.post('/track/:reference/quote/reject', async (req, res) => {
+  try {
+    const reference = req.params.reference;
+    if (!reference || typeof reference !== 'string' || reference.trim() === '') {
+      return res.status(400).json({ success: false, message: 'booking identifier is required', data: null, errors: null });
+    }
+
+    const identifier = normalizeBookingIdentifier(reference);
+    const found = await bookingRepo.findByIdentifier(identifier);
+    if (!found) {
+      return res.status(404).json({ success: false, message: 'Booking not found', data: null, errors: null });
+    }
+
+    const result = await bookingService.respondToQuote(found.booking_id, 'REJECT');
+    return res.json({ success: true, message: 'Quote rejected', data: result, errors: null });
+  } catch (err) {
+    console.error('Public reject quote error:', err);
+    return mapDomainErrorToHttp(err, res);
   }
 });
 

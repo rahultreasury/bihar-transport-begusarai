@@ -1,5 +1,5 @@
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { useState, useEffect, createContext, useContext, lazy, Suspense, useMemo } from 'react';
+import { useState, useEffect, createContext, useContext, lazy, Suspense, useMemo, useCallback, useRef } from 'react';
 
 // Context
 export const AuthContext = createContext(null);
@@ -8,6 +8,11 @@ export const AuthContext = createContext(null);
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
 import PageLoader from './components/PageLoader';
+
+// Auth persistence + route guard
+import { getStoredAuth, setStoredAuth, clearStoredAuth, onAuthChange } from './services/authStorage';
+import { authAPI } from './services/api';
+import ProtectedRoute from './components/ProtectedRoute';
 
 // Eager pages (critical path — small, always needed)
 import Home from './pages/Home';
@@ -23,6 +28,9 @@ const DriverDashboard = lazy(() => import('./pages/DriverDashboard'));
 const TrackBooking = lazy(() => import('./pages/TrackBooking'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const AdminBookings = lazy(() => import('./pages/AdminBookings'));
+const AdminBookingDetail = lazy(() => import('./pages/AdminBookingDetail'));
+const AdminAssignDriver = lazy(() => import('./pages/AdminAssignDriver'));
+const AdminAssignVehicle = lazy(() => import('./pages/AdminAssignVehicle'));
 const AdminLogin = lazy(() => import('./pages/AdminLogin'));
 const AdminDrivers = lazy(() => import('./pages/AdminDrivers'));
 const AdminDriverProfile = lazy(() => import('./pages/AdminDriverProfile'));
@@ -84,11 +92,11 @@ if (isAdmin) {
 }
 
 function AppContent() {
-  const { user, login, logout, loading } = useContext(AuthContext);
+  const { user, login, logout, authLoading } = useContext(AuthContext);
 
-  if (loading) {
+  if (authLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
+      <div className="flex items-center justify-center min-h-screen bg-surface">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-amber-500"></div>
       </div>
     );
@@ -140,73 +148,98 @@ function AppContent() {
         <Route 
           path="/admin" 
           element={
-            user?.role === 'admin' || user?.role === 'super_admin' 
-              ? <Suspense fallback={<PageLoader label="Loading Admin..." />}><AdminDashboard /></Suspense>
-              : <Navigate to="/" />
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading Admin..." />}><AdminDashboard /></Suspense>
+            </ProtectedRoute>
           } 
         />
         <Route 
           path="/admin/bookings" 
           element={
-            user?.role === 'admin' || user?.role === 'super_admin' 
-              ? <Suspense fallback={<PageLoader label="Loading Bookings..." />}><AdminBookings /></Suspense>
-              : <Navigate to="/" />
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading Bookings..." />}><AdminBookings /></Suspense>
+            </ProtectedRoute>
           } 
         />
+        {/* Admin booking detail (read-only) + dedicated assignment workflows */}
         <Route 
-          path="/admin/drivers" 
+          path="/admin/bookings/:bookingNumber" 
           element={
-            user?.role === 'admin' || user?.role === 'super_admin' 
-              ? <Suspense fallback={<PageLoader label="Loading Drivers..." />}><AdminDrivers /></Suspense>
-              : <Navigate to="/" />
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading Booking..." />}><AdminBookingDetail /></Suspense>
+            </ProtectedRoute>
+          } 
+        />
+<Route 
+          path="/admin/bookings/:bookingNumber/assign-driver" 
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading Driver Assignment..." />}><AdminAssignDriver /></Suspense>
+            </ProtectedRoute>
           } 
         />
         <Route 
+          path="/admin/bookings/:bookingNumber/assign-vehicle" 
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading Vehicle Assignment..." />}><AdminAssignVehicle /></Suspense>
+            </ProtectedRoute>
+          } 
+        />
+        <Route 
+          path="/admin/drivers"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading Drivers..." />}><AdminDrivers /></Suspense>
+            </ProtectedRoute>
+          } 
+        />
+<Route 
           path="/admin/drivers/:id" 
           element={
-            user?.role === 'admin' || user?.role === 'super_admin' 
-              ? <Suspense fallback={<PageLoader label="Loading Driver Profile..." />}><AdminDriverProfile /></Suspense>
-              : <Navigate to="/" />
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading Driver Profile..." />}><AdminDriverProfile /></Suspense>
+            </ProtectedRoute>
           } 
         />
         <Route 
           path="/admin/reports" 
           element={
-            user?.role === 'admin' || user?.role === 'super_admin' 
-              ? <Suspense fallback={<PageLoader label="Loading Reports..." />}><AdminReports /></Suspense>
-              : <Navigate to="/" />
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading Reports..." />}><AdminReports /></Suspense>
+            </ProtectedRoute>
           } 
         />
         <Route 
           path="/admin/analytics" 
           element={
-            user?.role === 'admin' || user?.role === 'super_admin' 
-              ? <Suspense fallback={<PageLoader label="Loading Analytics..." />}><AdminAnalytics /></Suspense>
-              : <Navigate to="/" />
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading Analytics..." />}><AdminAnalytics /></Suspense>
+            </ProtectedRoute>
           } 
         />
         <Route 
           path="/admin/owners" 
           element={
-            user?.role === 'admin' || user?.role === 'super_admin' 
-              ? <Suspense fallback={<PageLoader label="Loading Transport Owners..." />}><AdminPartners /></Suspense>
-              : <Navigate to="/" />
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading Transport Owners..." />}><AdminPartners /></Suspense>
+            </ProtectedRoute>
           } 
         />
         <Route 
           path="/admin/owners/:id" 
           element={
-            user?.role === 'admin' || user?.role === 'super_admin' 
-              ? <Suspense fallback={<PageLoader label="Loading Owner Profile..." />}><AdminPartnerProfile /></Suspense>
-              : <Navigate to="/" />
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading Owner Profile..." />}><AdminPartnerProfile /></Suspense>
+            </ProtectedRoute>
           } 
         />
         <Route 
           path="/admin/settlements" 
           element={
-            user?.role === 'admin' || user?.role === 'super_admin' 
-              ? <Suspense fallback={<PageLoader label="Loading Settlements..." />}><AdminSettlements /></Suspense>
-              : <Navigate to="/" />
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading Settlements..." />}><AdminSettlements /></Suspense>
+            </ProtectedRoute>
           } 
         />
 
@@ -230,32 +263,82 @@ function AppContent() {
 
 function App() {
   const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [authLoading, setAuthLoading] = useState(true);
 
-  useEffect(() => {
-    const token = localStorage.getItem('token');
-    const userData = localStorage.getItem('user');
-    
-    if (token && userData) {
-      setUser(JSON.parse(userData));
+  // Single boot routine: read persisted auth, then validate the token.
+  const boot = useCallback(async () => {
+    const stored = getStoredAuth();
+    if (!stored.token || !stored.user) {
+      setUser(null);
+      setAuthLoading(false);
+      return;
     }
-    setLoading(false);
+
+    // Optimistically hydrate from persisted user so the app shell renders.
+    setUser(stored.user);
+
+    // Validate the token server-side. If invalid/expired, clear auth.
+    try {
+      const res = await authAPI.adminMe();
+      const me = res?.data?.data?.user || res?.data?.user;
+      if (me) {
+        const freshUser = { ...stored.user, ...me };
+        setUser(freshUser);
+        setStoredAuth(stored.token, freshUser);
+      }
+    } catch (err) {
+      // 401 or network error → clear stale auth and let guards redirect.
+      clearStoredAuth();
+      setUser(null);
+    } finally {
+      setAuthLoading(false);
+    }
   }, []);
 
-  const login = (userData, token) => {
-    localStorage.setItem('token', token);
-    localStorage.setItem('user', JSON.stringify(userData));
-    setUser(userData);
-  };
+  useEffect(() => {
+    boot();
+  }, [boot]);
 
-  const logout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
+  // Keep runtime auth in sync when api.js clears/sets auth (e.g. a 401).
+  useEffect(() => {
+    const unsubscribe = onAuthChange((authenticated) => {
+      if (!authenticated) {
+        setUser(null);
+        setAuthLoading(false);
+      }
+    });
+    return unsubscribe;
+  }, []);
+
+  // bfcache / pageshow: on back-forward navigation the persisted auth may have
+  // changed (e.g. logged out in another tab). Re-read + re-validate.
+  useEffect(() => {
+    const onPageShow = (e) => {
+      if (e.persisted) boot();
+    };
+    window.addEventListener('pageshow', onPageShow);
+    return () => window.removeEventListener('pageshow', onPageShow);
+  }, [boot]);
+
+  const login = useCallback((userData, token) => {
+    setStoredAuth(token, userData);
+    setUser(userData);
+    setAuthLoading(false);
+  }, []);
+
+  const logout = useCallback(() => {
+    clearStoredAuth();
     setUser(null);
-  };
+    setAuthLoading(false);
+  }, []);
+
+  const value = useMemo(
+    () => ({ user, login, logout, authLoading }),
+    [user, login, logout, authLoading]
+  );
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, loading }}>
+    <AuthContext.Provider value={value}>
       <Router>
         <AppContent />
       </Router>

@@ -1,6 +1,6 @@
 /**
  * BookingAssignmentRepository
- * Database-only repository for tracking assignments (driver/vehicle) history.
+ * Database-only repository for tracking driver assignment history.
  * Uses Prisma Client for all database operations.
  */
 
@@ -12,18 +12,18 @@ class BookingAssignmentRepository {
    * @param {number} bookingId
    * @param {number} driverId
    * @param {number=} adminId
-   * @param {number=} vehicleId - Optional vehicle assignment at the same time.
+   * @param {number=} vehicleId
    * @param {object=} tx - Prisma transaction client
    * @returns {Promise<{booking_assignment_id:number}>}
    */
-  async assignDriver(bookingId, driverId, adminId, vehicleId, tx = null) {
+  async assignDriver(bookingId, driverId, adminId, vehicleId = null, tx = null) {
     const client = tx || prisma;
     try {
       const assignment = await client.bookingAssignment.create({
         data: {
           booking_id: bookingId,
           assigned_driver_id: driverId,
-          assigned_vehicle_id: vehicleId ?? null,
+          assigned_vehicle_id: vehicleId,
           assigned_by_admin_id: adminId ?? null,
           assignment_status: 'active',
         },
@@ -35,22 +35,22 @@ class BookingAssignmentRepository {
   }
 
   /**
-   * Assign a vehicle to a booking (creates a new assignment record).
+   * Assign a vehicle to a booking (creates or updates assignment record).
    * @param {number} bookingId
    * @param {number} vehicleId
    * @param {number=} adminId
-   * @param {number=} driverId - Optional driver assignment at the same time.
+   * @param {number=} driverId
    * @param {object=} tx - Prisma transaction client
    * @returns {Promise<{booking_assignment_id:number}>}
    */
-  async assignVehicle(bookingId, vehicleId, adminId, driverId, tx = null) {
+  async assignVehicle(bookingId, vehicleId, adminId, driverId = null, tx = null) {
     const client = tx || prisma;
     try {
       const assignment = await client.bookingAssignment.create({
         data: {
           booking_id: bookingId,
-          assigned_driver_id: driverId ?? null,
           assigned_vehicle_id: vehicleId,
+          assigned_driver_id: driverId,
           assigned_by_admin_id: adminId ?? null,
           assignment_status: 'active',
         },
@@ -108,4 +108,3 @@ class BookingAssignmentRepository {
 }
 
 module.exports = BookingAssignmentRepository;
-

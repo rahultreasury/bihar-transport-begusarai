@@ -183,6 +183,8 @@ function OverviewTab({ driver }) {
     { label: 'Full Name', value: driver.driver_name },
     { label: 'Mobile Number', value: driver.mobile },
     { label: 'Current Status', value: <DriverStatusBadge status={driver.status} size="sm" /> },
+{ label: 'Vehicle Type', value: driver.vehicle_type || '—' },
+    { label: 'Vehicle Number', value: driver.vehicle_number || '—', mono: true },
     { label: 'Licence Number', value: driver.license_number || '—' },
     { label: 'Licence Expiry', value: driver.license_expiry ? new Date(driver.license_expiry).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) : '—' },
     { label: 'Licence Class', value: driver.license_class || '—' },

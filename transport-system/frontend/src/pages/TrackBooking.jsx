@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { bookingAPI } from '../services/api';
 import SEO from '../components/seo/SEO';
+import { deriveQuoteState } from '../utils/bookingUtils';
 
 // Tracking components
 import BookingHeader from '../components/tracking/BookingHeader';
@@ -9,6 +10,8 @@ import StatusCard from '../components/tracking/StatusCard';
 import ProgressTimeline from '../components/tracking/ProgressTimeline';
 import ActivityFeed from '../components/tracking/ActivityFeed';
 import BookingDetails from '../components/tracking/BookingDetails';
+import QuoteCard from '../components/tracking/QuoteCard';
+import DriverVehicleCard from '../components/tracking/DriverVehicleCard';
 import SupportCard from '../components/tracking/SupportCard';
 import LoadingSkeleton from '../components/tracking/LoadingSkeleton';
 import NotFoundCard from '../components/tracking/NotFoundCard';
@@ -52,16 +55,19 @@ function TrackBooking() {
         setBooking(response.data.data);
       } else {
         setNotFound(true);
+        setBooking(null);
       }
     } catch (err) {
       const status = err.response?.status;
       if (status === 404) {
         setNotFound(true);
+        setBooking(null);
       } else {
         setError(
           err.response?.data?.message ||
           'Unable to fetch booking details. Please try again later.'
         );
+        setBooking(null);
       }
     } finally {
       setLoading(false);
@@ -94,7 +100,7 @@ function TrackBooking() {
     navigate(`/track/${ref.toUpperCase()}`);
   };
 
-  /**
+/**
    * Handle retry on error.
    */
   const handleRetry = () => {
@@ -102,6 +108,72 @@ function TrackBooking() {
       fetchBooking(bookingNumber);
     }
   };
+
+  /**
+   * Accept the final quote → booking becomes confirmed.
+   * Uses the PUBLIC reference-based endpoint so guest customers (no JWT)
+   * can accept. After success, re-fetch the booking so the UI transitions to
+   * the "Booking Confirmed" + driver/vehicle/ETA state immediately.
+   */
+  const handleAcceptQuote = async () => {
+    if (!booking) return;
+    await bookingAPI.acceptQuoteByReference(bookingNumber);
+    await fetchBooking(bookingNumber);
+  };
+
+  /**
+   * Reject the final quote → releases reservations, booking stays pending.
+   * Uses the PUBLIC reference-based endpoint so guest customers (no JWT)
+   * can reject. After success, re-fetch so the UI reflects the REJECTED state.
+   */
+  const handleRejectQuote = async () => {
+    if (!booking) return;
+    await bookingAPI.rejectQuoteByReference(bookingNumber);
+    await fetchBooking(bookingNumber);
+  };
+
+  /**
+   * Handle quote expiry → re-fetch so the UI reflects the EXPIRED state.
+   */
+  const handleQuoteExpired = () => {
+    if (bookingNumber) {
+      fetchBooking(bookingNumber);
+    }
+  };
+
+// Derived booking state for quote-aware rendering.
+  // SINGLE SOURCE OF TRUTH:
+  //   - quote_status === 'SENT'            → QuoteCard (price, countdown,
+  //                                           Accept/Reject). NO driver info.
+  //   - booking.status === 'confirmed' (or
+  //     downstream) OR quote_status === 'ACCEPTED'
+  //     (backend sets status='confirmed' atomically on accept)
+  //                                         → DriverVehicleCard (driver name,
+  //                                           phone, vehicle, call/WhatsApp).
+  // There is no artificial intermediate UI state — the backend flips the
+  // booking to confirmed immediately when the customer accepts the quote.
+  const { quoteStatus, status: normalizedStatus, isConfirmed, isQuoteSent, isEdgeCase } = deriveQuoteState({
+    quoteStatus: booking?.quote_status,
+    status: booking?.status,
+    finalPrice: booking?.final_price,
+  });
+
+  // DEBUG: log the exact runtime values so we can trace why QuoteCard
+  // does or does not render.
+  if (booking) {
+    console.log('[QUOTE DEBUG]', {
+      rawQuoteStatus: booking?.quote_status,
+      rawStatus: booking?.status,
+      finalPrice: booking?.final_price,
+      bookingNumber: booking?.booking_number,
+      normalizedQuoteStatus: quoteStatus,
+      normalizedStatus: normalizedStatus,
+      isConfirmed,
+      isQuoteSent,
+      isEdgeCase,
+      shouldShowQuote: isQuoteSent || isConfirmed,
+    });
+  }
 
   // ==============================
   // RENDER: SEARCH ONLY (no booking number in URL)
@@ -267,7 +339,23 @@ function TrackBooking() {
   // RENDER: BOOKING DASHBOARD
   // ==============================
   if (!booking) {
-    return null;
+    // Safety: if loading finished but booking is null, show error state
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white">
+        <div className="max-w-lg mx-auto px-4 sm:px-6 py-16 md:py-24">
+          <div className="rounded-2xl border-2 border-red-200 bg-red-50 p-6 md:p-8 text-center">
+            <h2 className="text-lg font-bold text-gray-900 mb-2">Unable to load booking</h2>
+            <p className="text-sm text-gray-600 mb-6">The booking data could not be loaded. Please try again.</p>
+            <button
+              onClick={handleRetry}
+              className="inline-flex items-center gap-2 px-5 py-2.5 bg-amber-500 text-white rounded-xl font-semibold hover:bg-amber-600 transition-colors shadow-sm cursor-pointer"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -293,10 +381,28 @@ function TrackBooking() {
           <BookingHeader booking={booking} />
         </div>
 
+{/* Quote action card — shows Final Quote or Booking Confirmed */}
+        {(isQuoteSent || isConfirmed) && (
+          <div className="animate-fade-in-down" style={{ animationDuration: '0.5s', animationDelay: '0.1s' }}>
+            {isQuoteSent ? (
+              <QuoteCard
+                booking={booking}
+                onAccept={handleAcceptQuote}
+                onReject={handleRejectQuote}
+                onExpired={handleQuoteExpired}
+                isEdgeCase={isEdgeCase}
+              />
+            ) : (
+              <DriverVehicleCard booking={booking} />
+            )}
+          </div>
+        )}
+
         {/* Current Status Card */}
-        <div className="animate-fade-in-down" style={{ animationDuration: '0.5s', animationDelay: '0.1s' }}>
+        <div className="animate-fade-in-down" style={{ animationDuration: '0.5s', animationDelay: '0.15s' }}>
           <StatusCard
             status={booking.status}
+            quoteStatus={booking.quote_status}
             pickupDate={booking.pickup_date}
             updatedAt={booking.updated_at}
           />
@@ -306,13 +412,15 @@ function TrackBooking() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 md:gap-6">
           {/* Progress Timeline */}
           <div className="animate-fade-in-down" style={{ animationDuration: '0.5s', animationDelay: '0.2s' }}>
-            <ProgressTimeline status={booking.status} />
+            <ProgressTimeline status={booking.status} quoteStatus={booking.quote_status} />
           </div>
 
           {/* Activity Feed */}
           <div className="animate-fade-in-down" style={{ animationDuration: '0.5s', animationDelay: '0.25s' }}>
             <ActivityFeed
+              events={booking.bookingEvents}
               status={booking.status}
+              quoteStatus={booking.quote_status}
               createdAt={booking.created_at}
               updatedAt={booking.updated_at}
             />

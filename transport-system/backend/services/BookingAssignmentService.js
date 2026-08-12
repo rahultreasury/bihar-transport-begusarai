@@ -109,10 +109,5 @@ class BookingAssignmentService {
   }
 }
 
-module.exports = {
-  BookingAssignmentService,
-  BookingAssignmentDomainError,
-  ValidationError,
-  NotFoundError
-};
+module.exports = BookingAssignmentService;
 

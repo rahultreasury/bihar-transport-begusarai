@@ -2,6 +2,10 @@ const express = require('express');
 const router = express.Router();
 const { prisma } = require('../config/prisma');
 const { protect } = require('../middleware/auth');
+const { validateTransition } = require('../utils/BookingStateMachine');
+const BookingTimelineRepository = require('../repositories/BookingTimelineRepository');
+
+const timelineRepo = new BookingTimelineRepository();
 
 // @route   POST /api/delivery/update-location
 // @desc    Update driver location for live tracking
@@ -214,9 +218,10 @@ router.post('/complete', protect, async (req, res) => {
         booking_id: parseInt(booking_id),
         driver_id: driver.driver_id,
       },
-      select: {
+select: {
         booking_id: true,
         vehicle_id: true,
+        status: true,
       },
     });
 
@@ -227,6 +232,21 @@ router.post('/complete', protect, async (req, res) => {
       });
     }
 
+    // Enforce the canonical booking state machine. A delivery can only be
+    // marked 'delivered' if the current booking status permits that transition
+    // (out_for_delivery → delivered). This prevents arbitrary jumps (e.g. from
+    // pending or in_transit straight to delivered).
+    try {
+      validateTransition(booking.status, 'delivered');
+    } catch (err) {
+      return res.status(409).json({
+        success: false,
+        message: err.message,
+      });
+    }
+
+    const deliveredAt = new Date();
+
     // Perform all updates in a transaction
     await prisma.$transaction(async (tx) => {
       // Update delivery
@@ -235,7 +255,7 @@ router.post('/complete', protect, async (req, res) => {
         data: {
           current_status: 'delivered',
           status_description: 'Delivery completed',
-          actual_delivery_time: new Date(),
+          actual_delivery_time: deliveredAt,
           recipient_name: recipient_name || null,
           delivery_notes: delivery_notes || null,
           delivery_proof_image: delivery_proof_image || null,
@@ -247,9 +267,17 @@ router.post('/complete', protect, async (req, res) => {
         where: { booking_id: parseInt(booking_id) },
         data: {
           status: 'delivered',
-          delivered_at: new Date(),
+          delivered_at: deliveredAt,
         },
       });
+
+      // Record the transition in the booking timeline.
+      await timelineRepo.addEvent(
+        parseInt(booking_id),
+        'booking_status_changed',
+        JSON.stringify({ from: booking.status, to: 'delivered', actor: 'driver', actorId: driver.driver_id }),
+        tx
+      );
 
       // Make driver available again
       await tx.driver.update({

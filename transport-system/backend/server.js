@@ -1,7 +1,6 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const { execSync } = require('child_process');
 const dotenv = require('dotenv');
 const compression = require('compression');
 const helmet = require('helmet');
@@ -12,6 +11,8 @@ const { validateEnv } = require('./utils/env');
 
 const { NotFoundError } = require('./utils/AppError');
 const errorHandler = require('./middleware/errorHandler');
+const { logger } = require('./utils/logger');
+const pinoHttp = require('pino-http');
 
 // Load environment variables (explicit backend .env path)
 dotenv.config({
@@ -62,6 +63,12 @@ const emailService = require('./services/emailService');
 
 const app = express();
 
+// Trust the first hop behind Render's reverse proxy so Express uses the real
+// client IP (X-Forwarded-For) for req.ip. Without this, every request appears
+// to come from the proxy's internal IP, collapsing all admin traffic into a
+// single shared rate-limit bucket and causing production-only HTTP 429s.
+app.set('trust proxy', 1);
+
 // Middleware
 app.use(helmet({
   contentSecurityPolicy: {
@@ -81,8 +88,12 @@ app.use(helmet({
   referrerPolicy: { policy: 'no-referrer' },
 }));
 
+// In development, allow all origins to avoid CORS friction between
+// frontend (5173/5174) and backend (3000). In production, restrict to
+// FRONTEND_URL if provided.
+const isDev = process.env.NODE_ENV !== 'production';
 app.use(cors({
-  origin: process.env.FRONTEND_URL || '*',
+  origin: isDev ? '*' : (process.env.FRONTEND_URL || '*'),
   credentials: true,
 }));
 
@@ -90,8 +101,35 @@ app.use(compression());
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Request logging
-app.use(morgan(process.env.NODE_ENV === 'development' ? 'dev' : 'combined'));
+// Request logging (Pino with request IDs)
+app.use(pinoHttp({
+  logger,
+  genReqId: (req, res) => {
+    const provided = req.headers['x-request-id'];
+    if (provided) return provided;
+    let id = req.id;
+    if (!id) {
+      id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      req.id = id;
+    }
+    return id;
+  },
+  serializers: {
+    req(req) {
+      return {
+        id: req.id,
+        method: req.method,
+        url: req.url,
+        remoteAddress: req.remoteAddress,
+      };
+    },
+  },
+  customLogLevel(req, res, err) {
+    if (res.statusCode >= 500 || err) return 'error';
+    if (res.statusCode >= 400) return 'warn';
+    return 'info';
+  },
+}));
 
 // Rate limiting
 const globalLimiter = rateLimit({
@@ -129,10 +167,12 @@ app.use(globalLimiter);
 app.use('/api/auth', loginLimiter, authRoutes);
 app.use('/api/bookings', bookingLimiter, bookingRoutes);
 app.use('/api', bookingLimiter, bookingMvpRoutes);
-// Driver Management Routes FIRST so the full driver module serves /api/admin/drivers
+
+// Driver Management Routes (admin-limited and admin-checked internally).
+// MUST be mounted BEFORE /api/admin so this module is the single source of
+// truth for GET /api/admin/drivers and is never shadowed by adminRoutes.
 app.use('/api/admin/drivers', adminLimiter, driverManagementRoutes);
 
-// Legacy admin routes (dashboard, users, vehicles, bookings)
 app.use('/api/admin', adminLimiter, adminRoutes);
 app.use('/api/drivers', bookingLimiter, driverRoutes);
 app.use('/api/delivery', bookingLimiter, deliveryRoutes);
@@ -193,31 +233,8 @@ app.use(errorHandler);
 
 const PORT = process.env.PORT || 3000;
 
-// Sync the database schema to match schema.prisma on startup.
-// Uses `prisma db push` so both localhost and Render (Neon/PostgreSQL)
-// get the required tables/columns automatically without manual migration steps.
-function syncDatabaseSchema() {
-  if (!process.env.DATABASE_URL) return;
-  const prismaBin = path.join(__dirname, 'node_modules', '.bin', 'prisma');
-  try {
-    console.log('[db] Syncing database schema to match Prisma schema...');
-    execSync(`"${prismaBin}" db push --skip-generate --accept-data-loss`, {
-      cwd: __dirname,
-      stdio: 'pipe',
-      env: { ...process.env },
-    });
-    console.log('[db] Database schema is up to date.');
-  } catch (err) {
-    // Do not crash the server if schema sync fails; the app will surface
-    // any missing-table errors per request, and logs will show the cause.
-    console.error('[db] Schema sync failed (continuing):', err.stderr ? err.stderr.toString() : err.message);
-  }
-}
-
 // Start server
 const startServer = async () => {
-  syncDatabaseSchema();
-
   const dbResult = await testPrismaConnection();
   if (dbResult.success) {
     console.log(dbResult.message);
