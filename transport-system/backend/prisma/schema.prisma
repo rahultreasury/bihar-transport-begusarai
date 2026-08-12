@@ -327,8 +327,8 @@ model TransportVehicle {
 // --- Bookings ---
 model Booking {
   booking_id            Int       @id @default(autoincrement())
-  booking_reference     String    @unique
-  booking_number        String?
+  booking_reference     String?   @unique // Legacy / backward-compat alias (nullable)
+  booking_number        String    @unique // CANONICAL booking number: BTB-YYYY-NNNNN
   user_id               Int
   driver_id             Int?
   vehicle_id            Int?                  // Assigned transport vehicle (nullable)
@@ -390,6 +390,7 @@ status                String?   @default("pending")
   driver_assigned_at    DateTime?
   pickup_completed_at   DateTime?
   delivered_at          DateTime?
+  archived_at           DateTime?  // Soft-delete / archive timestamp
 
 // Relations
   user               User              @relation(fields: [user_id], references: [user_id], onDelete: Cascade)

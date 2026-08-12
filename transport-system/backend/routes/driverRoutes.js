@@ -4,6 +4,9 @@ const { prisma } = require('../config/prisma');
 const { protect } = require('../middleware/auth');
 const { body, validationResult } = require('express-validator');
 const { validateTransition } = require('../utils/BookingStateMachine');
+const BookingTimelineRepository = require('../repositories/BookingTimelineRepository');
+
+const timelineRepo = new BookingTimelineRepository();
 
 // @route   GET /api/drivers/available-jobs
 // @desc    Get available transport jobs
@@ -197,10 +200,25 @@ router.post('/accept-job/:bookingId', protect, async (req, res) => {
       });
     }
 
-    if (booking.status !== 'pending' && booking.status !== 'quote_sent') {
+if (booking.status !== 'pending' && booking.status !== 'quote_sent') {
       return res.status(400).json({
         success: false,
         message: 'This booking is no longer available'
+      });
+    }
+
+    // Enforce the canonical state machine. Reaching the driver-assigned and
+    // then confirmed state must go through a valid transition. A driver
+    // accepting a job moves the booking from pending/quote_sent to
+    // 'driver_assigned' (the canonical state), then immediately to
+    // 'confirmed' (the booked state) once the driver + vehicle are set.
+    try {
+      validateTransition(booking.status, 'driver_assigned');
+      validateTransition('driver_assigned', 'confirmed');
+    } catch (err) {
+      return res.status(409).json({
+        success: false,
+        message: err.message,
       });
     }
 
@@ -209,7 +227,7 @@ router.post('/accept-job/:bookingId', protect, async (req, res) => {
 
     // Perform all updates in a transaction
     await prisma.$transaction(async (tx) => {
-      // Update booking
+      // Update booking to confirmed (driver accepted + assigned the job).
       await tx.booking.update({
         where: { booking_id: bookingId },
         data: {
@@ -219,6 +237,14 @@ router.post('/accept-job/:bookingId', protect, async (req, res) => {
           driver_assigned_at: new Date(),
         },
       });
+
+      // Record the transition in the booking timeline.
+      await timelineRepo.addEvent(
+        bookingId,
+        'booking_status_changed',
+        JSON.stringify({ from: booking.status, to: 'confirmed', actor: 'driver', actorId: driver.driver_id, vehicle_id: parseInt(vehicle_id) }),
+        tx
+      );
 
       // Update or create delivery record
       const existingDelivery = await tx.delivery.findUnique({
@@ -526,10 +552,18 @@ router.put('/update-status/:bookingId', protect, [
       if (status === 'delivered') {
         bookingUpdateData.delivered_at = new Date();
       }
-      await tx.booking.update({
+await tx.booking.update({
         where: { booking_id: bookingId },
         data: bookingUpdateData,
       });
+
+      // Record the transition in the booking timeline.
+      await timelineRepo.addEvent(
+        bookingId,
+        'booking_status_changed',
+        JSON.stringify({ from: booking.status, to: status, actor: 'driver', actorId: driver.driver_id, notes: notes || null }),
+        tx
+      );
 
       // Update delivery
       const deliveryUpdateData = {

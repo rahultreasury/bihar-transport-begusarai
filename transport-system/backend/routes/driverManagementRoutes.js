@@ -179,17 +179,47 @@ router.post('/bulk-delete', protect, adminCheck, async (req, res) => {
   }
 });
 
-// Soft delete driver
+// Permanently delete driver (dependency-aware). Only returns success AFTER
+// the database confirms the row is gone. Rejects with a structured error when
+// the driver has active/protected operational dependencies.
 router.delete('/:id', protect, adminCheck, async (req, res) => {
   try {
     const driverId = parseInt(req.params.id);
     if (isNaN(driverId)) return res.status(400).json({ success: false, message: 'Invalid driver ID' });
 
-    await driverService.deleteDriver(driverId);
-    res.json({ success: true, message: 'Driver marked as inactive' });
+    const result = await driverService.permanentlyDeleteDriver(driverId, req.user?.user_id || null);
+
+    // Archived (financial history retained) — not a hard delete.
+    if (result && result.archived) {
+      return res.json({
+        success: true,
+        message: 'Driver archived (financial records retained). Driver deactivated.',
+        archived: true,
+        data: { driver_id: driverId, status: 'inactive' },
+      });
+    }
+
+    // Hard delete confirmed.
+    res.json({ success: true, message: 'Driver deleted successfully.', data: { driver_id: driverId } });
   } catch (error) {
     console.error('Delete driver error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
+    // Structured rejection codes → 409 Conflict with a clear error object.
+    const structuredCodes = [
+      'DRIVER_HAS_ACTIVE_BOOKINGS',
+      'DRIVER_HAS_ACTIVE_RESERVATION',
+      'DRIVER_IS_ASSIGNED',
+      'DRIVER_HAS_ACTIVE_DELIVERY',
+      'DRIVER_NOT_FOUND',
+      'DRIVER_DELETE_FAILED',
+    ];
+    if (structuredCodes.includes(error.code)) {
+      const status = error.code === 'DRIVER_NOT_FOUND' ? 404 : 409;
+      return res.status(status).json({
+        success: false,
+        error: { code: error.code, message: error.message, data: error.data || null },
+      });
+    }
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Server error' } });
   }
 });
 

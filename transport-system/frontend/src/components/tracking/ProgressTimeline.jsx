@@ -1,4 +1,5 @@
 import React from 'react';
+import { normalizeQuoteStatus, normalizeStatus, isConfirmedStatus } from '../../utils/bookingUtils';
 
 const TIMELINE_STEPS = [
   { key: 'booking_received', label: 'Booking Received' },
@@ -18,12 +19,16 @@ const TIMELINE_STEPS = [
  * @param {string} quoteStatus
  */
 function getCurrentIndex(status, quoteStatus) {
-  const q = (quoteStatus || 'PENDING').toUpperCase();
+  const q = normalizeQuoteStatus(quoteStatus);
+  const s = normalizeStatus(status);
 
-  if (['delivered', 'completed'].includes(status)) return 6;
-  if (status === 'in_transit') return 5;
-  if (status === 'pickup_completed') return 4;
-  if (status === 'driver_assigned' || status === 'confirmed' || q === 'ACCEPTED') return 3;
+  if (['delivered', 'completed'].includes(s)) return 6;
+  if (s === 'in_transit') return 5;
+  if (s === 'out_for_delivery') return 5;
+  if (s === 'pickup_completed') return 5;
+  if (s === 'pickup_started') return 4;
+  if (s === 'confirmed' || q === 'ACCEPTED') return 4;
+  if (s === 'driver_assigned') return 3;
   if (q === 'REJECTED' || q === 'EXPIRED') return 0;
   if (q === 'SENT') return 2;
   if (q === 'DRIVER_RESERVED' || q === 'VEHICLE_RESERVED' || q === 'QUOTE_PREPARING' || q === 'QUOTE_REQUESTED') return 1;
@@ -37,7 +42,7 @@ function getCurrentIndex(status, quoteStatus) {
  */
 const ProgressTimeline = React.memo(function ProgressTimeline({ status, quoteStatus, className = '' }) {
   const currentIndex = getCurrentIndex(status, quoteStatus);
-  const q = (quoteStatus || 'PENDING').toUpperCase();
+  const q = normalizeQuoteStatus(quoteStatus);
 
   // Waiting for approval is "current" while SENT (quote waiting for customer action)
   const isAwaitingApproval = q === 'SENT';

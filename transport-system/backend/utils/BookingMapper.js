@@ -19,6 +19,9 @@ function flattenBooking(b) {
     booking_id: b.booking_id,
     booking_reference: b.booking_reference,
     booking_number: b.booking_number,
+    // Canonical frontend-facing field (camelCase). booking_number /
+    // booking_reference are kept for backward compatibility.
+    bookingNumber: b.booking_number,
     user_id: b.user_id,
     driver_id: b.driver_id,
     pickup_location: b.pickup_location,
@@ -125,6 +128,9 @@ function flattenBookingForDriver(b) {
     booking_id: b.booking_id,
     booking_reference: b.booking_reference,
     booking_number: b.booking_number,
+    // Canonical frontend-facing field (camelCase). booking_number /
+    // booking_reference are kept for backward compatibility.
+    bookingNumber: b.booking_number,
     user_id: b.user_id,
     driver_id: b.driver_id,
     vehicle_id: b.vehicle_id,

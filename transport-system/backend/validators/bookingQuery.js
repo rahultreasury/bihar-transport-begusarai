@@ -40,6 +40,7 @@ const bookingQuerySchema = z.object({
   sort_order: z.enum(['asc', 'desc']).optional().default('desc'),
   driver_id: z.coerce.number().int().positive().optional().default(''),
   vehicle_id: z.coerce.number().int().positive().optional().default(''),
+  archived: z.string().optional().default(''),
 }).refine((data) => {
   // Validate status against allowed set, if provided.
   if (data.status && !BOOKING_STATUSES.includes(data.status)) {

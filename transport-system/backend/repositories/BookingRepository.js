@@ -74,19 +74,37 @@ const BookingInclude = {
 class BookingRepository {
   /**
    * Create a new booking row.
+   *
+   * Canonical booking-number logic:
+   *   - The booking_number (BTB-YYYY-NNNNN) is DERIVED from the DB primary
+   *     key (booking_id) by BookingNumberService. It is the single canonical
+   *     customer/admin-facing identifier. It is NEVER random and NEVER
+   *     generated in the frontend.
+   *   - booking_reference is kept as a legacy/backward-compatible alias. For
+   *     new bookings it mirrors booking_number so tracking/email/WhatsApp
+   *     links continue to work uniformly.
+   *
    * @param {Object} data
    * @param {string=} tx - Prisma transaction client
    * @returns {Promise<{booking_id: number}>}
    */
   async create(data, tx = null) {
     const client = tx || prisma;
+    // booking_number is required by the schema but the canonical BTB-YYYY-NNNNN
+    // is derived from the auto-increment PK after creation. Generate a temporary
+    // unique placeholder here; BookingService.createBooking updates it atomically.
+    const tempBookingNumber = data.booking_number || `TEMP-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const booking = await client.booking.create({
       data: {
-        booking_reference: data.booking_reference,
-        booking_number: data.booking_number,
-        user_id: data.user_id,
-        driver_id: data.driver_id || null,
-        vehicle_id: data.vehicle_id || null,
+        booking_reference: data.booking_reference || tempBookingNumber,
+        booking_number: tempBookingNumber,
+        user: {
+          connect: {
+            user_id: data.user_id,
+          },
+        },
+        driver: data.driver_id ? { connect: { driver_id: data.driver_id } } : undefined,
+        vehicle: data.vehicle_id ? { connect: { vehicle_id: data.vehicle_id } } : undefined,
         pickup_location: data.pickup_location,
         pickup_address: data.pickup_address || null,
         pickup_city: data.pickup_city,
@@ -143,6 +161,29 @@ class BookingRepository {
     const client = tx || prisma;
     return await client.booking.findUnique({
       where: { booking_reference: bookingReference },
+    });
+  }
+
+  /**
+   * Get a booking by its CANONICAL booking_number (BTB-YYYY-NNNNN) OR its
+   * legacy booking_reference alias. This is the single lookup used by
+   * admin read-only detail / assign pages and the public tracking page so
+   * the system never silently accepts unrelated identifier formats.
+   *
+   * @param {string} identifier - canonical booking_number or legacy reference
+   * @returns {Promise<Object|null>} booking with full relations
+   */
+  async findByIdentifier(identifier) {
+    if (!identifier || typeof identifier !== 'string') return null;
+    const value = String(identifier).trim();
+    return await prisma.booking.findFirst({
+      where: {
+        OR: [
+          { booking_number: value },
+          { booking_reference: value },
+        ],
+      },
+      include: BookingInclude,
     });
   }
 
@@ -281,6 +322,14 @@ class BookingRepository {
    */
   async listBookings(filters = {}) {
     const where = {};
+
+    // By default, exclude archived bookings from the active list.
+    // Pass ?archived=true to view archived records.
+    if (filters.archived) {
+      where.archived_at = { not: null };
+    } else {
+      where.archived_at = null;
+    }
 
     if (filters.status) {
       where.status = filters.status;

@@ -248,30 +248,104 @@ const driver = await this.repo.create({
   }
 
 /**
-   * Delete a driver (soft delete) inside a single DB transaction so the
-   * status update and timeline event are atomic — no partial state, no
-   * foreign-key failures, and only one round-trip to the database.
+   * Permanently delete a driver — but only when it is safe to do so.
+   *
+   * Business rule (from the approved delete-management plan):
+   *   - If the driver has ACTIVE / protected operational dependencies
+   *     (active bookings, active reservations, active assignments,
+   *     active deliveries) → REJECT hard deletion with a structured error.
+   *   - If the driver has historical bookings/deliveries/reservations,
+   *     those records are RETAINED (FK SET NULL preserves booking
+   *     snapshots + history). The driver's own transactions, timeline and
+   *     driver_assignments are CASCADE-deleted by the DB (they are only
+   *     meaningful while the driver exists).
+   *   - If the driver has a registered transport_vehicle, the vehicle is
+   *     safety-unlinked (SET NULL) so it is not destroyed.
+   *   - If the driver has financial records that must be retained for
+   *     history, we keep the driver (archive) instead of a hard delete.
+   *
+   * Only returns success AFTER the DB confirms the row is gone.
+   *
+   * @param {number} driverId
+   * @param {number} adminId  admin performing the delete (for audit)
+   * @returns {Promise<{driver_id:number}>}
+   * @throws {Error} with `.code` set to a structured rejection code
    */
-  async deleteDriver(driverId) {
+  async permanentlyDeleteDriver(driverId, adminId = null) {
     const driver = await this.repo.findById(driverId);
-    if (!driver) throw new Error('Driver not found');
+    if (!driver) {
+      const err = new Error('Driver not found');
+      err.code = 'DRIVER_NOT_FOUND';
+      throw err;
+    }
 
-    const updated = await prisma.$transaction(async (tx) => {
-      await tx.driver.update({
+    const deps = await this.repo.findDependencySummary(driverId);
+
+    // Protected / active operational dependencies → reject hard delete.
+    if (deps.activeBookings > 0) {
+      const err = new Error('This driver cannot be deleted because they are associated with active bookings.');
+      err.code = 'DRIVER_HAS_ACTIVE_BOOKINGS';
+      err.data = { activeBookings: deps.activeBookings };
+      throw err;
+    }
+    if (deps.activeReservations > 0) {
+      const err = new Error('This driver is reserved for a pending quote and cannot be deleted.');
+      err.code = 'DRIVER_HAS_ACTIVE_RESERVATION';
+      err.data = { activeReservations: deps.activeReservations };
+      throw err;
+    }
+    if (deps.activeAssignments > 0) {
+      const err = new Error('This driver is actively assigned to a booking and cannot be deleted.');
+      err.code = 'DRIVER_IS_ASSIGNED';
+      err.data = { activeAssignments: deps.activeAssignments };
+      throw err;
+    }
+    if (deps.activeDeliveries > 0) {
+      const err = new Error('This driver is assigned to an active delivery and cannot be deleted.');
+      err.code = 'DRIVER_HAS_ACTIVE_DELIVERY';
+      err.data = { activeDeliveries: deps.activeDeliveries };
+      throw err;
+    }
+
+    // Financial records that must be retained → archive instead of hard delete.
+    if (deps.hasFinancialRecords) {
+      // Archive (deactivate) the driver rather than destroy financial history.
+      const archived = await prisma.$transaction(async (tx) => {
+        await tx.driver.update({
+          where: { driver_id: driverId },
+          data: { status: 'inactive', is_available: false },
+        });
+        await tx.driverTimeline.create({
+          data: {
+            driver_id: driverId,
+            event_type: 'status_changed',
+            description: `Driver ${driver.driver_name} archived (financial records retained)`,
+          },
+        });
+        return { driver_id: driverId, status: 'inactive', archived: true };
+      });
+      return archived;
+    }
+
+    // Safe to hard delete. Use a transaction so the delete + verification
+    // are atomic. Booking/delivery/vehicle/reservation rows are SET NULL by
+    // the DB (verified FK actions), preserving history snapshots.
+    const result = await prisma.$transaction(async (tx) => {
+      await this.repo.hardDelete(driverId, tx);
+      // Verify the row is actually gone.
+      const stillThere = await tx.driver.findUnique({
         where: { driver_id: driverId },
-        data: { status: 'inactive', is_available: false },
+        select: { driver_id: true },
       });
-      await tx.driverTimeline.create({
-        data: {
-          driver_id: driverId,
-          event_type: 'status_changed',
-          description: `Driver ${driver.driver_name} marked as inactive`,
-        },
-      });
-      return { driver_id: driverId, status: 'inactive' };
+      if (stillThere) {
+        const err = new Error('Driver could not be fully removed from the database.');
+        err.code = 'DRIVER_DELETE_FAILED';
+        throw err;
+      }
+      return { driver_id: driverId };
     });
 
-    return updated;
+    return result;
   }
 
   /**

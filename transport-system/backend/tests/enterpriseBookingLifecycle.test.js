@@ -43,8 +43,29 @@ driver: overrides.driver || { driver_id: 1, is_available: true, vehicle_number: 
     vehicle: overrides.vehicle || { vehicle_id: 1, driver_id: 1, is_available: true },
   };
 
-  const bookingRepo = {
+const bookingRepo = {
     findById: async () => state.booking,
+    // Canonical identifier lookup used by getBookingForTracking /
+    // getBookingByIdentifier. Mirrors the real repository's
+    // findByIdentifier (looks up by canonical booking_number OR legacy
+    // booking_reference). Returns the full relation shape the mapper needs.
+    findByIdentifier: async (identifier) => {
+      if (!identifier) return null;
+      const b = state.booking;
+      if (!b) return null;
+      const matches =
+        b.booking_number === identifier ||
+        b.booking_reference === identifier;
+      if (!matches) return null;
+      return {
+        ...b,
+        vehicle: b.vehicle || null,
+        delivery: b.delivery || null,
+        driver: b.trackingDriver || null,
+        reservations: b.reservations || [],
+        bookingEvents: b.bookingEvents || [],
+      };
+    },
     update: async (id, data) => {
       state.booking = { ...(state.booking || {}), ...data };
       return { changes: 1 };
@@ -112,6 +133,7 @@ function patchPrisma(fakes) {
     driver_findUnique: prisma.driver && prisma.driver.findUnique,
     vehicle_findUnique: prisma.transportVehicle && prisma.transportVehicle.findUnique,
     booking_findUnique: prisma.booking && prisma.booking.findUnique,
+    booking_findFirst: prisma.booking && prisma.booking.findFirst,
   };
 
   const tx = {
@@ -124,6 +146,17 @@ function patchPrisma(fakes) {
       update: async () => ({ delivery_id: 1 }),
     },
     bookingEvent: { create: async () => ({ booking_event_id: 1 }) },
+    booking: {
+      updateMany: async ({ where, data }) => {
+        const b = fakes.state.booking;
+        if (!b) return { count: 0 };
+        // Simple fake: if where matches, apply data.
+        if (where.booking_id && b.booking_id !== where.booking_id) return { count: 0 };
+        if (where.quote_status && b.quote_status !== where.quote_status) return { count: 0 };
+        fakes.state.booking = { ...b, ...data };
+        return { count: 1 };
+      },
+    },
   };
 
   prisma.$transaction = async (fn) => fn(tx);
@@ -143,13 +176,24 @@ function patchPrisma(fakes) {
         bookingEvents: b.bookingEvents || [],
       };
     };
+    prisma.booking.findFirst = async ({ where }) => {
+      const b = fakes.state.booking;
+      if (!b) return null;
+      // Simple fake: return the booking if it matches the where clause.
+      if (where.driver_id && b.driver_id !== where.driver_id) return null;
+      if (where.status && b.status !== where.status) return null;
+      return b;
+    };
   }
 
   return () => {
     prisma.$transaction = original.$transaction;
     if (prisma.driver) prisma.driver.findUnique = original.driver_findUnique;
     if (prisma.transportVehicle) prisma.transportVehicle.findUnique = original.vehicle_findUnique;
-    if (prisma.booking) prisma.booking.findUnique = original.booking_findUnique;
+    if (prisma.booking) {
+      prisma.booking.findUnique = original.booking_findUnique;
+      prisma.booking.findFirst = original.booking_findFirst;
+    }
   };
 }
 

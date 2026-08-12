@@ -1,4 +1,5 @@
 import React from 'react';
+import { normalizeQuoteStatus, normalizeStatus, isConfirmedStatus } from '../../utils/bookingUtils';
 
 const STATUS_META = {
   pending: {
@@ -99,20 +100,25 @@ const STATUS_META = {
  * @param {{ status: string, quoteStatus?: string, pickupDate?: string, updatedAt?: string }} props
  */
 const StatusCard = React.memo(function StatusCard({ status, quoteStatus, pickupDate, updatedAt }) {
-  const quote = (quoteStatus || 'PENDING').toUpperCase();
+  const quote = normalizeQuoteStatus(quoteStatus);
+  const s = normalizeStatus(status);
   // SINGLE SOURCE OF TRUTH: once the quote is ACCEPTED the booking is
   // confirmed. If the status string hasn't yet advanced past 'pending' but the
   // quote was accepted, show the Confirmed card (mirrors the header/timeline).
   // Also, when quote is SENT, show the quote_sent status card.
   const effectiveStatus =
-    quote === 'ACCEPTED' && !['confirmed', 'driver_assigned', 'pickup_completed', 'in_transit', 'delivered', 'completed', 'cancelled'].includes(status)
+    quote === 'ACCEPTED' && !isConfirmedStatus(s)
       ? 'confirmed'
       : quote === 'SENT'
         ? 'quote_sent'
-        : status;
+        : s;
   const meta = STATUS_META[effectiveStatus] || STATUS_META.pending;
   const isWaitingForQuote = quote === 'PENDING' || quote === 'QUOTE_REQUESTED' || quote === 'QUOTE_PREPARING';
   const isWaitingForApproval = quote === 'SENT';
+
+  // Edge case: admin assigned driver without sending quote.
+  // Show the quote_sent UI so the customer knows a quote is ready.
+  const isEdgeCase = isConfirmedStatus(s) && quote === 'PENDING';
 
   const formatTime = (dateStr) => {
     if (!dateStr) return null;

@@ -49,7 +49,7 @@ function OwnerStatusBadge({ status }) {
   );
 }
 
-function ActionsDropdown({ owner, onViewProfile, onEdit, onDeactivate }) {
+function ActionsDropdown({ owner, onViewProfile, onEdit, onDeactivate, onDelete }) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -74,10 +74,14 @@ function ActionsDropdown({ owner, onViewProfile, onEdit, onDeactivate }) {
               <svg className="w-4 h-4 text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
               Edit
             </button>
-            <div className="border-t border-border/40 my-1" />
+<div className="border-t border-border/40 my-1" />
             <button onClick={() => { setOpen(false); onDeactivate(owner); }} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-red-500 hover:bg-red-500/5 transition">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" /></svg>
               {owner.status === 'active' ? 'Deactivate' : 'Activate'}
+            </button>
+            <button onClick={() => { setOpen(false); onDelete(owner); }} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-red-600 hover:bg-red-500/10 transition">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+              Delete Owner
             </button>
           </div>
         </>
@@ -97,8 +101,17 @@ export default function AdminPartners() {
   const [statusFilter, setStatusFilter] = useState('');
   const [sortField, setSortField] = useState('created_at');
   const [sortDirection, setSortDirection] = useState('desc');
-  const [showRegisterModal, setShowRegisterModal] = useState(false);
+const [showRegisterModal, setShowRegisterModal] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deletingOwner, setDeletingOwner] = useState(false);
+  const [deleteOwnerError, setDeleteOwnerError] = useState(null);
+  const [toast, setToast] = useState(null);
   const debouncedSearch = useDebounce(search, 300);
+
+  const showToast = useCallback((message, type = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4000);
+  }, []);
 
   const fetchPartners = useCallback(async (page = 1) => {
     setLoading(true);
@@ -144,7 +157,29 @@ export default function AdminPartners() {
     } catch (err) {
       alert(err.response?.data?.message || 'Failed to update status');
     }
-  }, [fetchPartners, fetchStats, pagination.page]);
+}, [fetchPartners, fetchStats, pagination.page]);
+
+  // Delete an owner — only shows success after the backend confirms the DB row is gone.
+  const handleDeleteOwner = useCallback(async () => {
+    if (!deleteTarget || deletingOwner) return;
+    setDeletingOwner(true);
+    setDeleteOwnerError(null);
+    try {
+      const response = await adminAPI.deletePartner(deleteTarget.partner_id);
+      const data = response.data || {};
+      setDeleteTarget(null);
+      showToast('✓ ' + (data.message || 'Transport Owner deleted'), 'success');
+      fetchPartners(pagination.page);
+      fetchStats();
+    } catch (err) {
+      const structured = err?.response?.data?.error;
+      const msg = structured?.message || err?.response?.data?.message || err?.message || 'Failed to delete transport owner.';
+      setDeleteOwnerError(msg);
+      showToast('✗ ' + msg, 'error');
+    } finally {
+      setDeletingOwner(false);
+    }
+  }, [deleteTarget, deletingOwner, pagination.page, fetchPartners, fetchStats, showToast]);
 
   const handleRegisterSuccess = useCallback(() => {
     fetchPartners(1);
@@ -218,11 +253,12 @@ export default function AdminPartners() {
       key: 'actions',
       header: 'Actions',
       render: (r) => (
-        <ActionsDropdown
+<ActionsDropdown
           owner={r}
           onViewProfile={(o) => navigate(`/admin/owners/${o.partner_id}`)}
           onEdit={(o) => navigate(`/admin/owners/${o.partner_id}?tab=edit`)}
           onDeactivate={handleDeactivate}
+          onDelete={setDeleteTarget}
         />
       )
     },
@@ -238,12 +274,95 @@ export default function AdminPartners() {
   }, [partners]);
 
   return (
-    <AdminShell navItems={NAV_ITEMS} activeKey="owners" onNav={(k) => {}}>
+<AdminShell navItems={NAV_ITEMS} activeKey="owners" onNav={(k) => {}}>
       <OwnerRegisterModal
         isOpen={showRegisterModal}
         onClose={() => setShowRegisterModal(false)}
         onSuccess={handleRegisterSuccess}
       />
+
+      {/* Toast notification */}
+      {toast && (
+        <div className="fixed top-6 right-6 z-[100] animate-slide-down">
+          <div className={`px-5 py-3.5 rounded-2xl shadow-2xl border text-sm font-semibold flex items-center gap-3 backdrop-blur-sm ${
+            toast.type === 'success'
+              ? 'bg-emerald-50 dark:bg-emerald-900/50 border-emerald-200 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300'
+              : 'bg-red-50 dark:bg-red-900/50 border-red-200 dark:border-red-700 text-red-700 dark:text-red-300'
+          }`}>
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              {toast.type === 'success' ? (
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              ) : (
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              )}
+            </svg>
+            <span>{toast.message}</span>
+            <button onClick={() => setToast(null)} className="ml-3 opacity-50 hover:opacity-100 transition">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Owner Confirmation Modal */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setDeleteTarget(null)} />
+          <div className="relative w-full max-w-md bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-border/60 p-6" role="dialog" aria-modal="true" aria-label="Delete Transport Owner">
+            <div className="text-center">
+              <div className="w-14 h-14 rounded-full bg-red-500/10 flex items-center justify-center mx-auto mb-4">
+                <svg className="w-7 h-7 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                </svg>
+              </div>
+              <h3 className="text-lg font-bold mb-2">Delete Transport Owner?</h3>
+              <div className="mb-4 rounded-xl border border-border/60 bg-card/40 px-4 py-3 text-left space-y-1.5">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted">Owner:</span>
+                  <span className="font-semibold">{deleteTarget.partner_name || deleteTarget.company_name}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted">Code:</span>
+                  <span className="font-mono font-semibold text-amber-600 dark:text-amber-400">{deleteTarget.partner_code}</span>
+                </div>
+              </div>
+              <p className="text-sm text-muted mb-6">
+                This action permanently removes the transport owner and its related non-protected records. If the owner has protected dependencies (drivers, vehicles, bookings, financial records), deletion will be rejected.
+              </p>
+              {deleteOwnerError && (
+                <div className="mb-4 rounded-xl border border-red-200 bg-red-50 dark:bg-red-500/10 dark:border-red-500/20 px-4 py-2.5 text-sm text-red-700 dark:text-red-400">
+                  {deleteOwnerError}
+                </div>
+              )}
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setDeleteTarget(null)}
+                  disabled={deletingOwner}
+                  className="flex-1 px-4 py-2.5 rounded-xl border border-border/60 text-sm font-semibold hover:bg-hover/60 transition disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteOwner}
+                  disabled={deletingOwner}
+                  className="flex-1 px-4 py-2.5 rounded-xl bg-red-500 text-white text-sm font-semibold hover:bg-red-600 transition disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2"
+                >
+                  {deletingOwner && (
+                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                  )}
+                  {deletingOwner ? 'Deleting...' : 'Delete Owner'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
           <div>

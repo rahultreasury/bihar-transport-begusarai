@@ -148,9 +148,12 @@ function BookingDetailsDrawer({ booking, isOpen, onClose, onBookingUpdated }) {
 
 const canAssignDriver = useCallback(() => {
     if (!booking) return false;
-    // A driver may only be assigned AFTER the customer has ACCEPTED the final
-    // quote. This is the single source of truth (matches the backend gate).
-    if ((booking.quote_status || 'PENDING').toUpperCase() !== 'ACCEPTED') return false;
+    // Exceptional operational path — the acceptance gate is intentionally
+    // removed. The NORMAL quote workflow selects the driver WITH the final
+    // quote (sendQuoteWithReservation) and reserves them; customer acceptance
+    // then auto-confirms driver + vehicle. This Assign Driver action is for
+    // manual operational assignment and must not be blocked merely because
+    // the customer has not accepted yet.
     if (['cancelled', 'completed', 'delivered'].includes(booking.status)) return false;
     return true;
   }, [booking]);
@@ -808,14 +811,13 @@ const canSendQuote = useCallback(() => {
   </div>
 )}
 
-                {/* Explain why Assign Driver is disabled (quote not yet accepted) */}
-                {!isDriverAssigned && !canAssignDriver() && (booking.quote_status || 'PENDING').toUpperCase() !== 'ACCEPTED' && (
+{/* Explain why Assign Driver is disabled (terminal booking state) */}
+                {!isDriverAssigned && !canAssignDriver() && (
                   <div className="mt-3 pt-3 border-t border-border/40 rounded-xl bg-amber-500/5 border border-amber-500/10 px-4 py-3">
                     <p className="text-[11px] text-muted flex items-start gap-1.5">
                       <AlertCircle className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" strokeWidth={2.5} />
                       <span>
-                        Driver can only be assigned after the customer accepts the final quote
-                        (current quote status: <span className="font-semibold text-amber-600">{booking.quote_status || 'PENDING'}</span>).
+                        This booking cannot accept a driver assignment in its current state.
                       </span>
                     </p>
                   </div>

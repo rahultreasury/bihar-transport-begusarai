@@ -1,30 +1,21 @@
-# Enterprise Booking Workflow Redesign - Phase Tracking
+# Bihar Transport — Booking System Fixes (Approved Plan)
 
-## PHASE 1 – Backend Business Logic ONLY
-- [x] `BookingStateMachine.js` — Correct state machine with quote_sent, rejected, pickup_started, out_for_delivery
-- [x] `BookingRepository.js` — Support new statuses, driver info gating
-- [x] `BookingService.js` — Quote workflow, hide driver until accept, transactional accept/reject
-- [x] `driverRoutes.js` — Gate accept-job on customer acceptance (quote_status=ACCEPTED), hide in-flight quote jobs
-- [x] Run backend tests — `enterpriseBookingLifecycle.test.js` (12 new) + `quoteConfirmation.test.js` (6) = 18/18 PASS
-- [x] Verify booking lifecycle (pending → quote_sent → confirmed → pickup_started → pickup_completed → in_transit → out_for_delivery → delivered → completed; reject path releases reservations)
-- [x] STOP — await approval
+Booking-number canonicalization (BTB-YYYY-NNNNN) is ALREADY implemented and verified.
+Do NOT restructure it. Focus on confirmed remaining gaps.
 
-## PHASE 2 – Admin Panel ONLY
-- [ ] `BookingDetailsDrawer.jsx` — Driver + Vehicle + Price + Remarks selection before send quote
-- [ ] `adminBookingController.js` — Require driver_id/vehicle_id on send-quote
-- [ ] `adminRoutes.js` — Validation update
-- [ ] STOP — await approval
+## Backend
+- [ ] 1. `getBookingForTracking` → accept canonical `booking_number` (legacy `booking_reference` still works)
+- [ ] 2. `bookingController.js` → remove leftover random `booking_reference` generation
+- [ ] 3. `BookingMapper.js` → add camelCase `bookingNumber` field
+- [ ] 4. Structured error contract (`error: { code, message }`) for quote + assignment APIs
+- [ ] 5. Driver assignment → auto-assign driver's registered vehicle (verify backend already does this)
 
-## PHASE 3 – Customer Tracking ONLY
-- [ ] `DeliveryTracking.jsx` — Hide/show driver card based on status
-- [ ] `QuoteCard.jsx` — Show driver+vehicle in quote
-- [ ] `DriverVehicleCard.jsx` — Gate render on confirmed
-- [ ] STOP — await approval
+## Frontend
+- [ ] 6. `App.jsx` → wire `/admin/bookings/:bookingNumber` and `/admin/bookings/:bookingNumber/assign-driver`
+- [ ] 7. `AdminBookings.jsx` → View → read-only page; Assign Driver → dedicated page; remove Assign Vehicle button
+- [ ] 8. `AdminBookingDetail.jsx` → remove Assign Vehicle button (read-only stays)
+- [ ] 9. `AdminAssignDriver.jsx` → confirm vehicle is info-only (no dropdown)
 
-## PHASE 4 – Driver Workflow
-- [ ] `driverRoutes.js` — Gate accept-job on customer acceptance
-- [ ] STOP — await approval
-
-## PHASE 5 – Testing
-- [ ] Test complete booking lifecycle (reject + accept paths)
-- [ ] Return failures only
+## Testing
+- [ ] 10. Backend tests pass
+- [ ] 11. Frontend build passes

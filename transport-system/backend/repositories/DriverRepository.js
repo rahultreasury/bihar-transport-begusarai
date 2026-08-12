@@ -361,13 +361,27 @@ return {
 
     const where = {};
 
-    // Filter by status (available / on_trip / inactive)
+// Filter by status (available / on_trip / inactive)
     if (status) {
       where.status = status;
       // Keep is_available in sync with status for the picker's availability
       if (status === 'available') where.is_available = true;
       else if (status === 'on_trip' || status === 'inactive') where.is_available = false;
     }
+
+    // A driver who is ALREADY RESERVED for another booking's PENDING quote
+    // must NOT be offered in the assignment picker. This prevents the same
+    // driver from being double-booked across two quotes that are both awaiting
+    // customer approval. Drivers are released when the quote is rejected,
+    // expires, or the reservation is converted on customer acceptance.
+    where.NOT = {
+      bookings: {
+        some: {
+          status: 'quote_sent',
+          quote_status: 'SENT',
+        },
+      },
+    };
 
     // Filter by vehicle type
     if (vehicle_type) {
@@ -540,7 +554,7 @@ prisma.driver.findMany({
     });
   }
 
-  /**
+/**
    * Delete driver by ID.
    */
   async delete(driverId, tx = null) {
@@ -548,6 +562,82 @@ prisma.driver.findMany({
     return await client.driver.delete({
       where: { driver_id: driverId },
     });
+  }
+
+  /**
+   * Build a dependency summary for a driver so the service can decide
+   * whether hard deletion is safe. Counts are grouped by "protected"
+   * (active/operational/financial) vs "historical" (safe to retain).
+   *
+   * Verified against the actual schema (0_init/migration.sql):
+   *   - bookings.driver_id          → SET NULL on Driver delete
+   *   - deliveries.driver_id        → SET NULL
+   *   - booking_assignments         → SET NULL (assigned_driver_id)
+   *   - reservations.driver_id      → SET NULL
+   *   - transport_vehicles.driver_id→ SET NULL
+   *   - driver_transactions         → CASCADE
+   *   - driver_timeline             → CASCADE
+   *   - driver_assignments          → CASCADE
+   *   - users                       → CASCADE (driver's user account)
+   *
+   * @param {number} driverId
+   * @param {object} [tx] optional transaction client
+   */
+  async findDependencySummary(driverId, tx = null) {
+    const client = tx || prisma;
+
+    const ACTIVE_BOOKING_STATUSES = ['confirmed', 'driver_assigned', 'pickup_completed', 'in_transit'];
+    const ACTIVE_DELIVERY_STATUSES = ['booking_confirmed', 'driver_assigned', 'pickup_in_progress', 'pickup_completed', 'in_transit', 'out_for_delivery'];
+
+    const [
+      activeBookings,
+      activeReservations,
+      activeAssignments,
+      activeDeliveries,
+      transportVehicles,
+      hasFinancialRecords,
+      hasBookings,
+      hasReservations,
+    ] = await Promise.all([
+      client.booking.count({
+        where: { driver_id: driverId, status: { in: ACTIVE_BOOKING_STATUSES } },
+      }),
+      client.reservation.count({
+        where: { driver_id: driverId, status: 'ACTIVE' },
+      }),
+      client.bookingAssignment.count({
+        where: { assigned_driver_id: driverId, assignment_status: 'active' },
+      }),
+      client.delivery.count({
+        where: { driver_id: driverId, current_status: { in: ACTIVE_DELIVERY_STATUSES } },
+      }),
+      client.transportVehicle.count({ where: { driver_id: driverId } }),
+      client.driverTransaction.count({ where: { driver_id: driverId } }),
+      client.booking.count({ where: { driver_id: driverId } }),
+      client.reservation.count({ where: { driver_id: driverId } }),
+    ]);
+
+    return {
+      activeBookings,
+      activeReservations,
+      activeAssignments,
+      activeDeliveries,
+      transportVehicles,
+      hasFinancialRecords: hasFinancialRecords > 0,
+      hasBookings: hasBookings > 0,
+      hasReservations: hasReservations > 0,
+    };
+  }
+
+  /**
+   * Hard-delete a driver inside the given transaction client.
+   * Only call this after the service has verified the deletion is safe.
+   * The DB FK actions (CASCADE for transactions/timeline/assignments,
+   * SET NULL for bookings/deliveries/vehicles/reservations) are relied on
+   * as verified from the schema. Booking history snapshots are preserved.
+   */
+  async hardDelete(driverId, tx) {
+    return await tx.driver.delete({ where: { driver_id: driverId } });
   }
 
   /**
@@ -756,7 +846,7 @@ prisma.driver.findMany({
     };
   }
 
-/**
+  /**
    * Soft delete a driver (set as inactive).
    */
   async softDelete(driverId, tx = null) {

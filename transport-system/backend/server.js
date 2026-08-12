@@ -88,8 +88,12 @@ app.use(helmet({
   referrerPolicy: { policy: 'no-referrer' },
 }));
 
+// In development, allow all origins to avoid CORS friction between
+// frontend (5173/5174) and backend (3000). In production, restrict to
+// FRONTEND_URL if provided.
+const isDev = process.env.NODE_ENV !== 'production';
 app.use(cors({
-  origin: process.env.FRONTEND_URL || '*',
+  origin: isDev ? '*' : (process.env.FRONTEND_URL || '*'),
   credentials: true,
 }));
 

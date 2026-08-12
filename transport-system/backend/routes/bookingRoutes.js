@@ -3,13 +3,6 @@ const router = express.Router();
 const { prisma } = require('../config/prisma');
 const { getVehiclePricing, getValidVehicleIds, LEGACY_TYPE_FALLBACK } = require('../services/vehiclePricing');
 
-// Legacy helpers for backward compatible request/response fields
-const generateBookingRef = () => {
-  const timestamp = Date.now().toString(36).toUpperCase();
-  const random = Math.random().toString(36).substring(2, 5).toUpperCase();
-  return `BTB-${timestamp.slice(-4)}${random}`;
-};
-
 // Every vehicle uses its own per-km rate (from the shared pricing catalogue).
 // Legacy generic types (truck/mini_truck/pickup/tempo/lorry) are resolved to a
 // representative vehicle for backward compatibility.
@@ -47,9 +40,12 @@ const { protect } = require('../middleware/auth');
 const { body, validationResult } = require('express-validator');
 
 const BookingService = require('../services/BookingService');
+const BookingRepository = require('../repositories/BookingRepository');
+const { normalizeBookingIdentifier } = require('../services/BookingNumberService');
 const { ValidationError, NotFoundError } = require('../utils/AppError');
 
 const bookingService = new BookingService();
+const bookingRepo = new BookingRepository();
 
 const mapDomainErrorToHttp = (err, res, fallback = {}) => {
   const name = err?.name;
@@ -110,55 +106,39 @@ router.post('/create', protect, [
       vehicle_type_required
     } = req.body;
 
-    // Estimate distance and price
+// Estimate distance and price
     const estimated_distance_km = estimateDistance(pickup_city, drop_city);
     const estimated_price = calculatePrice(estimated_distance_km, vehicle_type_required);
 
-    // Generate booking reference
-    const booking_reference = generateBookingRef();
-
-    // Insert booking and delivery into PostgreSQL via Prisma transaction
-    const result = await prisma.$transaction(async (tx) => {
-      const booking = await tx.booking.create({
-        data: {
-          booking_reference,
-          booking_number: booking_reference,
-          user_id: req.user.user_id,
-          pickup_location,
-          pickup_address: pickup_address || null,
-          pickup_city,
-          pickup_state: pickup_state || 'Bihar',
-          pickup_pincode: pickup_pincode || null,
-          pickup_date,
-          pickup_time,
-          drop_location,
-          drop_address: drop_address || null,
-          drop_city,
-          drop_state: drop_state || 'Bihar',
-          drop_pincode: drop_pincode || null,
-          goods_description,
-          goods_type: goods_type || null,
-          goods_weight_kg: goods_weight_kg ? Number(goods_weight_kg) : null,
-          goods_volume: goods_volume ? Number(goods_volume) : null,
-          number_of_items: number_of_items || 1,
-          fragile: fragile ? true : false,
-          vehicle_type_required,
-          estimated_distance_km,
-          estimated_price,
-          final_price: estimated_price,
-          status: 'pending',
-        },
-      });
-
-      await tx.delivery.create({
-        data: {
-          booking_id: booking.booking_id,
-          current_status: 'booking_confirmed',
-          status_description: 'Booking confirmed, waiting for driver assignment',
-        },
-      });
-
-      return booking;
+    // Delegate to the single canonical creation service. BookingService
+    // derives the booking_number (BTB-YYYY-NNNNN) from the DB primary key,
+    // persists it atomically, and creates the delivery record + timeline
+    // event. No inline Prisma transaction / random identifier here.
+    const result = await bookingService.createBooking({
+      user_id: req.user.user_id,
+      pickup_location,
+      pickup_address: pickup_address || null,
+      pickup_city,
+      pickup_state: pickup_state || 'Bihar',
+      pickup_pincode: pickup_pincode || null,
+      pickup_date,
+      pickup_time,
+      drop_location,
+      drop_address: drop_address || null,
+      drop_city,
+      drop_state: drop_state || 'Bihar',
+      drop_pincode: drop_pincode || null,
+      goods_description,
+      goods_type: goods_type || null,
+      goods_weight_kg: goods_weight_kg ? Number(goods_weight_kg) : null,
+      goods_volume: goods_volume ? Number(goods_volume) : null,
+      number_of_items: number_of_items || 1,
+      fragile: fragile ? true : false,
+      vehicle_type_required,
+      estimated_distance_km,
+      estimated_price,
+      final_price: estimated_price,
+      status: 'pending',
     });
 
     res.status(201).json({
@@ -166,7 +146,8 @@ router.post('/create', protect, [
       message: 'Booking created successfully',
       data: {
         booking_id: result.booking_id,
-        booking_reference,
+        booking_number: result.booking_number,
+        booking_reference: result.booking_reference || result.booking_number,
         estimated_distance_km,
         estimated_price,
         status: 'pending'
@@ -680,19 +661,16 @@ router.post('/track/:reference/quote/accept', async (req, res) => {
   try {
     const reference = req.params.reference;
     if (!reference || typeof reference !== 'string' || reference.trim() === '') {
-      return res.status(400).json({ success: false, message: 'booking_reference is required', data: null, errors: null });
+      return res.status(400).json({ success: false, message: 'booking identifier is required', data: null, errors: null });
     }
 
-    const booking = await prisma.booking.findUnique({
-      where: { booking_reference: reference },
-      select: { booking_id: true },
-    });
-
-    if (!booking) {
+    const identifier = normalizeBookingIdentifier(reference);
+    const found = await bookingRepo.findByIdentifier(identifier);
+    if (!found) {
       return res.status(404).json({ success: false, message: 'Booking not found', data: null, errors: null });
     }
 
-    const result = await bookingService.respondToQuote(booking.booking_id, 'ACCEPT');
+    const result = await bookingService.respondToQuote(found.booking_id, 'ACCEPT');
     return res.json({ success: true, message: 'Quote accepted successfully', data: result, errors: null });
   } catch (err) {
     console.error('Public accept quote error:', err);
@@ -709,19 +687,16 @@ router.post('/track/:reference/quote/reject', async (req, res) => {
   try {
     const reference = req.params.reference;
     if (!reference || typeof reference !== 'string' || reference.trim() === '') {
-      return res.status(400).json({ success: false, message: 'booking_reference is required', data: null, errors: null });
+      return res.status(400).json({ success: false, message: 'booking identifier is required', data: null, errors: null });
     }
 
-    const booking = await prisma.booking.findUnique({
-      where: { booking_reference: reference },
-      select: { booking_id: true },
-    });
-
-    if (!booking) {
+    const identifier = normalizeBookingIdentifier(reference);
+    const found = await bookingRepo.findByIdentifier(identifier);
+    if (!found) {
       return res.status(404).json({ success: false, message: 'Booking not found', data: null, errors: null });
     }
 
-    const result = await bookingService.respondToQuote(booking.booking_id, 'REJECT');
+    const result = await bookingService.respondToQuote(found.booking_id, 'REJECT');
     return res.json({ success: true, message: 'Quote rejected', data: result, errors: null });
   } catch (err) {
     console.error('Public reject quote error:', err);

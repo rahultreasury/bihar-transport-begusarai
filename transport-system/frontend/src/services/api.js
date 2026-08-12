@@ -1,6 +1,11 @@
 import axios from 'axios';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
+import { clearStoredAuth } from './authStorage';
+
+// In development, use relative URLs so the Vite proxy forwards requests
+// to the backend (avoids CORS issues when frontend and backend are on
+// different ports). In production, VITE_API_URL must be set explicitly.
+const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? '/api' : 'http://localhost:3000/api');
 
 const api = axios.create({
   baseURL: API_URL,
@@ -27,15 +32,21 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    // Only redirect for 401 on protected routes, not auth endpoints
-    const authPaths = ['/auth/login', '/auth/admin-login', '/auth/signup', '/auth/driver-signup'];
+    // Only handle 401 on protected routes, not auth endpoints (login/signup)
+    const authPaths = ['/auth/login', '/auth/admin-login', '/auth/signup', '/auth/driver-signup', '/auth/admin/me'];
     const requestUrl = error.config?.url || '';
     const isAuthRequest = authPaths.some(path => requestUrl.includes(path));
 
     if (error.response?.status === 401 && !isAuthRequest) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      window.location.href = '/login';
+      // Clear persisted auth + dispatch auth:changed so AuthContext clears
+      // runtime state, then let ProtectedRoute redirect to /login.
+      clearStoredAuth();
+      // guard against a hard reload loop: only hard-navigate if we are not
+      // already on an auth-related page.
+      const currentPath = window.location.pathname || '';
+      if (!currentPath.startsWith('/login')) {
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(error);
   }
@@ -46,8 +57,9 @@ export const authAPI = {
   signup: (data) => api.post('/auth/signup', data),
   driverSignup: (data) => api.post('/auth/driver-signup', data),
   login: (data) => api.post('/auth/login', data),
-  adminLogin: (data) => api.post('/auth/admin-login', data),
+adminLogin: (data) => api.post('/auth/admin-login', data),
   getMe: () => api.get('/auth/me'),
+  adminMe: () => api.get('/auth/admin/me'),
   updateProfile: (data) => api.put('/auth/profile', data)
 };
 
@@ -88,8 +100,14 @@ export const adminAPI = {
   getVehicles: (params) => api.get('/admin/vehicles', { params }),
   getBookings: (params) => api.get('/admin/bookings', { params }),
   getBooking: (id) => api.get(`/admin/bookings/${id}`),
+  // Read a booking by its CANONICAL booking_number (BTB-YYYY-NNNNN) or legacy
+  // reference. Used by the read-only detail page and dedicated assign pages,
+  // all of which are navigated by booking number.
+  getBookingByNumber: (bookingNumber) => api.get(`/admin/bookings/by-number/${encodeURIComponent(bookingNumber)}`),
   updateBooking: (id, data) => api.put(`/admin/bookings/${id}`, data),
   deleteBooking: (id) => api.delete(`/admin/bookings/${id}`),
+  getDeletionSummary: (id) => api.get(`/admin/bookings/${id}/deletion-summary`),
+  deletionAction: (id, action, confirmationCode) => api.post(`/admin/bookings/${id}/deletion-action`, { action, confirmation_code: confirmationCode }),
 updateBookingStatus: (id, status) => api.patch(`/admin/bookings/${id}/status`, { status }),
   bulkConfirm: (bookingIds) => api.post('/admin/bookings/bulk-confirm', { bookingIds }),
   bulkCancel: (bookingIds) => api.post('/admin/bookings/bulk-cancel', { bookingIds }),
@@ -109,6 +127,8 @@ getDriversWithVehicles: (params) => api.get('/admin/drivers/drivers-with-vehicle
   assignVehicle: (bookingId, vehicleId) => api.post(`/admin/bookings/${bookingId}/assign-vehicle`, { vehicle_id: vehicleId }),
   // Quote workflow — admin reserves driver + vehicle and sends final quote
   sendQuote: (bookingId, data) => api.post(`/admin/bookings/${bookingId}/send-quote`, data),
+  // Send quote using already-assigned driver (no driver selection needed)
+  sendAdminQuote: (bookingId, data) => api.post(`/admin/bookings/${bookingId}/quote`, data),
 
   // Driver Management Module (Market Drivers - full CRUD + actions)
   getDriverStats: () => api.get('/admin/drivers/stats'),

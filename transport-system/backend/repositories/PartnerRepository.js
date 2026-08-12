@@ -294,7 +294,7 @@ class PartnerRepository {
     });
   }
 
-  /**
+/**
    * Soft delete a partner
    */
   async softDelete(partnerId, tx = null) {
@@ -307,6 +307,74 @@ class PartnerRepository {
         deleted_at: new Date(),
       },
     });
+  }
+
+  /**
+   * Count protected dependencies for a Transport Owner (Partner) so the
+   * service can decide whether a hard delete is safe.
+   *
+   * Verified against the actual schema (0_init/migration.sql). The owner's own
+   * module tables (ledger, payments, settlements, documents, assignments) are
+   * CASCADE on partner delete — but they are FINANCIAL / HISTORICAL records
+   * and therefore PROTECTED (we must NOT destroy them just to remove an owner).
+   * Bookings/vehicles/drivers are SET NULL on the owner — those are retained.
+   *
+   * @param {number} partnerId
+   * @param {object} [tx] optional transaction client
+   */
+  async findDependencyCounts(partnerId, tx = null) {
+    const client = tx || prisma;
+    const ACTIVE_BOOKING_STATUSES = ['confirmed', 'driver_assigned', 'pickup_completed', 'in_transit'];
+
+    const [
+      drivers,
+      vehicles,
+      bookings,
+      activeBookings,
+      ledgerEntries,
+      payments,
+      settlements,
+      documents,
+      assignments,
+    ] = await Promise.all([
+      client.driver.count({ where: { partner_id: partnerId } }),
+      client.transportVehicle.count({ where: { partner_id: partnerId } }),
+      client.booking.count({ where: { partner_id: partnerId } }),
+      client.booking.count({ where: { partner_id: partnerId, status: { in: ACTIVE_BOOKING_STATUSES } } }),
+      client.partnerLedger.count({ where: { partner_id: partnerId } }),
+      client.partnerPayment.count({ where: { partner_id: partnerId } }),
+      client.settlement.count({ where: { partner_id: partnerId } }),
+      client.partnerDocument.count({ where: { partner_id: partnerId } }),
+      client.driverAssignment.count({ where: { partner_id: partnerId } }),
+    ]);
+
+    return {
+      drivers,
+      vehicles,
+      bookings,
+      activeBookings,
+      ledgerEntries,
+      payments,
+      settlements,
+      documents,
+      assignments,
+      // Any financial/historical record → protected.
+      hasProtectedFinancialHistory: ledgerEntries > 0 || payments > 0 || settlements > 0,
+      // Any operational dependency that must not be silently destroyed.
+      hasOperationalDependency: drivers > 0 || vehicles > 0 || activeBookings > 0,
+      hasAnyDependency: drivers > 0 || vehicles > 0 || bookings > 0 || ledgerEntries > 0 || payments > 0 || settlements > 0 || documents > 0 || assignments > 0,
+    };
+  }
+
+  /**
+   * Hard-delete a partner inside the given transaction client.
+   * Only call this after the service has verified deletion is safe (i.e. no
+   * protected financial/historical record exists). The DB CASCADE rules for
+   * the owner's own module tables are only reached when the owner has no
+   * protected records, so no business history is destroyed.
+   */
+  async hardDelete(partnerId, tx) {
+    return await tx.partner.delete({ where: { partner_id: partnerId } });
   }
 
   /**

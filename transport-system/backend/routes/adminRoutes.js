@@ -7,6 +7,7 @@ const BookingService = require('../services/BookingService');
 const { ValidationError, NotFoundError } = require('../utils/AppError');
 const BookingAssignmentService = require('../services/BookingAssignmentService');
 const { createBookingController } = require('../controllers/bookingController');
+const { BookingDeletionService } = require('../services/BookingDeletionService');
 
 const bookingService = new BookingService();
 const bookingAssignmentService = new BookingAssignmentService();
@@ -42,20 +43,21 @@ router.get('/dashboard', protect, async (req, res) => {
     const totalVehicles = await prisma.transportVehicle.count();
     const totalBookings = await prisma.booking.count();
 
-    // Get booking stats
+    // Get booking stats — exclude archived bookings from all counts
+    const activeBookingsWhere = { archived_at: null };
     const pendingBookings = await prisma.booking.count({
-      where: { status: 'pending' }
+      where: { ...activeBookingsWhere, status: 'pending' }
     });
     const activeDeliveries = await prisma.booking.count({
-      where: { status: { in: ['confirmed', 'in_transit', 'pickup_completed'] } }
+      where: { ...activeBookingsWhere, status: { in: ['confirmed', 'in_transit', 'pickup_completed'] } }
     });
     const completedDeliveries = await prisma.booking.count({
-      where: { status: { in: ['delivered', 'completed'] } }
+      where: { ...activeBookingsWhere, status: { in: ['delivered', 'completed'] } }
     });
 
-    // Get revenue stats
+    // Get revenue stats — exclude archived bookings
     const revenueAgg = await prisma.booking.aggregate({
-      where: { status: { in: ['delivered', 'completed'] } },
+      where: { ...activeBookingsWhere, status: { in: ['delivered', 'completed'] } },
       _sum: { final_price: true },
     });
 
@@ -66,6 +68,7 @@ router.get('/dashboard', protect, async (req, res) => {
 
     const todayRevenueAgg = await prisma.booking.aggregate({
       where: {
+        ...activeBookingsWhere,
         status: { in: ['delivered', 'completed'] },
         delivered_at: { gte: todayStart, lte: todayEnd },
       },
@@ -380,6 +383,93 @@ router.post('/bookings/:id/send-quote', protect, async (req, res) => {
         quote_valid_until: result?.quote_valid_until || null,
         quote_remarks: remarks || null,
         driver_id: result?.driver_id || null,
+        vehicle_id: result?.vehicle_id || null,
+      },
+    });
+  } catch (err) {
+    console.error('Send quote error:', err);
+    return mapDomainErrorToHttp(err, res);
+  }
+});
+
+// @route   POST /api/admin/bookings/:id/quote
+// @desc    Send a final quote to the customer (only after driver assignment).
+//          Uses the already-assigned driver on the booking.
+// @access  Private (Admin)
+router.post('/bookings/:id/quote', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const bookingId = parseInt(req.params.id);
+    if (!Number.isFinite(bookingId)) {
+      return res.status(400).json({ success: false, message: 'Invalid booking id' });
+    }
+
+    const { final_price, note } = req.body || {};
+
+    // Validate booking exists and driver is already assigned
+    const booking = await prisma.booking.findUnique({
+      where: { booking_id: bookingId },
+      select: {
+        booking_id: true,
+        driver_id: true,
+        status: true,
+        quote_status: true,
+      },
+    });
+    if (!booking) {
+      return res.status(404).json({ success: false, message: 'Booking not found' });
+    }
+
+    if (!booking.driver_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Assign a driver before sending the quote.',
+      });
+    }
+
+    if (['cancelled', 'completed', 'delivered'].includes(booking.status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot send quote for a booking with status: ${booking.status}`,
+      });
+    }
+
+    if (booking.quote_status === 'ACCEPTED') {
+      return res.status(400).json({
+        success: false,
+        message: 'Quote already accepted for this booking',
+      });
+    }
+
+    if (booking.quote_status === 'SENT') {
+      return res.status(400).json({
+        success: false,
+        message: 'A quote is already sent and awaiting customer approval.',
+      });
+    }
+
+    const result = await bookingService.sendQuoteWithReservation(bookingId, {
+      final_price,
+      remarks: note,
+      driver_id: booking.driver_id,
+      quote_validity_hours: 24,
+      reserved_by: req.user.user_id,
+    });
+
+    return res.json({
+      success: true,
+      message: 'Quote sent to customer',
+      data: {
+        booking_id: bookingId,
+        final_price: Number(final_price),
+        quote_status: 'SENT',
+        quote_sent_at: result?.quote_sent_at || new Date(),
+        quote_valid_until: result?.quote_valid_until || null,
+        quote_remarks: note || null,
+        driver_id: result?.driver_id || booking.driver_id,
         vehicle_id: result?.vehicle_id || null,
       },
     });
@@ -713,6 +803,32 @@ customer_first_name: booking.user?.first_name ?? null,
   }
 });
 
+// @route   GET /api/admin/bookings/by-number/:bookingNumber
+// @desc    Get a booking by its CANONICAL booking_number (BTB-YYYY-NNNNN)
+//          or legacy booking_reference alias. Used by the read-only booking
+//          detail page, the dedicated Assign Driver page, and the dedicated
+//          Assign Vehicle page — all navigated by booking number.
+// @access  Private (Admin)
+router.get('/bookings/by-number/:bookingNumber', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+    const identifier = String(req.params.bookingNumber || '').trim();
+    if (!identifier) {
+      return res.status(400).json({ success: false, message: 'Booking number is required' });
+    }
+    const data = await bookingService.getBookingByIdentifier(identifier);
+    return res.json({ success: true, data });
+  } catch (err) {
+    console.error('Get booking by number error:', err);
+    if (err?.name === 'NotFoundError' || err?.code === 'NOT_FOUND') {
+      return res.status(404).json({ success: false, message: 'Booking not found' });
+    }
+    return res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
 // @route   PUT /api/admin/bookings/:id
 // @desc    Edit/update a booking by id
 // @access  Private (Admin)
@@ -779,7 +895,11 @@ router.put('/bookings/:id', protect, async (req, res) => {
 });
 
 // @route   DELETE /api/admin/bookings/:id
-// @desc    Delete booking by id
+// @desc    Delete booking by id (STATE-AWARE + dependency-aware).
+//          Booking numbers are derived from the DB autoincrement PK
+//          (booking_id), so deleting a booking NEVER reuses its number —
+//          the sequence always moves forward. Verified from the canonical
+//          booking_number migration.
 // @access  Private (Admin)
 router.delete('/bookings/:id', protect, async (req, res) => {
   try {
@@ -791,24 +911,229 @@ router.delete('/bookings/:id', protect, async (req, res) => {
     }
 
     const bookingId = parseInt(req.params.id);
+    if (!Number.isFinite(bookingId)) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_ID', message: 'Invalid booking id' } });
+    }
 
-    // Prisma cascading deletes will handle related records
-    // (BookingEvent, BookingAssignment, Delivery are set to onDelete: Cascade)
-    await prisma.booking.delete({
+    // Fetch the booking with the info needed for the state/dependency check.
+    const booking = await prisma.booking.findUnique({
       where: { booking_id: bookingId },
+      include: {
+        delivery: { select: { delivery_id: true, current_status: true } },
+        reservations: { select: { reservation_id: true, status: true } },
+        bookingAssignments: { select: { booking_assignment_id: true, assignment_status: true } },
+        invoices: { select: { invoice_id: true, status: true } },
+        ledgerEntries: { select: { ledger_id: true } },
+      },
+    });
+
+    if (!booking) {
+      return res.status(404).json({ success: false, error: { code: 'BOOKING_NOT_FOUND', message: 'Booking not found' } });
+    }
+
+    const status = (booking.status || '').toLowerCase();
+
+    // === State-aware deletion rules ===
+    // Protected statuses — never allow deletion of active/operational bookings.
+    const PROTECTED_STATUSES = ['confirmed', 'driver_assigned', 'pickup_completed', 'pickup_started', 'in_transit', 'out_for_delivery', 'delivered', 'completed'];
+    if (PROTECTED_STATUSES.includes(status)) {
+      return res.status(409).json({
+        success: false,
+        error: {
+          code: 'BOOKING_NOT_DELETABLE',
+          message: `A booking with status "${booking.status}" cannot be deleted. Only pending, quote_sent, rejected, expired or cancelled bookings without active dependencies can be deleted.`,
+          data: { status: booking.status },
+        },
+      });
+    }
+
+    // Allowed cleanup states: pending, quote_sent, rejected, cancelled, expired.
+    const ALLOWED_CLEANUP_STATUSES = ['pending', 'quote_sent', 'rejected', 'cancelled', 'expired'];
+    if (!ALLOWED_CLEANUP_STATUSES.includes(status)) {
+      return res.status(409).json({
+        success: false,
+        error: {
+          code: 'BOOKING_NOT_DELETABLE',
+          message: `Booking status "${booking.status}" is not eligible for deletion.`,
+          data: { status: booking.status },
+        },
+      });
+    }
+
+    // quote_sent / pending bookings must not have active reservations/assignments/deliveries.
+    // For cancelled/rejected bookings, an active delivery is stale and will be
+    // safely cleaned up during deletion.
+    const hasActiveReservation = booking.reservations?.some((r) => r.status === 'ACTIVE');
+    const hasActiveAssignment = booking.bookingAssignments?.some((a) => a.assignment_status === 'active');
+    const hasActiveDelivery = booking.delivery && !['delivered', 'cancelled'].includes((booking.delivery.current_status || '').toLowerCase());
+    const hasProtectedPayment = booking.invoices?.some((i) => ['GENERATED', 'PAID'].includes(i.status));
+    const hasLedgerLink = (booking.ledgerEntries?.length || 0) > 0;
+
+    const isCleanupEligible = ['cancelled', 'rejected'].includes(status);
+
+    if (hasActiveReservation) {
+      return res.status(409).json({
+        success: false,
+        error: { code: 'BOOKING_HAS_ACTIVE_RESERVATION', message: 'This booking has an active driver/vehicle reservation and cannot be deleted.' },
+      });
+    }
+    if (hasActiveAssignment) {
+      return res.status(409).json({
+        success: false,
+        error: { code: 'BOOKING_HAS_ACTIVE_ASSIGNMENT', message: 'This booking has an active assignment and cannot be deleted.' },
+      });
+    }
+    if (hasActiveDelivery && !isCleanupEligible) {
+      return res.status(409).json({
+        success: false,
+        error: { code: 'BOOKING_HAS_ACTIVE_DELIVERY', message: 'This booking has an active delivery and cannot be deleted.' },
+      });
+    }
+    if (hasProtectedPayment) {
+      return res.status(409).json({
+        success: false,
+        error: { code: 'BOOKING_HAS_PROTECTED_PAYMENT', message: 'This booking has protected payment/financial records and cannot be deleted.' },
+      });
+    }
+    if (hasLedgerLink) {
+      return res.status(409).json({
+        success: false,
+        error: { code: 'BOOKING_HAS_LEDGER_RECORDS', message: 'This booking is linked to financial ledger records and cannot be deleted.' },
+      });
+    }
+
+    // Safe to delete. Use a transaction so the delete + verification are atomic.
+    // booking_events, booking_assignments, deliveries, invoices, reservations
+    // CASCADE on booking delete (verified from schema). partner_ledger.booking_id
+    // is SET NULL by the DB, so no ledger history is destroyed.
+    const result = await prisma.$transaction(async (tx) => {
+      // For cancelled/rejected bookings with a stale active delivery, safely
+      // mark it as cancelled and remove it before deleting the booking.
+      if (hasActiveDelivery && booking.delivery) {
+        await tx.delivery.update({
+          where: { delivery_id: booking.delivery.delivery_id },
+          data: {
+            current_status: 'cancelled',
+            status_description: 'Booking cancelled — delivery removed by admin',
+            updated_at: new Date(),
+          },
+        });
+        await tx.delivery.delete({
+          where: { delivery_id: booking.delivery.delivery_id },
+        });
+      }
+
+      await tx.booking.delete({ where: { booking_id: bookingId } });
+      const stillThere = await tx.booking.findUnique({
+        where: { booking_id: bookingId },
+        select: { booking_id: true },
+      });
+      if (stillThere) {
+        const err = new Error('Booking could not be fully removed from the database.');
+        err.code = 'BOOKING_DELETE_FAILED';
+        throw err;
+      }
+      return { booking_id: bookingId };
     });
 
     res.json({
       success: true,
-      message: 'Booking deleted successfully',
-      data: { booking_id: bookingId },
+      message: 'Booking deleted successfully.',
+      data: { booking_id: bookingId, booking_number: booking.booking_number },
     });
   } catch (error) {
     console.error('Delete booking error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error'
+    if (error.code === 'BOOKING_DELETE_FAILED') {
+      return res.status(500).json({ success: false, error: { code: error.code, message: error.message } });
+    }
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Server error' } });
+  }
+});
+
+// @route   GET /api/admin/bookings/:id/deletion-summary
+// @desc    Get available actions and warnings for a booking's deletion workflow.
+// @access  Private (Admin)
+router.get('/bookings/:id/deletion-summary', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const bookingId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(bookingId)) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_ID', message: 'Invalid booking id' } });
+    }
+
+    const deletionService = new BookingDeletionService();
+    const summary = await deletionService.getDeletionSummary(bookingId);
+
+    return res.json({ success: true, data: summary });
+  } catch (error) {
+    console.error('Deletion summary error:', error);
+    if (error.code === 'NOT_FOUND' || error.name === 'NotFoundError') {
+      return res.status(404).json({ success: false, error: { code: 'BOOKING_NOT_FOUND', message: error.message } });
+    }
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Server error' } });
+  }
+});
+
+// @route   POST /api/admin/bookings/:id/deletion-action
+// @desc    Perform a deletion action (keep, archive, or permanent delete) on a booking.
+// @body    { action: 'keep' | 'archive' | 'delete' }
+// @access  Private (Admin)
+router.post('/bookings/:id/deletion-action', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const bookingId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(bookingId)) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_ID', message: 'Invalid booking id' } });
+    }
+
+    const { action } = req.body || {};
+    if (!action || !['keep', 'archive', 'delete'].includes(action)) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_ACTION', message: 'Action must be one of: keep, archive, delete' },
+      });
+    }
+
+    // For permanent delete, require strong confirmation from the client.
+    if (action === 'delete' && req.body.confirmation_code !== 'DELETE') {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'CONFIRMATION_REQUIRED', message: 'Type DELETE to confirm permanent deletion.' },
+      });
+    }
+
+    const deletionService = new BookingDeletionService();
+    const result = await deletionService.performAction(bookingId, action, req.user.user_id);
+
+    const actionLabels = { keep: 'kept', archive: 'archived', delete: 'permanently deleted' };
+    return res.json({
+      success: true,
+      message: `Booking ${actionLabels[action]} successfully.`,
+      data: result,
     });
+  } catch (error) {
+    console.error('Deletion action error:', error);
+    const code = error.code || 'INTERNAL_ERROR';
+    const statusMap = {
+      BOOKING_NOT_FOUND: 404,
+      BOOKING_NOT_ARCHIVABLE: 409,
+      BOOKING_NOT_DELETABLE: 409,
+      BOOKING_HAS_ACTIVE_DELIVERY: 409,
+      BOOKING_HAS_PROTECTED_INVOICE: 409,
+      BOOKING_HAS_LEDGER_RECORDS: 409,
+      BOOKING_ARCHIVE_FAILED: 500,
+      BOOKING_DELETE_FAILED: 500,
+      CONFIRMATION_REQUIRED: 400,
+      INVALID_ACTION: 400,
+    };
+    const status = statusMap[code] || 500;
+    return res.status(status).json({ success: false, error: { code, message: error.message } });
   }
 });
 
@@ -944,7 +1269,7 @@ router.post('/bookings/:id/assign-driver', protect, async (req, res) => {
 
     const parsedDriverId = parseInt(driver_id);
 
-    // Validate booking exists
+// Validate booking exists
     const booking = await prisma.booking.findUnique({
       where: { booking_id: bookingId },
       select: {
@@ -961,14 +1286,11 @@ router.post('/bookings/:id/assign-driver', protect, async (req, res) => {
       });
     }
 
-    // Quote workflow gate: a driver may only be assigned AFTER the customer
-    // has ACCEPTED the final quote. This replaces the old confirm flow.
-    if (booking.quote_status !== 'ACCEPTED') {
-      return res.status(400).json({
-        success: false,
-        message: 'Driver can only be assigned after the customer accepts the final quote'
-      });
-    }
+    // NOTE: This endpoint is an EXCEPTIONAL operational path for manually
+    // assigning a driver. The NORMAL quote workflow selects the driver WITH
+    // the final quote (sendQuoteWithReservation) and reserves them; customer
+    // acceptance then auto-confirms driver + vehicle. We therefore do NOT
+    // require quote_status === 'ACCEPTED' here — that old gate is removed.
 
     // Prevent assigning driver to cancelled/completed bookings
     if (['cancelled', 'completed', 'delivered'].includes(booking.status)) {
@@ -990,7 +1312,7 @@ router.post('/bookings/:id/assign-driver', protect, async (req, res) => {
     // Brokerage model: each driver maps to exactly one primary registered
     // vehicle (stored on the driver as vehicle_number / vehicle_type). We
     // load those fields so the vehicle can be auto-associated on assignment.
-    const driver = await prisma.driver.findUnique({
+const driver = await prisma.driver.findUnique({
       where: { driver_id: parsedDriverId },
       include: {
         user: {
@@ -1004,6 +1326,21 @@ router.post('/bookings/:id/assign-driver', protect, async (req, res) => {
           select: {
             partner_name: true,
           },
+        },
+        // Compatibility: expose the driver's linked TransportVehicle so the
+        // assignment validator can agree with the picker (findAssignable),
+        // which surfaces the vehicle from the TransportVehicle relationship
+        // even when Driver.vehicle_number is not populated.
+        transportVehicles: {
+          select: {
+            vehicle_id: true,
+            vehicle_number: true,
+            vehicle_type: true,
+            vehicle_name: true,
+            capacity_kg: true,
+          },
+          orderBy: { created_at: 'desc' },
+          take: 1,
         },
       },
     });
@@ -1021,19 +1358,34 @@ router.post('/bookings/:id/assign-driver', protect, async (req, res) => {
     }
 
     // Brokerage validation: a driver MUST have a registered vehicle before
-    // they can be assigned to a booking. Rejection happens BEFORE any DB
-    // write, so the booking is never partially updated.
-    if (!driver.vehicle_number) {
+    // they can be assigned to a booking. A driver is considered to have a
+    // valid vehicle when EITHER the denormalized Driver.vehicle_number exists
+    // OR a linked TransportVehicle exists. This keeps the assignment contract
+    // consistent with the driver picker, which surfaces the vehicle from the
+    // TransportVehicle relationship when Driver.vehicle_number is null.
+    // Rejection happens BEFORE any DB write, so the booking is never
+    // partially updated.
+    const linkedVehicle = driver.transportVehicles?.[0] || null;
+    if (!driver.vehicle_number && !linkedVehicle) {
       return res.status(400).json({
         success: false,
         message: 'Driver has no registered vehicle. Please assign a vehicle to the driver first.'
       });
     }
 
-    // Check driver is not already assigned to another active booking
+    // Resolve the authoritative vehicle source for this assignment.
+    // Prefer the denormalized Driver fields (primary registration), falling
+    // back to the linked TransportVehicle when they are not populated.
+    const assignedVehicleNumber = driver.vehicle_number || linkedVehicle?.vehicle_number || null;
+    const assignedVehicleType = driver.vehicle_type || linkedVehicle?.vehicle_type || null;
+    const assignedVehicleCapacity = linkedVehicle?.capacity_kg ?? null;
+
+    // Check driver is not already assigned to another active booking.
+    // Exclude the current booking so reassigning the same driver is allowed.
     const activeBooking = await prisma.booking.findFirst({
       where: {
         driver_id: parsedDriverId,
+        booking_id: { not: bookingId },
         status: { notIn: ['cancelled', 'completed', 'delivered'] },
       },
       select: { booking_id: true },
@@ -1058,10 +1410,12 @@ router.post('/bookings/:id/assign-driver', protect, async (req, res) => {
           driver_id: parsedDriverId,
           status: 'driver_assigned',
           driver_assigned_at: new Date(),
-          // Auto-assign driver's registered vehicle (brokerage snapshot model)
+// Auto-assign driver's registered vehicle (brokerage snapshot model).
+          // Prefer the denormalized Driver.vehicle_number, falling back to the
+          // linked TransportVehicle when it is not populated.
           driver_name_snapshot: driver.driver_name || `${driver.user.first_name} ${driver.user.last_name}`.trim(),
           mobile_snapshot: driver.mobile || driver.user.phone || null,
-truck_number_snapshot: driver.vehicle_number,
+          truck_number_snapshot: assignedVehicleNumber,
           partner_name_snapshot: driver.currentPartner?.partner_name || null,
         },
       });
@@ -1111,13 +1465,14 @@ truck_number_snapshot: driver.vehicle_number,
         },
       });
       await tx.bookingEvent.create({
-        data: {
+data: {
           booking_id: bookingId,
           event_type: 'vehicle_auto_assigned',
           event_payload: JSON.stringify({
-            vehicle_number: driver.vehicle_number,
-            vehicle_type: driver.vehicle_type || null,
-            source: 'driver_primary_vehicle',
+            vehicle_number: assignedVehicleNumber,
+            vehicle_type: assignedVehicleType || null,
+            vehicle_capacity_kg: assignedVehicleCapacity ?? null,
+            source: 'driver_primary_vehicle_or_transport_vehicle',
           }),
         },
       });
@@ -1152,10 +1507,11 @@ truck_number_snapshot: driver.vehicle_number,
       data: {
         booking_id: bookingId,
         driver_id: parsedDriverId,
-        driver_name: freshBooking?.driver_name_snapshot || assigned?.driver_name_snapshot || null,
+driver_name: freshBooking?.driver_name_snapshot || assigned?.driver_name_snapshot || null,
         driver_phone: freshBooking?.mobile_snapshot || driver.mobile || driver.user.phone || null,
-        vehicle_number: freshBooking?.truck_number_snapshot || driver.vehicle_number,
-        vehicle_type: driver.vehicle_type || null,
+        vehicle_number: freshBooking?.truck_number_snapshot || assignedVehicleNumber,
+        vehicle_type: assignedVehicleType || null,
+        vehicle_capacity_kg: assignedVehicleCapacity ?? null,
         owner_name: freshBooking?.partner_name_snapshot || driver.currentPartner?.partner_name || null,
         status: 'driver_assigned',
       },
@@ -1205,7 +1561,7 @@ router.post('/bookings/:id/assign-driver-details', protect, async (req, res) => 
       return res.status(400).json({ success: false, message: 'vehicle_number is required' });
     }
 
-    const booking = await prisma.booking.findUnique({
+const booking = await prisma.booking.findUnique({
       where: { booking_id: bookingId },
       select: { booking_id: true, status: true, quote_status: true },
     });
@@ -1213,12 +1569,9 @@ router.post('/bookings/:id/assign-driver-details', protect, async (req, res) => 
       return res.status(404).json({ success: false, message: 'Booking not found' });
     }
 
-    if (booking.quote_status !== 'ACCEPTED') {
-      return res.status(400).json({
-        success: false,
-        message: 'Driver can only be assigned after the customer accepts the final quote',
-      });
-    }
+    // Exceptional operational path — the acceptance gate is intentionally
+    // removed. The normal quote workflow reserves the driver WITH the quote;
+    // acceptance auto-confirms. This endpoint is for manual/snapshot capture.
 
     if (['cancelled', 'completed', 'delivered'].includes(booking.status)) {
       return res.status(400).json({

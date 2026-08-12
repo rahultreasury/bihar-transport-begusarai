@@ -1,5 +1,6 @@
 import React from 'react';
 import QuoteStatusBadge from './QuoteStatusBadge';
+import { normalizeQuoteStatus, normalizeStatus, isConfirmedStatus } from '../../utils/bookingUtils';
 
 const VEHICLE_ICONS = {
   truck: '🚛',
@@ -20,14 +21,15 @@ const BookingHeader = React.memo(function BookingHeader({ booking }) {
   if (!booking) return null;
 
 const vehicleIcon = VEHICLE_ICONS[booking.vehicle_type_required] || '🚛';
-  const quoteStatus = (booking.quote_status || 'PENDING').toUpperCase();
+  const quoteStatus = normalizeQuoteStatus(booking.quote_status);
+  const normalizedStatus = normalizeStatus(booking.status);
   // SINGLE SOURCE OF TRUTH: a booking is only "confirmed" once the customer has
   // ACCEPTED the final quote. quote_status is authoritative; booking.status is
   // a derived mirror. Any downstream status (driver_assigned, in_transit, etc.)
   // also implies the quote was accepted.
   const isConfirmed =
     quoteStatus === 'ACCEPTED' ||
-    ['driver_assigned', 'pickup_completed', 'in_transit', 'delivered', 'completed'].includes(booking.status);
+    isConfirmedStatus(normalizedStatus);
 
   const formatDate = (dateStr) => {
     if (!dateStr) return '—';

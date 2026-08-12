@@ -1,29 +1,19 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
 const bcrypt = require('bcryptjs');
-const { v4: uuidv4 } = require('uuid');
 
 const { sendBookingNotification } = require('../services/emailService');
 const { prisma } = require('../config/prisma');
+const BookingService = require('../services/BookingService');
 
 const router = express.Router();
 
-/**
- * Generate a unique, human-friendly booking reference.
- * Format: BTB-XXXXXXXX (8 random alphanumeric chars, uppercase).
- * Retries a few times in the rare case of a collision with an existing row.
- */
-async function generateUniqueBookingReference() {
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    const ref = `BTB-${uuidv4().replace(/-/g, '').slice(0, 8).toUpperCase()}`;
-    const existing = await prisma.booking.findUnique({
-      where: { booking_reference: ref },
-      select: { booking_id: true },
-    });
-    if (!existing) return ref;
-  }
-  throw new Error('Could not generate a unique booking reference after 5 attempts');
-}
+// Canonical booking-creation path. Booking numbers (BTB-YYYY-NNNNN) are
+// generated ONCE by BookingService.createBooking → BookingNumberService, which
+// derives the number from the DB primary key. All booking-creation endpoints
+// share this single service so no two parts of the system can produce
+// different identifiers.
+const bookingService = new BookingService();
 
 
 const requiredString = (fieldLabel) =>
@@ -119,67 +109,45 @@ router.post('/booking', validateMvpBooking, async (req, res) => {
       user = { user_id: newUser.user_id };
     }
 
-    const estimated_distance_km = Number(req.body.distance);
+const estimated_distance_km = Number(req.body.distance);
     const estimated_price = Number(req.body.price);
 
-    // Generate a unique, collision-safe booking reference BEFORE the insert so
-    // the row never carries a placeholder 'TEMP' value, even transiently.
-    const booking_reference = await generateUniqueBookingReference();
-
-    const { booking_id } = await prisma.$transaction(async (tx) => {
-      const booking = await tx.booking.create({
-        data: {
-          booking_reference,
-          booking_number: booking_reference,
-          user_id: user.user_id,
-          pickup_location: req.body.pickup,
-          pickup_address: null,
-          pickup_city: req.body.pickup,
-          pickup_state: 'Bihar',
-          pickup_pincode: null,
-          pickup_date: req.body.pickupDate || null,
-          pickup_time: req.body.pickupTime || '00:00:00',
-          drop_location: req.body.drop,
-          drop_address: null,
-          drop_city: req.body.drop,
-          drop_state: 'Bihar',
-          drop_pincode: null,
-          goods_description: req.body.goodsType,
-          goods_type: req.body.goodsType,
-          goods_weight_kg: null,
-          goods_volume: null,
-          number_of_items: 1,
-          fragile: false,
-          vehicle_type_required: req.body.vehicle,
-          estimated_distance_km,
-          estimated_price,
-          final_price: estimated_price,
-          status: 'pending',
-          // Explicit quote lifecycle start so the tracking UI is consistent
-          // (Pending → Sent → Accepted/Rejected) even for guest bookings.
-          quote_status: 'PENDING',
-        },
-      });
-
-      await tx.delivery.create({
-        data: {
-          booking_id: booking.booking_id,
-          current_status: 'booking_confirmed',
-          status_description: 'Booking confirmed, waiting for driver assignment',
-        },
-      });
-
-      // Booking timeline event — drives the ActivityFeed on the tracking page.
-      await tx.bookingEvent.create({
-        data: {
-          booking_id: booking.booking_id,
-          event_type: 'booking_created',
-          event_payload: JSON.stringify({ booking_reference }),
-        },
-      });
-
-      return { booking_id: booking.booking_id };
+    // Delegate to the single canonical creation service. BookingService
+    // derives the booking_number (BTB-YYYY-NNNNN) from the DB primary key,
+    // persists it atomically, and creates the delivery record + timeline
+    // event. No UUID / Math.random() / inline Prisma transaction here.
+    const created = await bookingService.createBooking({
+      user_id: user.user_id,
+      pickup_location: req.body.pickup,
+      pickup_address: null,
+      pickup_city: req.body.pickup,
+      pickup_state: 'Bihar',
+      pickup_pincode: null,
+      pickup_date: req.body.pickupDate || null,
+      pickup_time: req.body.pickupTime || '00:00:00',
+      drop_location: req.body.drop,
+      drop_address: null,
+      drop_city: req.body.drop,
+      drop_state: 'Bihar',
+      drop_pincode: null,
+      goods_description: req.body.goodsType,
+      goods_type: req.body.goodsType,
+      goods_weight_kg: null,
+      goods_volume: null,
+      number_of_items: 1,
+      fragile: false,
+      vehicle_type_required: req.body.vehicle,
+      estimated_distance_km,
+      estimated_price,
+      final_price: estimated_price,
+      status: 'pending',
+      // Explicit quote lifecycle start so the tracking UI is consistent
+      // (Pending → Sent → Accepted/Rejected) even for guest bookings.
+      quote_status: 'PENDING',
     });
+
+    const booking_id = created.booking_id;
+    const booking_reference = created.booking_reference || created.booking_number;
 
     console.log('Booking saved with id:', booking_id);
 

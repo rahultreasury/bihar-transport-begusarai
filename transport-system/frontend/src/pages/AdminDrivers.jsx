@@ -250,20 +250,31 @@ const searchInputRef = useRef(null);
     }
   }, [selectedIds, fetchDrivers, fetchStats, pagination.page, showToast]);
 
-  // Single delete: guarded, with loading + error handling.
+// Single delete: guarded, with loading + error handling.
+  // The backend only returns success AFTER the database confirms the row is
+  // gone. We show "deleted" ONLY on a resolved success. Rejections surface the
+  // structured error.code / error.message from the API.
   const handleSingleDelete = useCallback(async () => {
     if (deletingRef.current || !showDeleteConfirm) return;
     deletingRef.current = true;
     setDeleting(true);
     setDeleteError(null);
     try {
-      await adminAPI.deleteDriver(showDeleteConfirm);
+      const response = await adminAPI.deleteDriver(showDeleteConfirm);
+      const data = response.data || {};
       setShowDeleteConfirm(null);
-      showToast('✓ Driver deleted.', 'success');
+      if (data.archived) {
+        // Driver was archived (financial history retained), not hard-deleted.
+        showToast('⚠️ Driver archived (financial records retained).', 'error');
+      } else {
+        showToast('✓ Driver deleted.', 'success');
+      }
       fetchDrivers(pagination.page);
       fetchStats();
     } catch (err) {
-      const msg = err?.response?.data?.message || err?.message || 'Failed to delete driver.';
+      const data = err?.response?.data;
+      const structured = data?.error;
+      const msg = structured?.message || data?.message || err?.message || 'Failed to delete driver.';
       setDeleteError(msg);
       showToast('✗ ' + msg, 'error');
     } finally {
@@ -1001,9 +1012,11 @@ placeholder="Search by name, driver code, mobile, vehicle number, city..."
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
                   </svg>
                 </div>
-                <h3 className="text-lg font-bold mb-2">Delete Driver?</h3>
+<h3 className="text-lg font-bold mb-2">Delete Driver?</h3>
                 <p className="text-sm text-muted mb-6">
-                  This will mark the driver as inactive. Their trip history will be preserved.
+                  This permanently removes the driver. It is only allowed when the driver has
+                  no active bookings, reservations, assignments or protected financial records.
+                  If such records exist, deletion will be rejected and the driver will be archived instead.
                 </p>
 {deleteError && (
                   <div className="mb-4 rounded-xl border border-red-200 bg-red-50 dark:bg-red-500/10 dark:border-red-500/20 px-4 py-2.5 text-sm text-red-700 dark:text-red-400">

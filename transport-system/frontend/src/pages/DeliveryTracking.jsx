@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { bookingAPI } from '../services/api';
 import { LiveTrackingMap } from '../components/MapComponents';
 import QuoteCard from '../components/tracking/QuoteCard';
+import { normalizeQuoteStatus, normalizeStatus, isConfirmedStatus, deriveQuoteState } from '../utils/bookingUtils';
 
 function DeliveryTracking() {
   const [searchParams] = useSearchParams();
@@ -225,19 +226,27 @@ function DeliveryTracking() {
               </div>
             </div>
 
-            {/* Quote Card - Show when quote has been sent */}
-            {booking.quote_status === 'SENT' && (
-              <QuoteCard
-                booking={booking}
-                final_price={booking.final_price}
-                quote_valid_until={booking.quote_valid_until}
-                quote_remarks={booking.quote_remarks}
-                driver_quote={booking.driver_quote}
-                bookingReference={booking.booking_reference}
-                onAccept={handleAcceptQuote}
-                onReject={handleRejectQuote}
-              />
-            )}
+            {/* Quote Card - Show when quote has been sent or edge case (driver assigned without quote) */}
+            {(() => {
+              const { isQuoteSent, isEdgeCase } = deriveQuoteState({
+                quoteStatus: booking?.quote_status,
+                status: booking?.status,
+                finalPrice: booking?.final_price,
+              });
+              return (isQuoteSent || isEdgeCase) && (
+                <QuoteCard
+                  booking={booking}
+                  final_price={booking.final_price}
+                  quote_valid_until={booking.quote_valid_until}
+                  quote_remarks={booking.quote_remarks}
+                  driver_quote={booking.driver_quote}
+                  bookingReference={booking.booking_reference}
+                  onAccept={handleAcceptQuote}
+                  onReject={handleRejectQuote}
+                  isEdgeCase={isEdgeCase}
+                />
+              );
+            })()}
 
             {/* Live Tracking Map - Show when in transit */}
             {currentStep >= 2 && (pickupCoords || dropCoords) && (

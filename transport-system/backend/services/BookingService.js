@@ -15,6 +15,7 @@ const ReservationRepository = require('../repositories/ReservationRepository');
 const InvoiceRepository = require('../repositories/InvoiceRepository');
 const { prisma } = require('../config/prisma');
 const { AppError, ValidationError, NotFoundError } = require('../utils/AppError');
+const { buildBookingNumber } = require('./BookingNumberService');
 const { validateTransition, isTerminal, canCancel, canConfirm, canSendQuote, canReject, canAssignDriver, canStartPickup, toDeliveryStatus } = require('../utils/BookingStateMachine');
 
 class BookingService {
@@ -32,31 +33,63 @@ class BookingService {
     this.invoiceRepo = deps.invoiceRepo || new InvoiceRepository();
   }
 
-  /**
+/**
    * Create a new booking.
+   *
+   * Canonical booking-number logic:
+   *   - booking_number (BTB-YYYY-NNNNN) is DERIVED from the DB primary key
+   *     (booking_id) by BookingNumberService — the single canonical
+   *     customer/admin-facing identifier. It is deterministic, sequential,
+   *     unique, and safe under concurrent creation (no MAX+1 race).
+   *   - booking_reference is a legacy alias that mirrors booking_number for
+   *     new bookings so existing tracking/email/WhatsApp links stay uniform.
+   *
    * @param {Object} input
    * @returns {Promise<{booking_id: number}>}
    */
   async createBooking(input) {
-    if (!input || !input.booking_reference) {
-      throw new ValidationError('booking_reference is required');
-    }
-    if (!input.user_id) {
+    if (!input || !input.user_id) {
       throw new ValidationError('user_id is required');
     }
     if (!input.vehicle_type_required) {
       throw new ValidationError('vehicle_type_required is required');
     }
 
-    const bookingResult = await prisma.$transaction(async (tx) => {
+const bookingResult = await prisma.$transaction(async (tx) => {
       const booking = await this.bookingRepo.create(input, tx);
+
+      // Derive the canonical booking number from the DB-assigned PK, then
+      // persist it atomically inside the SAME transaction. booking_reference
+      // mirrors booking_number for new bookings (legacy alias).
+      const { buildBookingNumber } = require('./BookingNumberService');
+      const canonicalNumber = buildBookingNumber(booking.booking_id, new Date());
+
+      await this.bookingRepo.update(
+        booking.booking_id,
+        { booking_number: canonicalNumber, booking_reference: canonicalNumber },
+        tx
+      );
+
+      // Ensure a delivery record always exists so the driver workflow
+      // (pickup_started → pickup_completed → in_transit → delivered) can
+      // proceed. This was previously duplicated inline in the booking routes;
+      // it now lives in the single canonical create path.
+      await tx.delivery.create({
+        data: {
+          booking_id: booking.booking_id,
+          current_status: 'booking_confirmed',
+          status_description: 'Booking confirmed, waiting for driver assignment',
+        },
+      });
+
       await this.timelineRepo.addEvent(
         booking.booking_id,
         'booking_created',
-        JSON.stringify({ booking_reference: input.booking_reference }),
+        JSON.stringify({ booking_reference: canonicalNumber, booking_number: canonicalNumber }),
         tx
       );
-      return booking;
+
+      return { ...booking, booking_number: canonicalNumber, booking_reference: canonicalNumber };
     });
 
     return bookingResult;
@@ -323,14 +356,45 @@ class BookingService {
     const existing = await this.bookingRepo.findById(bookingId);
     if (!existing) throw new NotFoundError('Booking not found');
 
-    if (existing.quote_status !== 'SENT') {
+    // Idempotency: if already accepted, return current state
+    if (action === 'ACCEPT' && existing.quote_status === 'ACCEPTED') {
+      return {
+        ok: true,
+        quote_status: 'ACCEPTED',
+        status: existing.status,
+        driver_id: existing.driver_id,
+        vehicle_id: existing.vehicle_id,
+        confirmation_source: existing.confirmation_source || 'CUSTOMER',
+      };
+    }
+
+    // Idempotency: if already rejected, return current state
+    if (action === 'REJECT' && existing.quote_status === 'REJECTED') {
+      return {
+        ok: true,
+        quote_status: 'REJECTED',
+        status: existing.status,
+      };
+    }
+
+    // Normal path: quote must be in SENT state.
+    // Edge case: admin assigned driver without sending a quote.
+    // In that case, quote_status is PENDING but status is a confirmed state
+    // (e.g. driver_assigned) and final_price exists. We allow the customer
+    // to accept/reject in this scenario.
+    const isEdgeCase =
+      existing.quote_status === 'PENDING' &&
+      ['driver_assigned', 'confirmed', 'pickup_started', 'pickup_completed', 'in_transit', 'out_for_delivery', 'delivered', 'completed'].includes(existing.status) &&
+      existing.final_price != null;
+
+    if (existing.quote_status !== 'SENT' && !isEdgeCase) {
       throw new ValidationError(
         `Quote is not in SENT state (current: ${existing.quote_status || 'PENDING'})`
       );
     }
 
-    // Quote expiry check
-    if (existing.quote_valid_until && new Date(existing.quote_valid_until) < new Date()) {
+    // Quote expiry check (only for normal SENT state)
+    if (existing.quote_status === 'SENT' && existing.quote_valid_until && new Date(existing.quote_valid_until) < new Date()) {
       await prisma.$transaction(async (tx) => {
         await this.reservationRepo.releaseAllActive(bookingId, tx);
         await this.bookingRepo.update(bookingId, { quote_status: 'EXPIRED' }, tx);
@@ -345,61 +409,95 @@ class BookingService {
     }
 
     if (action === 'ACCEPT') {
-      return await this.acceptQuote(bookingId, existing);
+      return await this.acceptQuote(bookingId, existing, isEdgeCase);
     }
 
-    return await this.rejectQuote(bookingId, existing);
+    return await this.rejectQuote(bookingId, existing, isEdgeCase);
   }
 
   /**
-   * Atomically accept a quote and confirm the booking.
-   * @private
-   */
-  async acceptQuote(bookingId, existing) {
+    * Atomically accept a quote and confirm the booking.
+    * @private
+    */
+  async acceptQuote(bookingId, existing, isEdgeCase = false) {
     const finalPrice = existing.final_price != null ? Number(existing.final_price) : 0;
 
-    const activeReservation = await this.reservationRepo.getActiveByBooking(bookingId);
-    const reservedDriverId = activeReservation?.driver_id || null;
-    const reservedVehicleId = activeReservation?.vehicle_id || null;
+    let reservedDriverId = null;
+    let reservedVehicleId = null;
+
+    if (!isEdgeCase) {
+      const activeReservation = await this.reservationRepo.getActiveByBooking(bookingId);
+      reservedDriverId = activeReservation?.driver_id || null;
+      reservedVehicleId = activeReservation?.vehicle_id || null;
+    } else {
+      // Edge case: no reservation exists because admin assigned driver directly.
+      // Use the driver/vehicle already attached to the booking.
+      reservedDriverId = existing.driver_id;
+      reservedVehicleId = existing.vehicle_id;
+    }
 
     const now = new Date();
     const invoiceNumber = `INV-${existing.booking_reference || bookingId}-${Date.now().toString().slice(-6)}`;
 
     const result = await prisma.$transaction(async (tx) => {
-      await this.bookingRepo.update(bookingId, {
-        quote_status: 'ACCEPTED',
-        quote_accepted_at: now,
-        status: 'confirmed',
-        confirmed_at: now,
-        confirmation_source: 'CUSTOMER',
-        driver_id: reservedDriverId,
-        vehicle_id: reservedVehicleId,
-      }, tx);
+      // CONCURRENCY PROTECTION: conditional update ensures only one request
+      // can transition from SENT/PENDING to ACCEPTED. If another request
+      // already accepted, updated.count will be 0.
+      const updated = await tx.booking.updateMany({
+        where: {
+          booking_id: bookingId,
+          quote_status: isEdgeCase ? 'PENDING' : 'SENT',
+          status: isEdgeCase
+            ? { in: ['driver_assigned', 'confirmed', 'pickup_started', 'pickup_completed', 'in_transit', 'out_for_delivery', 'delivered', 'completed'] }
+            : { notIn: ['cancelled', 'completed', 'delivered', 'rejected'] },
+        },
+        data: {
+          quote_status: 'ACCEPTED',
+          quote_accepted_at: now,
+          status: isEdgeCase ? existing.status : 'confirmed',
+          confirmed_at: isEdgeCase ? existing.confirmed_at : now,
+          confirmation_source: 'CUSTOMER',
+          driver_id: reservedDriverId,
+          vehicle_id: reservedVehicleId,
+        },
+      });
 
-      await this.reservationRepo.convertAllActive(bookingId, tx);
-
-      if (reservedDriverId || reservedVehicleId) {
-        await tx.bookingAssignment.create({
-          data: {
-            booking_id: bookingId,
-            assigned_driver_id: reservedDriverId,
-            assigned_vehicle_id: reservedVehicleId,
-            assignment_status: 'active',
-          },
-        });
+      if (updated.count === 0) {
+        // Another request already accepted this quote, or booking is in an
+        // invalid state. Re-read to determine the current state.
+        const current = await tx.booking.findUnique({ where: { booking_id: bookingId } });
+        if (current?.quote_status === 'ACCEPTED') {
+          return { alreadyAccepted: true, status: current.status, quote_status: 'ACCEPTED' };
+        }
+        throw new ValidationError('Quote has already been accepted or is not in a valid state for acceptance.');
       }
 
-      if (reservedDriverId) {
-        await tx.driver.update({
-          where: { driver_id: reservedDriverId },
-          data: { is_available: false },
-        });
-      }
-      if (reservedVehicleId) {
-        await tx.transportVehicle.update({
-          where: { vehicle_id: reservedVehicleId },
-          data: { is_available: false, current_status: 'on_trip' },
-        });
+      if (!isEdgeCase) {
+        await this.reservationRepo.convertAllActive(bookingId, tx);
+
+        if (reservedDriverId || reservedVehicleId) {
+          await tx.bookingAssignment.create({
+            data: {
+              booking_id: bookingId,
+              assigned_driver_id: reservedDriverId,
+              assigned_vehicle_id: reservedVehicleId,
+              assignment_status: 'active',
+            },
+          });
+        }
+
+        if (reservedDriverId) {
+          await tx.driver.update({
+            where: { driver_id: reservedDriverId },
+            data: { is_available: false },
+          });
+        }
+        if (reservedVehicleId) {
+          await tx.transportVehicle.update({
+            where: { vehicle_id: reservedVehicleId },
+            data: { is_available: false, current_status: 'on_trip' },
+          });
+        }
       }
 
       // Ensure a delivery record exists so the driver workflow can proceed
@@ -467,10 +565,21 @@ class BookingService {
       return { invoice_number: invoiceNumber };
     });
 
+    if (result.alreadyAccepted) {
+      return {
+        ok: true,
+        quote_status: 'ACCEPTED',
+        status: result.status,
+        driver_id: reservedDriverId,
+        vehicle_id: reservedVehicleId,
+        confirmation_source: 'CUSTOMER',
+      };
+    }
+
     return {
       ok: true,
       quote_status: 'ACCEPTED',
-      status: 'confirmed',
+      status: isEdgeCase ? existing.status : 'confirmed',
       driver_id: reservedDriverId,
       vehicle_id: reservedVehicleId,
       invoice_number: result.invoice_number,
@@ -478,29 +587,57 @@ class BookingService {
   }
 
   /**
-   * Reject a quote, release reserved driver/vehicle, and move the booking
-   * to the terminal 'rejected' state.
-   * @private
-   */
-  async rejectQuote(bookingId, existing) {
-    await prisma.$transaction(async (tx) => {
-      await this.bookingRepo.update(bookingId, {
-        quote_status: 'REJECTED',
-        quote_rejected_at: new Date(),
-        status: 'rejected',
-      }, tx);
+    * Reject a quote, release reserved driver/vehicle, and move the booking
+    * to the terminal 'rejected' state.
+    * @private
+    */
+  async rejectQuote(bookingId, existing, isEdgeCase = false) {
+    const now = new Date();
+
+    const result = await prisma.$transaction(async (tx) => {
+      // CONCURRENCY PROTECTION: conditional update ensures only one request
+      // can transition from SENT/PENDING to REJECTED.
+      const updated = await tx.booking.updateMany({
+        where: {
+          booking_id: bookingId,
+          quote_status: isEdgeCase ? 'PENDING' : 'SENT',
+        },
+        data: {
+          quote_status: 'REJECTED',
+          quote_rejected_at: now,
+          status: isEdgeCase ? existing.status : 'rejected',
+        },
+      });
+
+      if (updated.count === 0) {
+        const current = await tx.booking.findUnique({ where: { booking_id: bookingId } });
+        if (current?.quote_status === 'REJECTED') {
+          return { alreadyRejected: true, status: current.status, quote_status: 'REJECTED' };
+        }
+        throw new ValidationError('Quote has already been rejected or is not in a valid state for rejection.');
+      }
 
       await this.reservationRepo.releaseAllActive(bookingId, tx);
 
       await this.timelineRepo.addEvent(
         bookingId,
         'quote_rejected',
-        JSON.stringify({ booking_status: 'rejected', rejected_at: new Date() }),
+        JSON.stringify({ booking_status: isEdgeCase ? existing.status : 'rejected', rejected_at: now }),
         tx
       );
+
+      return { ok: true };
     });
 
-    return { ok: true, quote_status: 'REJECTED', status: 'rejected' };
+    if (result.alreadyRejected) {
+      return {
+        ok: true,
+        quote_status: 'REJECTED',
+        status: result.status,
+      };
+    }
+
+    return { ok: true, quote_status: 'REJECTED', status: isEdgeCase ? existing.status : 'rejected' };
   }
 
   /**
@@ -554,20 +691,28 @@ class BookingService {
       },
     });
     if (!driver) throw new NotFoundError('Reserved driver not found');
-    if (!driver.is_available) {
-      throw new ValidationError('Reserved driver is not available');
-    }
 
-    // Prevent reserving a driver who is already assigned to another active booking
-    const activeBooking = await prisma.booking.findFirst({
-      where: {
-        driver_id: reservedDriverId,
-        status: { notIn: ['cancelled', 'completed', 'delivered'] },
-      },
-      select: { booking_id: true },
-    });
-    if (activeBooking) {
-      throw new ValidationError('Driver is already assigned to another active booking');
+    const driverAlreadyAssignedToThisBooking = existing.driver_id === reservedDriverId;
+
+    // If the driver is already assigned to THIS booking, skip the availability
+    // and active-booking checks. The assignment was validated earlier; we are
+    // only sending a quote, not making a new reservation.
+    if (!driverAlreadyAssignedToThisBooking) {
+      if (!driver.is_available) {
+        throw new ValidationError('Reserved driver is not available');
+      }
+
+      // Prevent reserving a driver who is already assigned to another active booking.
+      const activeBooking = await prisma.booking.findFirst({
+        where: {
+          driver_id: reservedDriverId,
+          status: { notIn: ['cancelled', 'completed', 'delivered'] },
+        },
+        select: { booking_id: true },
+      });
+      if (activeBooking) {
+        throw new ValidationError('Driver is already assigned to another active booking');
+      }
     }
 
     // vehicle_id is OPTIONAL. If provided, validate the fleet vehicle path.
@@ -591,8 +736,10 @@ class BookingService {
       reservedVehicleId = providedVehicleId;
     } else {
       // Auto-resolve from the Driver record.
-      // Validate only: driver.vehicle_number exists.
-      if (!driver.vehicle_number) {
+      // If the driver is already assigned to this booking, trust the
+      // existing assignment and skip the vehicle_number check.
+      // Otherwise validate that the driver has a registered vehicle.
+      if (!driverAlreadyAssignedToThisBooking && !driver.vehicle_number) {
         throw new ValidationError('This driver does not have an active vehicle.');
       }
       // reservedVehicleId stays null — the driver's registered vehicle
@@ -704,8 +851,19 @@ class BookingService {
   async getBookingForTracking(reference) {
     if (!reference) throw new ValidationError('reference is required');
 
-const booking = await prisma.booking.findUnique({
-      where: { booking_reference: reference },
+    // Normalize the identifier (trim + uppercase) and look it up by the
+    // CANONICAL booking_number (BTB-YYYY-NNNNN) OR the legacy booking_reference
+    // alias. This keeps tracking working for both new canonical numbers and
+// pre-existing random references (backward compatibility).
+    const { normalizeBookingIdentifier } = require('./BookingNumberService');
+    const identifier = normalizeBookingIdentifier(reference);
+
+    const found = await this.bookingRepo.findByIdentifier(identifier);
+    if (!found) throw new NotFoundError('Booking not found');
+
+    // Re-fetch with full relations for the tracking contract.
+    const booking = await prisma.booking.findUnique({
+      where: { booking_id: found.booking_id },
       include: {
         user: {
           select: {
@@ -935,13 +1093,29 @@ const booking = await prisma.booking.findUnique({
     };
   }
 
-  /**
+/**
    * Search bookings.
    * @param {Object} filters
    * @returns {Promise<Object[]>}
    */
   async searchBookings(filters) {
     return await this.bookingRepo.search(filters);
+  }
+
+  /**
+   * Get a booking by its CANONICAL booking_number OR legacy booking_reference
+   * alias, with full relations, flattened for the admin read-only detail page.
+   *
+   * @param {string} identifier - canonical booking_number (BTB-YYYY-NNNNN) or legacy reference
+   * @returns {Promise<Object>} flattened booking
+   */
+  async getBookingByIdentifier(identifier) {
+    if (!identifier || typeof identifier !== 'string') {
+      throw new ValidationError('booking identifier is required');
+    }
+    const booking = await this.bookingRepo.findByIdentifier(identifier);
+    if (!booking) throw new NotFoundError('Booking not found');
+    return require('../utils/BookingMapper').flattenBooking(booking);
   }
 }
 

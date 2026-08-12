@@ -65,6 +65,7 @@ function makeFakeRepos(overrides = {}) {
       update: async () => ({ delivery_id: 1 }),
     },
     bookingEvent: { create: async () => ({ booking_event_id: 1 }) },
+    booking: { updateMany: async () => ({ count: 1 }) },
   };
   const prisma = {
     $transaction: async (fn) => fn(tx),
@@ -76,6 +77,7 @@ function makeFakeRepos(overrides = {}) {
     reservationRepo,
     invoiceRepo,
     prisma,
+    state,
     timelineEvents,
     getState: () => state.booking,
   };
@@ -120,6 +122,7 @@ describe('Quote → Confirmation single source of truth', () => {
 
     // Patch prisma.$transaction to use the fake tx.
     const originalTx = realPrisma.$transaction;
+    let capturedFakes = fakes;
     const fakeTx = {
       bookingAssignment: { create: async () => ({}) },
       driver: { update: async () => ({}) },
@@ -130,6 +133,16 @@ describe('Quote → Confirmation single source of truth', () => {
         update: async () => ({ delivery_id: 1 }),
       },
       bookingEvent: { create: async () => ({}) },
+      booking: {
+        updateMany: function({ where, data }) {
+          const b = capturedFakes.state.booking;
+          if (!b) return { count: 0 };
+          if (where.booking_id && b.booking_id !== where.booking_id) return { count: 0 };
+          if (where.quote_status && b.quote_status !== where.quote_status) return { count: 0 };
+          capturedFakes.state.booking = { ...b, ...data };
+          return { count: 1 };
+        },
+      },
     };
     realPrisma.$transaction = async (fn) => fn(fakeTx);
 
@@ -211,7 +224,29 @@ describe('Quote → Confirmation single source of truth', () => {
     const service = makeService(fakes);
 
     const originalTx = realPrisma.$transaction;
-    realPrisma.$transaction = async (fn) => fn({});
+    let capturedFakes = fakes;
+    const fakeTx = {
+      bookingAssignment: { create: async () => ({}) },
+      driver: { update: async () => ({}) },
+      transportVehicle: { update: async () => ({}) },
+      delivery: {
+        findUnique: async () => null,
+        create: async () => ({ delivery_id: 1 }),
+        update: async () => ({ delivery_id: 1 }),
+      },
+      bookingEvent: { create: async () => ({}) },
+      booking: {
+        updateMany: function({ where, data }) {
+          const b = capturedFakes.state.booking;
+          if (!b) return { count: 0 };
+          if (where.booking_id && b.booking_id !== where.booking_id) return { count: 0 };
+          if (where.quote_status && b.quote_status !== where.quote_status) return { count: 0 };
+          capturedFakes.state.booking = { ...b, ...data };
+          return { count: 1 };
+        },
+      },
+    };
+    realPrisma.$transaction = async (fn) => fn(fakeTx);
     let result;
     try {
       result = await service.respondToQuote(3, 'REJECT');

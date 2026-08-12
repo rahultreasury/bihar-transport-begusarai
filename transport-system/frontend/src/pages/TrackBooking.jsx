@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { bookingAPI } from '../services/api';
 import SEO from '../components/seo/SEO';
+import { deriveQuoteState } from '../utils/bookingUtils';
 
 // Tracking components
 import BookingHeader from '../components/tracking/BookingHeader';
@@ -116,8 +117,8 @@ function TrackBooking() {
    */
   const handleAcceptQuote = async () => {
     if (!booking) return;
-    await bookingAPI.acceptQuoteByReference(booking.booking_reference);
-    await fetchBooking(booking.booking_reference);
+    await bookingAPI.acceptQuoteByReference(bookingNumber);
+    await fetchBooking(bookingNumber);
   };
 
   /**
@@ -127,8 +128,8 @@ function TrackBooking() {
    */
   const handleRejectQuote = async () => {
     if (!booking) return;
-    await bookingAPI.rejectQuoteByReference(booking.booking_reference);
-    await fetchBooking(booking.booking_reference);
+    await bookingAPI.rejectQuoteByReference(bookingNumber);
+    await fetchBooking(bookingNumber);
   };
 
   /**
@@ -141,17 +142,38 @@ function TrackBooking() {
   };
 
 // Derived booking state for quote-aware rendering.
-  // SINGLE SOURCE OF TRUTH: quote_status drives every decision until the
-  // customer responds. quote_status === 'SENT' → show the Quote Approval Card.
-  // quote_status === 'ACCEPTED' OR a downstream status (CONFIRMED,
-  // driver_assigned, pickup, in_transit, delivered) → show Confirmed UI.
-  const quoteStatus = (booking?.quote_status || 'PENDING').toUpperCase();
-  const isConfirmed =
-    quoteStatus === 'ACCEPTED' ||
-    booking?.status === 'CONFIRMED' ||
-    booking?.status === 'confirmed' ||
-    ['driver_assigned', 'pickup_completed', 'in_transit', 'delivered', 'completed'].includes(booking?.status);
-  const isQuoteSent = quoteStatus === 'SENT' && !isConfirmed;
+  // SINGLE SOURCE OF TRUTH:
+  //   - quote_status === 'SENT'            → QuoteCard (price, countdown,
+  //                                           Accept/Reject). NO driver info.
+  //   - booking.status === 'confirmed' (or
+  //     downstream) OR quote_status === 'ACCEPTED'
+  //     (backend sets status='confirmed' atomically on accept)
+  //                                         → DriverVehicleCard (driver name,
+  //                                           phone, vehicle, call/WhatsApp).
+  // There is no artificial intermediate UI state — the backend flips the
+  // booking to confirmed immediately when the customer accepts the quote.
+  const { quoteStatus, status: normalizedStatus, isConfirmed, isQuoteSent, isEdgeCase } = deriveQuoteState({
+    quoteStatus: booking?.quote_status,
+    status: booking?.status,
+    finalPrice: booking?.final_price,
+  });
+
+  // DEBUG: log the exact runtime values so we can trace why QuoteCard
+  // does or does not render.
+  if (booking) {
+    console.log('[QUOTE DEBUG]', {
+      rawQuoteStatus: booking?.quote_status,
+      rawStatus: booking?.status,
+      finalPrice: booking?.final_price,
+      bookingNumber: booking?.booking_number,
+      normalizedQuoteStatus: quoteStatus,
+      normalizedStatus: normalizedStatus,
+      isConfirmed,
+      isQuoteSent,
+      isEdgeCase,
+      shouldShowQuote: isQuoteSent || isConfirmed,
+    });
+  }
 
   // ==============================
   // RENDER: SEARCH ONLY (no booking number in URL)
@@ -368,6 +390,7 @@ function TrackBooking() {
                 onAccept={handleAcceptQuote}
                 onReject={handleRejectQuote}
                 onExpired={handleQuoteExpired}
+                isEdgeCase={isEdgeCase}
               />
             ) : (
               <DriverVehicleCard booking={booking} />

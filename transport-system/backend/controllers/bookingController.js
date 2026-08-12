@@ -13,6 +13,8 @@
 const asyncHandler = require('../middleware/asyncHandler');
 const BookingService = require('../services/BookingService');
 const BookingAssignmentService = require('../services/BookingAssignmentService');
+const BookingQueryService = require('../services/BookingQueryService');
+const { parseBookingQuery } = require('../validators/bookingQuery');
 const { validateRequest } = require('../middleware/validateRequest');
 const { logger } = require('../utils/logger');
 
@@ -23,10 +25,12 @@ const ADMIN_ROLES = ['admin', 'super_admin'];
  * @param {Object=} deps
  * @param {BookingService=} deps.bookingService
  * @param {BookingAssignmentService=} deps.assignmentService
+ * @param {BookingQueryService=} deps.queryService
  */
 function createBookingController(deps = {}) {
   const bookingService = deps.bookingService || new BookingService();
   const assignmentService = deps.assignmentService || new BookingAssignmentService();
+  const queryService = deps.queryService || new BookingQueryService();
 
   /**
    * POST /api/bookings/create
@@ -41,8 +45,10 @@ function createBookingController(deps = {}) {
       vehicle_type_required, estimated_distance_km, estimated_price,
     } = req.body;
 
+    // NOTE: booking_number / booking_reference are NOT generated here.
+    // BookingService.createBooking derives the canonical BTB-YYYY-NNNNN
+    // from the DB primary key. Never pass UUID/random identifiers.
     const result = await bookingService.createBooking({
-      booking_reference: `BTB-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 5).toUpperCase()}`,
       user_id: req.user.user_id,
       pickup_location,
       pickup_address,
@@ -204,29 +210,38 @@ function createBookingController(deps = {}) {
     });
   });
 
-  /**
+/**
    * GET /api/admin/bookings
    * Get all bookings (admin only).
+   *
+   * Validates query params via zod, then delegates paginated, filtered reads to
+   * the injected BookingQueryService (defaults to the real one). Errors are
+   * forwarded to the centralized error handler via next(error).
    */
-  const listBookings = asyncHandler(async (req, res) => {
-    const { status, vehicle_type, page = 1, limit = 20 } = req.query;
-    const filters = {};
+  const listBookings = asyncHandler(async (req, res, next) => {
+    // Admin authorization gate.
+    if (!ADMIN_ROLES.includes(req.user?.role)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
 
-    if (status) filters.status = status;
-    if (vehicle_type) filters.vehicleType = vehicle_type;
+    // Validate / coerce query params BEFORE touching the repository.
+    const { data, error } = parseBookingQuery(req.query || {});
+    if (error) {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+        data: null,
+        details: error.details,
+      });
+    }
 
-    const bookings = await bookingService.searchBookings(filters);
-    const total = bookings.length;
+    // Delegate to the query service (real or injected fake).
+    const result = await queryService.listBookings(data);
 
     return res.json({
       success: true,
-      data: bookings,
-      pagination: {
-        page: parseInt(page, 10),
-        limit: parseInt(limit, 10),
-        total,
-        pages: Math.ceil(total / parseInt(limit, 10)),
-      },
+      data: result.data,
+      pagination: result.pagination,
     });
   });
 

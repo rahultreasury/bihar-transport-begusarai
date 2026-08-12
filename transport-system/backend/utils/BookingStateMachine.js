@@ -27,6 +27,7 @@ const BOOKING_STATUSES = [
   'pending',
   'quote_sent',
   'confirmed',
+  'driver_assigned',
   'pickup_started',
   'pickup_completed',
   'in_transit',
@@ -42,7 +43,11 @@ const TERMINAL_STATUSES = ['rejected', 'cancelled', 'completed', 'delivered'];
 const ALLOWED_TRANSITIONS = {
   pending: ['quote_sent', 'cancelled'],
   quote_sent: ['confirmed', 'rejected', 'pending', 'cancelled'],
-  confirmed: ['pickup_started', 'cancelled'],
+  confirmed: ['driver_assigned', 'pickup_started', 'cancelled'],
+  // driver_assigned reflects the admin/driver assignment step. It can be
+  // reached directly from 'confirmed' (admin assigns a driver) or skipped
+  // when a driver self-accepts a pending job (pending → confirmed).
+  driver_assigned: ['pickup_started', 'cancelled'],
   pickup_started: ['pickup_completed', 'cancelled'],
   pickup_completed: ['in_transit', 'cancelled'],
   in_transit: ['out_for_delivery', 'cancelled'],
@@ -147,10 +152,11 @@ function canStartPickup(status) {
  * @returns {string}
  */
 function toDeliveryStatus(bookingStatus) {
-  const mapping = {
+const mapping = {
     pending: 'booking_confirmed',
     quote_sent: 'booking_confirmed',
     confirmed: 'booking_confirmed',
+    driver_assigned: 'driver_assigned',
     pickup_started: 'pickup_in_progress',
     pickup_completed: 'pickup_completed',
     in_transit: 'in_transit',

@@ -1,4 +1,5 @@
 import React from 'react';
+import { normalizeQuoteStatus, normalizeStatus, isConfirmedStatus } from '../../utils/bookingUtils';
 
 const VEHICLE_LABELS = {
   truck: 'Truck',
@@ -18,8 +19,9 @@ const VEHICLE_LABELS = {
 const BookingDetails = React.memo(function BookingDetails({ booking }) {
   if (!booking) return null;
 
-  const quoteStatus = (booking.quote_status || 'PENDING').toUpperCase();
-  const isConfirmed = quoteStatus === 'ACCEPTED' || booking.status === 'confirmed';
+  const quoteStatus = normalizeQuoteStatus(booking.quote_status);
+  const normalizedStatus = normalizeStatus(booking.status);
+  const isConfirmed = quoteStatus === 'ACCEPTED' || isConfirmedStatus(normalizedStatus);
 
   const formatDate = (dateStr) => {
     if (!dateStr) return '—';
