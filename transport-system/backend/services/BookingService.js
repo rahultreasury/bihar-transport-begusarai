@@ -13,6 +13,7 @@ const BookingRepository = require('../repositories/BookingRepository');
 const BookingTimelineRepository = require('../repositories/BookingTimelineRepository');
 const ReservationRepository = require('../repositories/ReservationRepository');
 const InvoiceRepository = require('../repositories/InvoiceRepository');
+const TripFinancialService = require('./TripFinancialService');
 const { prisma } = require('../config/prisma');
 const { AppError, ValidationError, NotFoundError } = require('../utils/AppError');
 const { buildBookingNumber } = require('./BookingNumberService');
@@ -31,6 +32,7 @@ class BookingService {
     this.timelineRepo = deps.timelineRepo || new BookingTimelineRepository();
     this.reservationRepo = deps.reservationRepo || new ReservationRepository();
     this.invoiceRepo = deps.invoiceRepo || new InvoiceRepository();
+    this.tripFinancialService = deps.tripFinancialService || new TripFinancialService();
   }
 
 /**
@@ -248,6 +250,13 @@ const bookingResult = await prisma.$transaction(async (tx) => {
         JSON.stringify({ from: existing.status, to: 'confirmed', source: 'admin_manual' }),
         tx
       );
+
+      // Initialize trip financial record
+      await this.tripFinancialService.initializeTripFinancial(bookingId, {
+        user_id: req?.user?.user_id || null,
+        role: req?.user?.role || 'admin',
+      });
+
       return { ok: true };
     });
 

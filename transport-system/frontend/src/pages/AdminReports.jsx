@@ -10,8 +10,9 @@ import { FileText, Download, Calendar, TrendingUp, Users, Truck, DollarSign, Map
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: '▦' },
   { key: 'bookings', label: 'Bookings', icon: '⟐' },
-  { key: 'drivers', label: 'Drivers', icon: '⌁' },
   { key: 'owners', label: 'Transport Owners', icon: '⧉' },
+  { key: 'vehicles', label: 'Vehicles', icon: '🚛' },
+  { key: 'drivers', label: 'Drivers', icon: '⌁' },
   { key: 'analytics', label: 'Analytics', icon: '◷' },
   { key: 'reports', label: 'Reports', icon: '▤' },
   { key: 'ai', label: 'AI Insights', icon: '✦' },
@@ -29,14 +30,14 @@ function AdminReports() {
   const [period, setPeriod] = useState('monthly');
 
   // Fetch dashboard data for reports
-  const { data: dashboardData, isLoading, error } = useQuery({
-    queryKey: ['admin-dashboard'],
+  const { data: reportsData, isLoading, error } = useQuery({
+    queryKey: ['admin-reports'],
     queryFn: () => adminAPI.getDashboard().then(r => r.data?.data),
     staleTime: 60 * 1000,
     retry: 2,
   });
 
-  const stats = useMemo(() => dashboardData?.stats || {}, [dashboardData]);
+  const stats = useMemo(() => reportsData?.stats || {}, [reportsData]);
 
   const reportCards = useMemo(() => [
     {

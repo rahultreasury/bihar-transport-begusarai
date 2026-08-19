@@ -298,24 +298,9 @@ html.admin-dark body {
   animation: float 3s ease-in-out infinite;
 }
 
-/* Navbar hover underline effect */
+/* Navbar hover text color effect */
 .nav-link {
-  position: relative;
-}
-
-.nav-link::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  width: 0;
-  height: 2px;
-  background-color: #F5A623;
-  transition: width 0.3s ease;
-}
-
-.nav-link:hover::after {
-  width: 100%;
+  transition: color 0.15s ease;
 }
 
 /* Button hover scale effect */
@@ -481,7 +466,7 @@ html.admin-dark body {
 .brand-title {
   font-weight: 700;
   font-size: 18px;
-  color: white;
+  color: #172B4D;
 }
 
 .brand-location {
@@ -913,5 +898,180 @@ html.admin-dark body {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(148, 163, 184, 0.5);
+}
+
+/* ============================================
+   PARTNER PAGE — PREMIUM ENTERPRISE STYLES
+   ============================================ */
+
+/* Network dot movement animation for partner section */
+@keyframes networkDotMove {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+/* Hero location labels gentle float */
+@keyframes heroLabelFloat {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.hero-location-labels rect,
+.hero-location-labels text {
+  animation: heroLabelFloat 4s ease-in-out infinite;
+}
+
+.hero-location-labels :nth-child(2) {
+  animation-delay: 0.5s;
+}
+
+.hero-location-labels :nth-child(4) {
+  animation-delay: 1s;
+}
+
+.hero-location-labels :nth-child(6) {
+  animation-delay: 1.5s;
+}
+
+.hero-location-labels :nth-child(8) {
+  animation-delay: 2s;
+}
+
+/* Network lines — SVG animate elements handle pulsing, no CSS animation needed */
+
+/* Partner page section reveal animations */
+.partner-section-reveal {
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1), transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.partner-section-reveal.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Card entrance with stagger */
+.partner-card-enter {
+  opacity: 0;
+  transform: translateY(30px);
+  transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1), transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.partner-card-enter.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Step number animation */
+.partner-step-number {
+  transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Progress line animation */
+.partner-progress-line {
+  transition: width 1s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Floating label subtle animation */
+.partner-floating-label {
+  animation: partnerFloat 6s ease-in-out infinite;
+}
+
+.partner-floating-label:nth-child(2) {
+  animation-delay: 1.5s;
+}
+
+.partner-floating-label:nth-child(3) {
+  animation-delay: 3s;
+}
+
+.partner-floating-label:nth-child(4) {
+  animation-delay: 4.5s;
+}
+
+@keyframes partnerFloat {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+/* CTA section gradient animation */
+.partner-cta-gradient {
+  background: linear-gradient(135deg, #0F2B55 0%, #1a3a6b 50%, #0F2B55 100%);
+  background-size: 200% 200%;
+  animation: gradientShift 8s ease-in-out infinite;
+}
+
+@keyframes gradientShift {
+  0%, 100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  .network-lines line,
+  .partner-floating-label,
+  .partner-cta-gradient {
+    animation: none !important;
+  }
+
+  .partner-section-reveal,
+  .partner-card-enter {
+    transition: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  .partner-progress-line {
+    transition: none !important;
+  }
+}
+
+/* ============================================
+   PARTNER HERO IMAGE GLOW
+   ============================================ */
+@keyframes partnerHeroGlow {
+  0% {
+    box-shadow:
+      0 0 0 rgba(245, 179, 53, 0),
+      0 0 0 rgba(245, 179, 53, 0);
+  }
+  50% {
+    box-shadow:
+      0 0 24px rgba(245, 179, 53, 0.25),
+      0 0 48px rgba(245, 179, 53, 0.10);
+  }
+  100% {
+    box-shadow:
+      0 0 0 rgba(245, 179, 53, 0),
+      0 0 0 rgba(245, 179, 53, 0);
+  }
+}
+
+.partner-hero-image-frame {
+  animation: partnerHeroGlow 3.5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .partner-hero-image-frame {
+    animation: none;
+    box-shadow: 0 0 0 rgba(245, 179, 53, 0);
+  }
 }
 

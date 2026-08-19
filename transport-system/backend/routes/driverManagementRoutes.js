@@ -49,14 +49,20 @@ router.get('/stats', protect, adminCheck, async (req, res) => {
 // matching `vehicles` as a driver ID.
 // ============================
 
-// Get available vehicles
-router.get('/vehicles/available', protect, adminCheck, async (req, res) => {
+// Get available vehicles for a specific driver
+// Must be defined BEFORE `/:id` param routes to avoid Express
+// matching `vehicles` as a driver ID.
+router.get('/:driverId/vehicles/available', protect, adminCheck, async (req, res) => {
   try {
-    const vehicles = await driverService.getAvailableVehicles();
+    const driverId = parseInt(req.params.driverId);
+    if (isNaN(driverId)) {
+      return res.status(400).json({ success: false, message: 'Invalid driver ID' });
+    }
+    const vehicles = await driverService.getAvailableVehicles(driverId);
     res.json({ success: true, data: vehicles });
   } catch (error) {
     console.error('Get available vehicles error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
+    res.status(500).json({ success: false, message: error.message || 'Server error' });
   }
 });
 
@@ -119,6 +125,8 @@ router.post('/', protect, adminCheck, [
   body('vehicle_type').trim().notEmpty().withMessage('Vehicle type is required'),
   body('vehicle_number').trim().notEmpty().withMessage('Vehicle number is required')
     .matches(/^[A-Z]{2}\d{2}[A-Z]{1,2}\d{4}$/i).withMessage('Enter a valid vehicle number (e.g. BR09AB1234)'),
+  body('license_number').trim().notEmpty().withMessage('Driving licence number is required'),
+  body('transport_owner_id').optional({ values: 'falsy' }).isInt({ min: 1 }).withMessage('Valid transport owner ID is required'),
 ], handleValidation, async (req, res) => {
   try {
     const driver = await driverService.registerDriver(req.body);
@@ -154,6 +162,8 @@ router.post('/', protect, adminCheck, [
 router.put('/:id', protect, adminCheck, [
   body('vehicle_number').optional({ values: 'falsy' }).trim()
     .matches(/^[A-Z]{2}\d{2}[A-Z]{1,2}\d{4}$/i).withMessage('Enter a valid vehicle number (e.g. BR09AB1234)'),
+  body('license_number').optional({ values: 'falsy' }).trim()
+    .notEmpty().withMessage('Driving licence number cannot be empty'),
 ], handleValidation, async (req, res) => {
   try {
     const driverId = parseInt(req.params.id);

@@ -21,6 +21,7 @@ datasource db {
 enum UserRole {
   customer
   driver
+  partner
   admin
 }
 
@@ -86,6 +87,50 @@ enum InvoiceStatus {
 }
 
 // ============================================================
+// TRIP FINANCIAL ENUMS
+// ============================================================
+
+enum TripFinancialStatus {
+  DRAFT
+  CALCULATED
+  ADJUSTED
+  SETTLED
+  CLOSED
+}
+
+enum AdvanceType {
+  DRIVER_ADVANCE
+  FUEL_ADVANCE
+  OWNER_ADVANCE
+  OTHER
+}
+
+enum TransactionDirection {
+  DEBIT
+  CREDIT
+}
+
+enum PaymentStatus {
+  PENDING
+  PARTIAL
+  PAID
+  CANCELLED
+  REFUNDED
+}
+
+enum FinancialTransactionType {
+  CUSTOMER_PAYMENT
+  DRIVER_ADVANCE
+  FUEL_ADVANCE
+  OWNER_ADVANCE
+  DRIVER_SETTLEMENT
+  OWNER_SETTLEMENT
+  COMMISSION
+  ADJUSTMENT
+  REFUND
+}
+
+// ============================================================
 // PARTNER MODULE ENUMS
 // ============================================================
 
@@ -114,6 +159,10 @@ enum LedgerTransactionType {
   cash
   online_transfer
   other_expense
+  partner_payable    // Amount Bihar Transport owes partner
+  partner_receivable // Amount partner owes Bihar Transport
+  settlement_payment // Payment made to partner
+  settlement_receipt // Payment received from partner
 }
 
 enum SettlementStatus {
@@ -158,6 +207,7 @@ model User {
   // Relations
   drivers            Driver[]
   bookings           Booking[]
+  partnerApplications PartnerApplication[]
 
   @@index([email], name: "idx_users_email")
   @@index([phone], name: "idx_users_phone")
@@ -168,26 +218,17 @@ model User {
 // --- Drivers ---
 model Driver {
   driver_id         Int       @id @default(autoincrement())
-  driver_code       String    @unique    // Auto-generated: DRV000001
+  driver_code       String?   @unique    // Auto-generated: DRV000001 (nullable for migration)
   user_id           Int
   driver_name       String
   mobile            String
   alternate_mobile  String?
-  // ------------------------------------------------------------------
-  // VEHICLE FIELDS (TEMPORARY MVP SOLUTION)
-  // Stored directly on Driver for the current MVP. In a future release
-  // these should move into a dedicated Vehicle entity (vehicle_number
-  // unique, vehicle_type, owner_id, status, insurance/permit/fitness
-  // details) and drivers linked via DriverAssignment. See
-  // TODO_DRIVER_VEHICLE_FIELDS.md for the migration path.
-  // ------------------------------------------------------------------
-  vehicle_type      String?   // e.g. "Mahindra Bolero Pickup", "Tata Ace", "14 ft Truck"
-  vehicle_number    String?   @unique // e.g. "BR09AB1234" (uppercase, trimmed)
   address           String?
   city              String?
   state             String?   @default("Bihar")
   pincode           String?
   partner_id        Int?                  // Current partner assignment (nullable for unassigned drivers)
+  transport_owner_id Int?                  // Transport owner who owns/employs this driver (nullable)
   license_number    String?
   license_expiry    String?
   license_class     String?   // Vehicle type / license class (e.g. HTV, LMV)
@@ -209,26 +250,30 @@ model Driver {
   // Relations
   user                 User                @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
   currentPartner       Partner?            @relation("current_partner_drivers", fields: [partner_id], references: [partner_id], onDelete: SetNull)
-  transportVehicles    TransportVehicle[]
+  transportOwner       VehicleOwner?       @relation("transport_owner_drivers", fields: [transport_owner_id], references: [owner_id], onDelete: SetNull)
+  currentVehicle       TransportVehicle?   @relation("current_driver_vehicle", fields: [current_vehicle_id], references: [vehicle_id], onDelete: SetNull)
   bookings             Booking[]
   deliveries           Delivery[]
-bookingAssignments   BookingAssignment[] @relation("assigned_driver")
+  bookingAssignments   BookingAssignment[] @relation("assigned_driver")
   transactions         DriverTransaction[]
   timelineEvents       DriverTimeline[]
   driverAssignments    DriverAssignment[]  @relation("assigned_driver_history")
   reservations         Reservation[]
+  vehicleAssignments   VehicleAssignment[] @relation("assigned_driver")
+
+  current_vehicle_id  Int?    @unique // Currently assigned vehicle (first-class entity)
 
   @@index([driver_code], name: "idx_drivers_code")
   @@index([user_id], name: "idx_drivers_user")
   @@index([partner_id], name: "idx_drivers_partner")
+  @@index([transport_owner_id], name: "idx_drivers_transport_owner")
   @@index([license_number], name: "idx_drivers_license")
   @@index([status], name: "idx_drivers_status")
   @@index([mobile], name: "idx_drivers_mobile")
   @@index([alternate_mobile], name: "idx_drivers_alt_mobile")
   @@index([city], name: "idx_drivers_city")
   @@index([state], name: "idx_drivers_state")
-  @@index([vehicle_type], name: "idx_drivers_vehicle_type")
-  @@index([vehicle_number], name: "idx_drivers_vehicle_number")
+  @@index([current_vehicle_id], name: "idx_drivers_current_vehicle")
   @@map("drivers")
 }
 
@@ -278,11 +323,53 @@ model DriverTimeline {
   @@map("driver_timeline")
 }
 
-// --- Transport Vehicles (kept for backward compatibility, linked to partners) ---
+// --- Vehicle Owners ---
+model VehicleOwner {
+  owner_id            Int           @id @default(autoincrement())
+  owner_code          String?       @unique    // Auto-generated: VOW000001 (nullable for migration)
+  owner_name          String
+  company_name        String?
+  email               String?
+  mobile              String
+  alternate_mobile    String?
+  city                String?
+  state               String?       @default("Bihar")
+  gst_number          String?
+  pan_number          String?
+  bank_account        String?
+  bank_ifsc           String?
+  bank_name           String?
+  upi_id              String?
+  address             String?
+  status              String?       @default("active") // active, inactive, suspended
+  notes               String?
+  is_active           Boolean?      @default(true)
+  created_at          DateTime?     @default(now())
+  updated_at          DateTime?     @default(now())
+  deleted_at          DateTime?     // Soft delete
+
+  // Relations
+  vehicles            TransportVehicle[] @relation("vehicle_owner")
+  drivers             Driver[]           @relation("transport_owner_drivers")
+  applications        PartnerApplication[] @relation("vehicle_owner_applications")
+  bookings            Booking[]
+
+  @@index([owner_code], name: "idx_vehicle_owner_code")
+  @@index([mobile], name: "idx_vehicle_owner_mobile")
+  @@index([status], name: "idx_vehicle_owner_status")
+  @@index([city], name: "idx_vehicle_owner_city")
+  @@index([state], name: "idx_vehicle_owner_state")
+  @@index([is_active], name: "idx_vehicle_owner_active")
+  @@map("vehicle_owners")
+}
+
+// --- Transport Vehicles ---
 model TransportVehicle {
   vehicle_id           Int           @id @default(autoincrement())
+  vehicle_code         String?       @unique    // Auto-generated: VEH000001 (nullable for migration)
   driver_id            Int?
-  partner_id           Int?          // Owner partner (who owns this truck)
+  owner_id             Int?          // Vehicle owner (who owns this vehicle)
+  partner_id           Int?          // Network partner who sourced this vehicle (nullable)
   vehicle_number       String        @unique
   vehicle_type         String        // ENUM stored as TEXT in SQLite
   vehicle_name         String?
@@ -309,14 +396,17 @@ model TransportVehicle {
   updated_at           DateTime?     @default(now())
 
 // Relations
-  driver              Driver?         @relation(fields: [driver_id], references: [driver_id], onDelete: SetNull)
-  ownerPartner        Partner?        @relation("partner_vehicles", fields: [partner_id], references: [partner_id], onDelete: SetNull)
+  driver              Driver?         @relation("current_driver_vehicle")
+  owner               VehicleOwner?   @relation("vehicle_owner", fields: [owner_id], references: [owner_id], onDelete: SetNull)
+  sourcePartner       Partner?        @relation("sourced_vehicles", fields: [partner_id], references: [partner_id], onDelete: SetNull)
   bookings            Booking[]
   deliveries          Delivery[]
   bookingAssignments  BookingAssignment[]
   reservations        Reservation[]
+  vehicleAssignments  VehicleAssignment[]
 
   @@index([driver_id], name: "idx_vehicles_driver")
+  @@index([owner_id], name: "idx_vehicles_owner")
   @@index([partner_id], name: "idx_vehicles_partner")
   @@index([vehicle_number], name: "idx_vehicles_number")
   @@index([vehicle_type], name: "idx_vehicles_type")
@@ -332,7 +422,8 @@ model Booking {
   user_id               Int
   driver_id             Int?
   vehicle_id            Int?                  // Assigned transport vehicle (nullable)
-  partner_id            Int?                  // Assigned transport partner
+  partner_id            Int?                  // Network partner who sourced this booking (nullable)
+  vehicle_owner_id      Int?                  // Vehicle owner (nullable - for owned vehicles)
 
   // Snapshot data (immutable - preserves historical accuracy)
   partner_name_snapshot   String?             // Partner name at time of booking
@@ -348,6 +439,10 @@ model Booking {
   // Settlement fields
   settlement_status     String?   @default("pending") // pending, settled, locked
   settlement_id         Int?                          // FK to settlement
+
+  // Trip financial fields (driver/owner payout agreed at booking level)
+  driver_payout               Float?   // Agreed payout to driver/vehicle
+  owner_settlement_amount     Float?   // Agreed settlement amount for owner
 
   pickup_location       String
   pickup_address        String?
@@ -371,7 +466,7 @@ model Booking {
   estimated_distance_km Float?
   estimated_price       Float?
   final_price           Float?
-status                String?   @default("pending")
+  status                String?   @default("pending")
   // Quote-based brokerage workflow fields.
   // quote_status: PENDING → SENT → ACCEPTED | REJECTED
   quote_status          String?   @default("PENDING")
@@ -397,18 +492,25 @@ status                String?   @default("pending")
   driver             Driver?           @relation(fields: [driver_id], references: [driver_id], onDelete: SetNull)
   vehicle            TransportVehicle? @relation(fields: [vehicle_id], references: [vehicle_id], onDelete: SetNull)
   partner            Partner?          @relation(fields: [partner_id], references: [partner_id], onDelete: SetNull)
+  vehicleOwner       VehicleOwner?     @relation(fields: [vehicle_owner_id], references: [owner_id], onDelete: SetNull)
   bookingSettlement  Settlement?       @relation(fields: [settlement_id], references: [settlement_id], onDelete: SetNull)
-delivery           Delivery?
+  delivery           Delivery?
   bookingEvents      BookingEvent[]
   bookingAssignments BookingAssignment[]
   reservations       Reservation[]
   invoices           Invoice[]
   ledgerEntries      PartnerLedger[] @relation("ledger_entries")
+  tripFinancial      TripFinancial?
+  tripAdvances       TripAdvance[]
+  tripSettlements    TripSettlement[]
+  commissionRecords  CommissionRecord[]
+  financialTransactions FinancialTransaction[]
 
   @@index([user_id], name: "idx_bookings_user")
   @@index([driver_id], name: "idx_bookings_driver")
   @@index([vehicle_id], name: "idx_bookings_vehicle")
   @@index([partner_id], name: "idx_bookings_partner")
+  @@index([vehicle_owner_id], name: "idx_bookings_vehicle_owner")
   @@index([booking_reference], name: "idx_bookings_reference")
   @@index([status], name: "idx_bookings_status")
   @@index([pickup_date], name: "idx_bookings_date")
@@ -515,10 +617,10 @@ model BookingAssignment {
 // TRANSPORT PARTNER MODULE
 // ============================================================
 
-// --- Transport Partners ---
+// --- Transport Partners (Network Partners) ---
 model Partner {
   partner_id        Int          @id @default(autoincrement())
-  partner_code      String       @unique    // Auto-generated: PRT000001
+  partner_code      String?      @unique    // Auto-generated: PRT000001 (nullable for migration)
   partner_name      String
   owner_name        String
   company_name      String?
@@ -536,6 +638,9 @@ model Partner {
   address           String?
   status            PartnerStatus @default(active)
   notes             String?
+  // Network/capacity information
+  available_capacity String?     // Description of available transport capacity
+  network_locations  String?     // JSON: cities/routes this partner can service
   commission_percentage Float?   @default(10) // Default 10% commission
   commission_type   String?      @default("percentage") // "percentage" or "fixed"
   fixed_commission  Float?       @default(0) // Fixed commission amount if type is "fixed"
@@ -545,7 +650,7 @@ model Partner {
   deleted_at        DateTime?    // Soft delete
 
   // Relations
-  trucks            TransportVehicle[]  @relation("partner_vehicles")
+  sourcedVehicles   TransportVehicle[] @relation("sourced_vehicles")
   drivers           Driver[]            @relation("current_partner_drivers")
   bookings          Booking[]
   ledgerEntries     PartnerLedger[]
@@ -553,6 +658,7 @@ model Partner {
   settlements       Settlement[]
   documents         PartnerDocument[]
   driverAssignments DriverAssignment[]  @relation("partner_assignments")
+  applications      PartnerApplication[]
 
   @@index([partner_code], name: "idx_partner_code")
   @@index([mobile], name: "idx_partner_mobile")
@@ -583,6 +689,28 @@ model DriverAssignment {
   @@index([partner_id], name: "idx_drv_assign_partner")
   @@index([status], name: "idx_drv_assign_status")
   @@map("driver_assignments")
+}
+
+// --- Vehicle Driver Assignments (history) ---
+model VehicleAssignment {
+  assignment_id     Int       @id @default(autoincrement())
+  vehicle_id        Int
+  driver_id         Int
+  assigned_by       Int?      // Admin ID who assigned
+  assigned_at       DateTime? @default(now())
+  unassigned_at     DateTime? // When driver was unassigned from this vehicle
+  status            String?   @default("active") // active, inactive
+  notes             String?
+  created_at        DateTime? @default(now())
+
+  // Relations
+  vehicle TransportVehicle @relation(fields: [vehicle_id], references: [vehicle_id], onDelete: Cascade)
+  driver  Driver           @relation("assigned_driver", fields: [driver_id], references: [driver_id], onDelete: Cascade)
+
+  @@index([vehicle_id], name: "idx_veh_assign_vehicle")
+  @@index([driver_id], name: "idx_veh_assign_driver")
+  @@index([status], name: "idx_veh_assign_status")
+  @@map("vehicle_assignments")
 }
 
 // --- Partner Ledger (immutable accounting) ---
@@ -710,6 +838,61 @@ model PartnerDocument {
 @@map("partner_documents")
 }
 
+// --- Partner Applications (public registration → admin review) ---
+model PartnerApplication {
+  application_id    Int       @id @default(autoincrement())
+  application_code  String?   @unique // Auto-generated: PPA-YYYY-NNNNN (nullable for migration)
+
+  // Applicant details
+  first_name        String
+  last_name         String
+  email             String
+  phone             String
+  password_hash      String    // Hashed password for when approved
+
+  // Business details
+  partnership_type  String    // "vehicle_owner" or "transport_owner"
+  company_name      String?
+  gst_number        String?
+  pan_number        String?
+  city              String?
+  state             String?   @default("Bihar")
+
+  // Additional fields
+  address           String?
+  vehicle_number    String?   // For vehicle owner
+  vehicle_type      String?   // For vehicle owner
+  number_of_vehicles Int?     // For transport owner
+  available_capacity String?  // For transport owner
+  network_locations  String?  // For transport owner
+
+  // Review
+  status            String    @default("pending") // pending, approved, rejected
+  reviewed_by       Int?      // Admin ID
+  reviewed_at       DateTime?
+  rejection_reason  String?
+  admin_notes       String?
+
+  // Linked records (set on approval)
+  partner_id        Int?      // FK to Partner (set when approved for transport_owner)
+  vehicle_owner_id  Int?      // FK to VehicleOwner (set when approved for vehicle_owner)
+  user_id           Int?      // FK to User (set when approved)
+
+  // Relations
+  partner          Partner?        @relation(fields: [partner_id], references: [partner_id], onDelete: SetNull)
+  vehicleOwner     VehicleOwner?   @relation("vehicle_owner_applications", fields: [vehicle_owner_id], references: [owner_id], onDelete: SetNull)
+  user             User?           @relation(fields: [user_id], references: [user_id], onDelete: SetNull)
+
+  created_at        DateTime? @default(now())
+  updated_at        DateTime? @default(now())
+
+  @@index([phone], name: "idx_app_phone")
+  @@index([email], name: "idx_app_email")
+  @@index([status], name: "idx_app_status")
+  @@index([partnership_type], name: "idx_app_type")
+  @@map("partner_applications")
+}
+
 // ============================================================
 // QUOTE WORKFLOW MODULE
 // ============================================================
@@ -773,5 +956,204 @@ model Invoice {
   @@index([booking_id], name: "idx_invoices_booking")
   @@index([status], name: "idx_invoices_status")
   @@map("invoices")
+}
+
+// ============================================================
+// TRIP FINANCIAL MODULE
+// ============================================================
+
+// --- Trip Financial Summary ---
+// Per-trip financial snapshot. This is the single source of truth
+// for one trip's complete financial picture.
+model TripFinancial {
+  trip_financial_id     Int              @id @default(autoincrement())
+  booking_id            Int              @unique
+  status                TripFinancialStatus @default(DRAFT)
+
+  // Customer revenue
+  customer_fare         Float            // Total amount customer paid
+
+  // Driver/vehicle costs
+  driver_payout         Float?           // Agreed payout to driver/vehicle
+  total_advance         Float?           @default(0) // Sum of all driver advances
+  total_fuel_advance    Float?           @default(0) // Sum of all fuel advances
+  remaining_driver_settlement Float?     @default(0) // driver_payout - total_advance - total_fuel_advance
+
+  // Owner settlement
+  owner_settlement_amount Float?         // Agreed owner settlement
+  total_owner_advance   Float?           @default(0) // Sum of all owner advances
+  remaining_owner_settlement Float?      @default(0) // owner_settlement - total_owner_advance
+
+  // Commission
+  commission_rate       Float?           @default(5) // Configurable commission rate
+  commission_amount     Float?           @default(0) // Calculated commission
+
+  // BT Margin (ADMIN ONLY - confidential)
+  bt_margin             Float?           @default(0) // customer_fare - driver_payout - commission
+
+  // Metadata
+  calculated_at         DateTime?
+  calculated_by         Int?             // Admin ID who calculated
+  notes                 String?
+  created_at            DateTime?        @default(now())
+  updated_at            DateTime?        @default(now())
+
+  // Relations
+  booking       Booking              @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
+  advances      TripAdvance[]
+  settlements   TripSettlement[]
+  commissions   CommissionRecord[]
+  transactions  FinancialTransaction[]
+
+  @@index([booking_id], name: "idx_trip_financial_booking")
+  @@index([status], name: "idx_trip_financial_status")
+  @@map("trip_financials")
+}
+
+// --- Trip Advance ---
+// Individual advance records for a trip. Never overwrite previous advances.
+model TripAdvance {
+  advance_id            Int       @id @default(autoincrement())
+  trip_financial_id     Int
+  booking_id            Int
+  driver_id             Int?
+  vehicle_id            Int?
+  transport_owner_id    Int?
+  amount                Float
+  advance_type          AdvanceType
+  payment_method        String    // cash, bank, upi, etc.
+  reference_number      String?
+  given_by              Int?      // Admin ID who gave the advance
+  given_at              DateTime? @default(now())
+  notes                 String?
+  status                String?   @default("pending") // pending, approved, paid, cancelled
+  created_at            DateTime? @default(now())
+  updated_at            DateTime? @default(now())
+
+  // Relations
+  tripFinancial TripFinancial @relation(fields: [trip_financial_id], references: [trip_financial_id], onDelete: Cascade)
+  booking       Booking       @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
+
+  @@index([trip_financial_id], name: "idx_trip_advance_financial")
+  @@index([booking_id], name: "idx_trip_advance_booking")
+  @@index([driver_id], name: "idx_trip_advance_driver")
+  @@index([transport_owner_id], name: "idx_trip_advance_owner")
+  @@map("trip_advances")
+}
+
+// --- Trip Settlement ---
+// Per-trip settlement records for driver and owner.
+model TripSettlement {
+  settlement_id             Int       @id @default(autoincrement())
+  trip_financial_id         Int
+  booking_id                Int
+
+  // Driver settlement
+  driver_settlement_amount  Float?
+  driver_settlement_status  PaymentStatus @default(PENDING)
+  driver_settlement_paid_at DateTime?
+  driver_settlement_payment_method String?
+  driver_settlement_reference String?
+  driver_settlement_notes   String?
+
+  // Owner settlement
+  owner_settlement_amount   Float?
+  owner_settlement_status   PaymentStatus @default(PENDING)
+  owner_settlement_paid_at  DateTime?
+  owner_settlement_payment_method String?
+  owner_settlement_reference String?
+  owner_settlement_notes    String?
+
+  // General
+  created_at                DateTime? @default(now())
+  updated_at                DateTime? @default(now())
+
+  // Relations
+  tripFinancial TripFinancial @relation(fields: [trip_financial_id], references: [trip_financial_id], onDelete: Cascade)
+  booking       Booking       @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
+
+  @@index([trip_financial_id], name: "idx_trip_settlement_financial")
+  @@index([booking_id], name: "idx_trip_settlement_booking")
+  @@map("trip_settlements")
+}
+
+// --- Commission Record ---
+// Per-trip commission tracking with full audit trail.
+model CommissionRecord {
+  commission_id         Int       @id @default(autoincrement())
+  trip_financial_id     Int
+  booking_id            Int
+  commission_rate       Float
+  commission_type       String    @default("percentage") // "percentage" or "fixed"
+  commission_base       Float     // The amount on which commission is calculated
+  commission_amount     Float
+  applied_at            DateTime? @default(now())
+  applied_by            Int?      // Admin ID who applied commission
+  notes                 String?
+  created_at            DateTime? @default(now())
+
+  // Relations
+  tripFinancial TripFinancial @relation(fields: [trip_financial_id], references: [trip_financial_id], onDelete: Cascade)
+  booking       Booking       @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
+
+  @@index([trip_financial_id], name: "idx_commission_financial")
+  @@index([booking_id], name: "idx_commission_booking")
+  @@map("commission_records")
+}
+
+// --- Financial Transaction ---
+// Central transaction ledger. Every financial event creates one entry here.
+model FinancialTransaction {
+  transaction_id    Int                  @id @default(autoincrement())
+  trip_financial_id Int
+  booking_id        Int
+  vehicle_id        Int?
+  driver_id         Int?
+  transport_owner_id Int?
+
+  transaction_type  FinancialTransactionType
+  amount            Float
+  direction         TransactionDirection   // DEBIT = money out, CREDIT = money in
+  payment_method    String?                // cash, bank, upi, etc.
+  reference_number  String?
+  status            PaymentStatus          @default(PENDING)
+  metadata          String?                // JSON payload for additional context
+
+  created_by        Int?                   // Admin/User ID who created this
+  created_at        DateTime?              @default(now())
+  updated_at        DateTime?              @default(now())
+
+  // Relations
+  tripFinancial TripFinancial @relation(fields: [trip_financial_id], references: [trip_financial_id], onDelete: Cascade)
+  booking       Booking       @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
+
+  @@index([trip_financial_id], name: "idx_financial_tx_financial")
+  @@index([booking_id], name: "idx_financial_tx_booking")
+  @@index([transaction_type], name: "idx_financial_tx_type")
+  @@index([created_at], name: "idx_financial_tx_created")
+  @@map("financial_transactions")
+}
+
+// --- Audit Log ---
+// Every sensitive action creates an audit record.
+model AuditLog {
+  audit_id       Int       @id @default(autoincrement())
+  user_id        Int?      // Who performed the action
+  user_role      String    // admin, driver, owner, etc.
+  action         String    // e.g., "payout_changed", "advance_created", "settlement_approved"
+  entity_type    String    // e.g., "Booking", "TripFinancial", "TripAdvance"
+  entity_id      Int       // ID of the entity
+  previous_value String?   // JSON snapshot of previous state
+  new_value      String?   // JSON snapshot of new state
+  reason         String?
+  ip_address     String?
+  user_agent     String?
+  created_at     DateTime? @default(now())
+
+  @@index([user_id], name: "idx_audit_user")
+  @@index([entity_type, entity_id], name: "idx_audit_entity")
+  @@index([action], name: "idx_audit_action")
+  @@index([created_at], name: "idx_audit_created")
+  @@map("audit_logs")
 }
 

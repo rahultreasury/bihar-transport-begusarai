@@ -87,6 +87,24 @@ class DriverRepository {
             phone: true,
           },
         },
+        transportOwner: {
+          select: {
+            owner_id: true,
+            owner_name: true,
+            company_name: true,
+            mobile: true,
+            city: true,
+          },
+        },
+        currentVehicle: {
+          select: {
+            vehicle_id: true,
+            vehicle_number: true,
+            vehicle_type: true,
+            vehicle_name: true,
+            current_status: true,
+          },
+        },
         bookingAssignments: {
           include: {
             booking: {
@@ -133,20 +151,6 @@ class DriverRepository {
   }
 
   /**
-   * Find driver by vehicle number (case-insensitive, normalized).
-   * NOTE: vehicle fields are temporary MVP storage on Driver; when a
-   * dedicated Vehicle entity is introduced this lookup moves there.
-   */
-  async findByVehicleNumber(vehicleNumber, tx = null) {
-    const client = tx || prisma;
-    const normalized = String(vehicleNumber || '').trim().toUpperCase();
-    if (!normalized) return null;
-    return await client.driver.findFirst({
-      where: { vehicle_number: normalized },
-    });
-  }
-
-  /**
    * List drivers with search, filter, sort, pagination.
    */
   async findAll(filters = {}) {
@@ -186,8 +190,6 @@ class DriverRepository {
         { alternate_mobile: { contains: searchTerm } },
         { city: { contains: searchTerm, mode: 'insensitive' } },
         { state: { contains: searchTerm, mode: 'insensitive' } },
-        { vehicle_number: { contains: searchTerm, mode: 'insensitive' } },
-        { vehicle_type: { contains: searchTerm, mode: 'insensitive' } },
       ];
     }
 
@@ -238,8 +240,8 @@ class DriverRepository {
       if (quick_filter === 'available') where.status = 'available';
       else if (quick_filter === 'on_trip') where.status = 'on_trip';
       else if (quick_filter === 'inactive') where.status = 'inactive';
-      else if (quick_filter === 'assigned') where.transportVehicles = { some: {} };
-      else if (quick_filter === 'unassigned') where.transportVehicles = { none: {} };
+      else if (quick_filter === 'assigned') where.currentVehicle = { not: null };
+      else if (quick_filter === 'unassigned') where.currentVehicle = null;
       else if (quick_filter === 'today_active') {
         const todayStart = new Date();
         todayStart.setHours(0, 0, 0, 0);
@@ -267,6 +269,13 @@ prisma.driver.findMany({
                 phone: true,
               },
             },
+            transportOwner: {
+              select: {
+                owner_id: true,
+                owner_name: true,
+                company_name: true,
+              },
+            },
             bookings: {
               where: { status: { in: ['confirmed', 'pickup_completed', 'in_transit'] } },
               select: {
@@ -281,9 +290,13 @@ prisma.driver.findMany({
               take: 1,
             },
             // Needed by the Booking Details "Assign Driver / Send Quote" UX,
-            // which surfaces each driver's vehicle count in the dropdown.
-            _count: {
-              select: { transportVehicles: true },
+            // which surfaces each driver's vehicle assignment status.
+            currentVehicle: {
+              select: {
+                vehicle_id: true,
+                vehicle_number: true,
+                vehicle_type: true,
+              },
             },
           },
           orderBy: { [field]: order },
@@ -342,7 +355,6 @@ return {
         { driver_name: { contains: searchTerm, mode: 'insensitive' } },
         { mobile: { contains: searchTerm } },
         { city: { contains: searchTerm, mode: 'insensitive' } },
-        { vehicle_number: { contains: searchTerm, mode: 'insensitive' } },
       ];
     }
 
@@ -358,8 +370,15 @@ return {
                 phone: true,
               },
             },
-            // Critical missing join from before: the driver's vehicles.
-            transportVehicles: {
+            transportOwner: {
+              select: {
+                owner_id: true,
+                owner_name: true,
+                company_name: true,
+              },
+            },
+            // Driver's currently assigned vehicle (first-class entity)
+            currentVehicle: {
               select: {
                 vehicle_id: true,
                 vehicle_number: true,
@@ -482,6 +501,13 @@ prisma.driver.findMany({
                 first_name: true,
                 last_name: true,
                 phone: true,
+              },
+            },
+            transportOwner: {
+              select: {
+                owner_id: true,
+                owner_name: true,
+                company_name: true,
               },
             },
             // Today's trips: bookings created today for this driver.

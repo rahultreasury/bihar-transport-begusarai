@@ -8,6 +8,8 @@ export const AuthContext = createContext(null);
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
 import PageLoader from './components/PageLoader';
+import ErrorBoundary from './components/ErrorBoundary';
+// safeLazyImport removed — using standard React.lazy to avoid invalid element type
 
 // Auth persistence + route guard
 import { getStoredAuth, setStoredAuth, clearStoredAuth, onAuthChange } from './services/authStorage';
@@ -20,6 +22,8 @@ import Login from './pages/Login';
 import Signup from './pages/Signup';
 
 // Lazy pages (code-split by route)
+// Public pages use standard lazy loading.
+// Admin pages use safeLazyImport for controlled chunk-failure recovery.
 const About = lazy(() => import('./pages/About'));
 const Contact = lazy(() => import('./pages/Contact'));
 const BookTransport = lazy(() => import('./pages/BookTransport'));
@@ -34,6 +38,10 @@ const AdminAssignVehicle = lazy(() => import('./pages/AdminAssignVehicle'));
 const AdminLogin = lazy(() => import('./pages/AdminLogin'));
 const AdminDrivers = lazy(() => import('./pages/AdminDrivers'));
 const AdminDriverProfile = lazy(() => import('./pages/AdminDriverProfile'));
+const AdminVehicles = lazy(() => import('./pages/AdminVehicles'));
+const AdminVehicleProfile = lazy(() => import('./pages/AdminVehicleProfile'));
+const AdminVehicleOwners = lazy(() => import('./pages/AdminVehicleOwners'));
+const AdminVehicleOwnerProfile = lazy(() => import('./pages/AdminVehicleOwnerProfile'));
 const AdminReports = lazy(() => import('./pages/AdminReports'));
 const AdminAnalytics = lazy(() => import('./pages/AdminAnalytics'));
 const AdminPartners = lazy(() => import('./pages/AdminPartners'));
@@ -55,6 +63,9 @@ const RoutePage = lazy(() => import('./pages/resources/RoutePage'));
 // New SEO / Nav Pages
 const Blog = lazy(() => import('./pages/Blog'));
 const Partner = lazy(() => import('./pages/Partner'));
+const PartnerLogin = lazy(() => import('./pages/PartnerLogin'));
+const VehicleOwnerRegistration = lazy(() => import('./pages/VehicleOwnerRegistration'));
+const TransportOwnerRegistration = lazy(() => import('./pages/TransportOwnerRegistration'));
 const RoutesListing = lazy(() => import('./pages/RoutesListing'));
 const NotFound = lazy(() => import('./pages/NotFound'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
@@ -145,13 +156,22 @@ function AppContent() {
         
         {/* Admin Routes */}
         <Route path="/admin/login" element={<Suspense fallback={<PageLoader label="Loading..." />}><AdminLogin /></Suspense>} />
-        <Route 
-          path="/admin" 
+        <Route
+          path="/admin"
           element={
             <ProtectedRoute>
               <Suspense fallback={<PageLoader label="Loading Admin..." />}><AdminDashboard /></Suspense>
             </ProtectedRoute>
-          } 
+          }
+        />
+        {/* AI Insights — sidebar item exists but route was missing */}
+        <Route
+          path="/admin/ai"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading AI Insights..." />}><AdminAnalytics /></Suspense>
+            </ProtectedRoute>
+          }
         />
         <Route 
           path="/admin/bookings" 
@@ -186,24 +206,56 @@ function AppContent() {
             </ProtectedRoute>
           } 
         />
-        <Route 
+        <Route
           path="/admin/drivers"
           element={
             <ProtectedRoute>
               <Suspense fallback={<PageLoader label="Loading Drivers..." />}><AdminDrivers /></Suspense>
             </ProtectedRoute>
-          } 
+          }
         />
-<Route 
-          path="/admin/drivers/:id" 
+<Route
+  path="/admin/drivers/:id"
+  element={
+    <ProtectedRoute>
+      <Suspense fallback={<PageLoader label="Loading Driver Profile..." />}><AdminDriverProfile /></Suspense>
+    </ProtectedRoute>
+  }
+/>
+<Route
+  path="/admin/vehicles"
+  element={
+    <ProtectedRoute>
+      <Suspense fallback={<PageLoader label="Loading Vehicles..." />}><AdminVehicles /></Suspense>
+    </ProtectedRoute>
+  }
+/>
+<Route
+  path="/admin/vehicles/:id"
+  element={
+    <ProtectedRoute>
+      <Suspense fallback={<PageLoader label="Loading Vehicle Profile..." />}><AdminVehicleProfile /></Suspense>
+    </ProtectedRoute>
+  }
+/>
+<Route
+  path="/admin/vehicle-owners"
+  element={
+    <ProtectedRoute>
+      <Suspense fallback={<PageLoader label="Loading Vehicle Owners..." />}><AdminVehicleOwners /></Suspense>
+    </ProtectedRoute>
+  }
+/>
+        <Route
+          path="/admin/vehicle-owners/:id"
           element={
             <ProtectedRoute>
-              <Suspense fallback={<PageLoader label="Loading Driver Profile..." />}><AdminDriverProfile /></Suspense>
+              <Suspense fallback={<PageLoader label="Loading Vehicle Owner Profile..." />}><AdminVehicleOwnerProfile /></Suspense>
             </ProtectedRoute>
-          } 
+          }
         />
-        <Route 
-          path="/admin/reports" 
+        <Route
+          path="/admin/reports"
           element={
             <ProtectedRoute>
               <Suspense fallback={<PageLoader label="Loading Reports..." />}><AdminReports /></Suspense>
@@ -251,6 +303,9 @@ function AppContent() {
         <Route path="/routes/:routeSlug" element={<Suspense fallback={<PageLoader label="Loading..." />}><RoutePage /></Suspense>} />
         <Route path="/blog" element={<Suspense fallback={<PageLoader label="Loading..." />}><Blog /></Suspense>} />
         <Route path="/partner" element={<Suspense fallback={<PageLoader label="Loading..." />}><Partner /></Suspense>} />
+        <Route path="/partner/login" element={<Suspense fallback={<PageLoader label="Loading..." />}><PartnerLogin /></Suspense>} />
+        <Route path="/partner/vehicle-owner" element={<Suspense fallback={<PageLoader label="Loading..." />}><VehicleOwnerRegistration /></Suspense>} />
+        <Route path="/partner/transport-owner" element={<Suspense fallback={<PageLoader label="Loading..." />}><TransportOwnerRegistration /></Suspense>} />
         <Route path="/privacy-policy" element={<Suspense fallback={<PageLoader label="Loading..." />}><PrivacyPolicy /></Suspense>} />
         <Route path="/terms" element={<Suspense fallback={<PageLoader label="Loading..." />}><Terms /></Suspense>} />
 
@@ -278,18 +333,42 @@ function App() {
     setUser(stored.user);
 
     // Validate the token server-side. If invalid/expired, clear auth.
+    // Use a bounded timeout so authLoading never stays true forever.
+    const AUTH_TIMEOUT = 12000; // 12 seconds
+    let authError = null;
     try {
-      const res = await authAPI.adminMe();
-      const me = res?.data?.data?.user || res?.data?.user;
-      if (me) {
-        const freshUser = { ...stored.user, ...me };
-        setUser(freshUser);
-        setStoredAuth(stored.token, freshUser);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), AUTH_TIMEOUT);
+      try {
+        // Use the correct endpoint based on the stored user's role.
+        // Admin/operator/super_admin tokens are validated by /auth/admin/me.
+        // Customer/driver tokens are validated by /auth/me.
+        const adminRoles = ['admin', 'super_admin', 'operator'];
+        const isAdmin = adminRoles.includes(stored.user?.role);
+        const authFn = isAdmin ? authAPI.adminMe : authAPI.getMe;
+        const res = await authFn({ signal: controller.signal });
+        clearTimeout(timeoutId);
+        const me = res?.data?.data?.user || res?.data?.user;
+        if (me) {
+          const freshUser = { ...stored.user, ...me };
+          setUser(freshUser);
+          setStoredAuth(stored.token, freshUser);
+        }
+      } catch (err) {
+        clearTimeout(timeoutId);
+        throw err;
       }
     } catch (err) {
-      // 401 or network error → clear stale auth and let guards redirect.
-      clearStoredAuth();
-      setUser(null);
+      authError = err;
+      // Only clear auth for confirmed auth failures (401/403).
+      // Timeouts and network errors are treated as transient — keep the
+      // persisted session so the user is not logged out unnecessarily.
+      const status = err?.response?.status;
+      if (status === 401 || status === 403) {
+        clearStoredAuth();
+        setUser(null);
+      }
+      // For timeout / network / unknown errors: keep stored user, just stop loading.
     } finally {
       setAuthLoading(false);
     }
@@ -339,9 +418,11 @@ function App() {
 
   return (
     <AuthContext.Provider value={value}>
-      <Router>
-        <AppContent />
-      </Router>
+      <ErrorBoundary>
+        <Router>
+          <AppContent />
+        </Router>
+      </ErrorBoundary>
     </AuthContext.Provider>
   );
 }

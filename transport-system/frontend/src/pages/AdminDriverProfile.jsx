@@ -13,8 +13,9 @@ import DriverTimeline from '../components/admin-premium/drivers/DriverTimeline';
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: '▦' },
   { key: 'bookings', label: 'Bookings', icon: '⟐' },
+  { key: 'owners', label: 'Transport Owners', icon: '⧉' },
+  { key: 'vehicles', label: 'Vehicles', icon: '🚛' },
   { key: 'drivers', label: 'Drivers', icon: '⌁' },
-  { key: 'vehicles', label: 'Vehicles', icon: '⧉' },
   { key: 'analytics', label: 'Analytics', icon: '◷' },
   { key: 'ai', label: 'AI Insights', icon: '✦' }
 ];
@@ -182,6 +183,12 @@ function OverviewTab({ driver }) {
     { label: 'Driver ID', value: driver.driver_code, mono: true },
     { label: 'Full Name', value: driver.driver_name },
     { label: 'Mobile Number', value: driver.mobile },
+    { label: 'Transport Owner', value: driver.transportOwner ? (
+      <span className="text-amber-600 dark:text-amber-400 font-medium cursor-pointer hover:underline" onClick={() => navigate(`/admin/vehicle-owners/${driver.transportOwner.owner_id}`)}>
+        {driver.transportOwner.owner_name}
+        {driver.transportOwner.company_name && <span className="text-muted text-xs ml-1">({driver.transportOwner.company_name})</span>}
+      </span>
+    ) : '—' },
     { label: 'Current Status', value: <DriverStatusBadge status={driver.status} size="sm" /> },
 { label: 'Vehicle Type', value: driver.vehicle_type || '—' },
     { label: 'Vehicle Number', value: driver.vehicle_number || '—', mono: true },

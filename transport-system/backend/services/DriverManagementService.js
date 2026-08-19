@@ -50,29 +50,6 @@ class DriverManagementService {
   }
 
   /**
-   * Check that a vehicle number is not already registered to another driver.
-   * Throws a VEHICLE_ALREADY_EXISTS error (maps to HTTP 409) if found.
-   * `excludeDriverId` is used on update so a driver can keep their own vehicle.
-   */
-  async assertVehicleNumberUnique(vehicleNumber, excludeDriverId = null) {
-    const normalized = normalizeVehicleNumber(vehicleNumber);
-    if (!normalized) return;
-
-    const existing = await this.repo.findByVehicleNumber(normalized);
-    if (existing && existing.driver_id !== excludeDriverId) {
-      const err = new Error('Vehicle number already registered.');
-      err.code = 'VEHICLE_ALREADY_EXISTS';
-      err.data = {
-        vehicle_number: normalized,
-        driver_id: existing.driver_id,
-        driver_name: existing.driver_name,
-        driver_code: existing.driver_code,
-      };
-      throw err;
-    }
-  }
-
-  /**
    * Register a new market driver.
    * Auto-generates driver code, creates user account, records timeline.
    * Throws DriverAlreadyExistsError if mobile is already registered.
@@ -82,12 +59,12 @@ async registerDriver(data) {
       driver_name,
       mobile,
       alternate_mobile,
-      vehicle_type,
-      vehicle_number,
+      license_number,
       city,
       state,
       address,
       profile_image,
+      transport_owner_id,
     } = data;
 
     // Check if driver with this mobile already exists
@@ -103,12 +80,6 @@ async registerDriver(data) {
         mobile: existingDriver.mobile,
       };
       throw err;
-    }
-
-    // Check vehicle number uniqueness (if provided)
-    const normalizedVehicleNumber = normalizeVehicleNumber(vehicle_number);
-    if (normalizedVehicleNumber) {
-      await this.assertVehicleNumberUnique(normalizedVehicleNumber);
     }
 
     // Check if mobile already has a user
@@ -134,17 +105,17 @@ async registerDriver(data) {
 
     const driverCode = await this.repo.generateDriverCode();
 
-const driver = await this.repo.create({
+    const driver = await this.repo.create({
       driver_code: driverCode,
       user_id: user.user_id,
       driver_name,
       mobile,
       alternate_mobile: alternate_mobile || null,
-      vehicle_type: vehicle_type || null,
-      vehicle_number: normalizedVehicleNumber,
+      license_number: license_number || null,
       city: city || null,
       state: state || 'Bihar',
       address: address || null,
+      transport_owner_id: transport_owner_id ? parseInt(transport_owner_id) : null,
       status: 'available',
       profile_image: profile_image || null,
       is_available: true,
@@ -178,11 +149,11 @@ const driver = await this.repo.create({
   }
 
 /**
-   * List drivers with their vehicles for the booking assignment UX.
-   * Single endpoint — returns driver + all their vehicles (with availability)
-   * so the frontend never makes a second API call. Supports pagination,
-   * search, and an availability-only filter.
-   */
+ * List drivers with their current vehicle for the booking assignment UX.
+ * Single endpoint — returns driver + current vehicle (with availability)
+ * so the frontend never makes a second API call. Supports pagination,
+ * search, and an availability-only filter.
+ */
   async listDriversWithVehicles(filters = {}) {
     return await this.repo.findAllWithVehicles(filters);
   }
@@ -191,7 +162,7 @@ const driver = await this.repo.create({
    * Scalable driver lookup for the Booking Assignment picker (10,000+ drivers).
    * Server-side pagination + search + filters + per-driver trip stats. Only a
    * bounded page is loaded — never the full table. Each driver carries its
-   * assigned vehicle so the frontend never makes a second API call.
+   * current vehicle so the frontend never makes a second API call.
    */
   async listAssignableDrivers(filters = {}) {
     return await this.repo.findAssignable(filters);
@@ -205,7 +176,8 @@ const driver = await this.repo.create({
       'driver_name', 'mobile', 'alternate_mobile', 'city',
       'state', 'address',
       'status', 'profile_image',
-      'vehicle_type', 'vehicle_number',
+      'license_number',
+      'transport_owner_id',
     ];
 
     const updateData = {};
@@ -217,15 +189,6 @@ const driver = await this.repo.create({
 
     if (Object.keys(updateData).length === 0) {
       throw new Error('No valid fields provided for update');
-    }
-
-    // Normalize + validate vehicle number uniqueness when it changes
-    if (data.vehicle_number !== undefined) {
-      const normalized = normalizeVehicleNumber(data.vehicle_number);
-      updateData.vehicle_number = normalized;
-      if (normalized) {
-        await this.assertVehicleNumberUnique(normalized, driverId);
-      }
     }
 
     // If status is changing, also update is_available
@@ -248,23 +211,21 @@ const driver = await this.repo.create({
   }
 
 /**
-   * Permanently delete a driver — but only when it is safe to do so.
-   *
-   * Business rule (from the approved delete-management plan):
-   *   - If the driver has ACTIVE / protected operational dependencies
-   *     (active bookings, active reservations, active assignments,
-   *     active deliveries) → REJECT hard deletion with a structured error.
-   *   - If the driver has historical bookings/deliveries/reservations,
-   *     those records are RETAINED (FK SET NULL preserves booking
-   *     snapshots + history). The driver's own transactions, timeline and
-   *     driver_assignments are CASCADE-deleted by the DB (they are only
-   *     meaningful while the driver exists).
-   *   - If the driver has a registered transport_vehicle, the vehicle is
-   *     safety-unlinked (SET NULL) so it is not destroyed.
-   *   - If the driver has financial records that must be retained for
-   *     history, we keep the driver (archive) instead of a hard delete.
-   *
-   * Only returns success AFTER the DB confirms the row is gone.
+ * Permanently delete a driver — but only when it is safe to do so.
+ *
+ * Business rule (from the approved delete-management plan):
+ *   - If the driver has ACTIVE / protected operational dependencies
+ *     (active bookings, active reservations, active assignments,
+ *     active deliveries) → REJECT hard deletion with a structured error.
+ *   - If the driver has historical bookings/deliveries/reservations,
+ *     those records are RETAINED (FK SET NULL preserves booking
+ *     snapshots + history). The driver's own transactions, timeline and
+ *     driver_assignments are CASCADE-deleted by the DB (they are only
+ *     meaningful while the driver exists).
+ *   - If the driver has financial records that must be retained for
+ *     history, we keep the driver (archive) instead of a hard delete.
+ *
+ * Only returns success AFTER the DB confirms the row is gone.
    *
    * @param {number} driverId
    * @param {number} adminId  admin performing the delete (for audit)
@@ -328,7 +289,7 @@ const driver = await this.repo.create({
     }
 
     // Safe to hard delete. Use a transaction so the delete + verification
-    // are atomic. Booking/delivery/vehicle/reservation rows are SET NULL by
+    // are atomic. Booking/delivery/reservation rows are SET NULL by
     // the DB (verified FK actions), preserving history snapshots.
     const result = await prisma.$transaction(async (tx) => {
       await this.repo.hardDelete(driverId, tx);
@@ -455,6 +416,109 @@ const driver = await this.repo.create({
    */
   async getDashboardStats() {
     return await this.repo.getDashboardStats();
+  }
+
+  /**
+   * Get available vehicles for a specific driver.
+   * Returns vehicles belonging to the driver's transport owner that are
+   * currently available for assignment.
+   *
+   * @param {number} driverId
+   * @returns {Promise<Array>}
+   */
+  async getAvailableVehicles(driverId) {
+    const driver = await this.repo.findById(driverId);
+    if (!driver) {
+      throw new Error('Driver not found');
+    }
+
+    const ownerId = driver.transport_owner_id;
+    if (!ownerId) {
+      // Driver has no transport owner — no vehicles can be assigned
+      return [];
+    }
+
+    const vehicles = await prisma.transportVehicle.findMany({
+      where: {
+        owner_id: ownerId,
+        is_available: true,
+        current_status: 'available',
+        OR: [
+          { driver_id: null },
+          { driver_id: driverId },
+        ],
+      },
+      orderBy: { vehicle_id: 'asc' },
+    });
+
+    return vehicles;
+  }
+
+  /**
+   * Assign a vehicle to a driver.
+   * Validates that the vehicle belongs to the driver's transport owner,
+   * then updates both the driver and vehicle records.
+   *
+   * @param {number} driverId
+   * @param {number} vehicleId
+   * @returns {Promise<Object>}
+   */
+  async assignVehicle(driverId, vehicleId) {
+    const driver = await this.repo.findById(driverId);
+    if (!driver) {
+      throw new Error('Driver not found');
+    }
+
+    const vehicle = await prisma.transportVehicle.findUnique({
+      where: { vehicle_id: vehicleId },
+    });
+    if (!vehicle) {
+      throw new Error('Vehicle not found');
+    }
+
+    // Validate that the vehicle belongs to the driver's transport owner
+    if (driver.transport_owner_id && vehicle.owner_id !== driver.transport_owner_id) {
+      throw new Error('This vehicle does not belong to the driver\'s transport owner');
+    }
+
+    // If driver has no transport owner, allow assignment to any unassigned vehicle
+    if (!driver.transport_owner_id && vehicle.driver_id !== null && vehicle.driver_id !== driverId) {
+      throw new Error('This vehicle is already assigned to another driver');
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      // Unassign previous vehicle if driver had one
+      if (driver.current_vehicle_id && driver.current_vehicle_id !== vehicleId) {
+        await tx.transportVehicle.update({
+          where: { vehicle_id: driver.current_vehicle_id },
+          data: {
+            driver_id: null,
+            is_available: true,
+            current_status: 'available',
+          },
+        });
+      }
+
+      // Assign new vehicle to driver
+      const updatedDriver = await tx.driver.update({
+        where: { driver_id: driverId },
+        data: { current_vehicle_id: vehicleId },
+      });
+
+      // Update vehicle to mark as assigned
+      const updatedVehicle = await tx.transportVehicle.update({
+        where: { vehicle_id: vehicleId },
+        data: {
+          driver_id: driverId,
+          is_available: false,
+          current_status: 'on_trip',
+        },
+      });
+
+      return { driver: updatedDriver, vehicle: updatedVehicle };
+    });
+
+    return result;
   }
 }
 

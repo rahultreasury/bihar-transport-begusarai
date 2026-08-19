@@ -4,7 +4,6 @@ import React from 'react';
 const DRIVER_STATUSES = ['available', 'on_trip', 'inactive'];
 
 const DriverFilters = React.memo(function DriverFilters({
-  search, onSearchChange,
   status, onStatusChange,
   availability, onAvailabilityChange,
   balanceFilter, onBalanceFilterChange,
@@ -16,35 +15,8 @@ const DriverFilters = React.memo(function DriverFilters({
 }) {
   return (
     <div className="space-y-3 w-full max-w-full">
-      {/* Search + Filter Toggle Row */}
+      {/* Filter Toggle Row */}
       <div className="flex flex-wrap items-center gap-2 lg:gap-3">
-        <div className="relative flex-1 min-w-[200px] max-w-full lg:max-w-md">
-          <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
-            <svg className="w-4 h-4 text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-          </div>
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Search by name, driver code, mobile, licence..."
-            className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border/60 bg-card/40 backdrop-blur-xl text-sm font-medium placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500/50 transition-all"
-            aria-label="Search drivers"
-          />
-          {search && (
-            <button
-              onClick={() => onSearchChange('')}
-              className="absolute inset-y-0 right-3 flex items-center text-muted hover:text-text transition"
-              aria-label="Clear search"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          )}
-        </div>
-
         <button
           onClick={onToggleFilters}
           className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border/60 bg-card/40 backdrop-blur-xl text-sm font-medium hover:bg-hover/60 transition-all"

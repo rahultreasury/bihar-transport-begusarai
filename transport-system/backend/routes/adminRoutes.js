@@ -8,10 +8,12 @@ const { ValidationError, NotFoundError } = require('../utils/AppError');
 const BookingAssignmentService = require('../services/BookingAssignmentService');
 const { createBookingController } = require('../controllers/bookingController');
 const { BookingDeletionService } = require('../services/BookingDeletionService');
+const VehicleOwnerService = require('../services/VehicleOwnerService');
 
 const bookingService = new BookingService();
 const bookingAssignmentService = new BookingAssignmentService();
 const bookingController = createBookingController();
+const vehicleOwnerService = new VehicleOwnerService();
 
 const mapDomainErrorToHttp = (err, res) => {
   if (err?.name === 'ValidationError' || err?.code === 'VALIDATION_ERROR') {
@@ -43,8 +45,8 @@ router.get('/dashboard', protect, async (req, res) => {
     const totalVehicles = await prisma.transportVehicle.count();
     const totalBookings = await prisma.booking.count();
 
-    // Get booking stats — exclude archived bookings from all counts
     const activeBookingsWhere = { archived_at: null };
+
     const pendingBookings = await prisma.booking.count({
       where: { ...activeBookingsWhere, status: 'pending' }
     });
@@ -55,7 +57,7 @@ router.get('/dashboard', protect, async (req, res) => {
       where: { ...activeBookingsWhere, status: { in: ['delivered', 'completed'] } }
     });
 
-    // Get revenue stats — exclude archived bookings
+    // Get revenue stats
     const revenueAgg = await prisma.booking.aggregate({
       where: { ...activeBookingsWhere, status: { in: ['delivered', 'completed'] } },
       _sum: { final_price: true },
@@ -241,6 +243,170 @@ router.get('/users', protect, async (req, res) => {
 //          direct Prisma access from the route layer (Route → Service → Repository → Prisma).
 // @access  Private (Admin)
 
+// @route   GET /api/admin/vehicles/stats
+// @desc    Get vehicle statistics (source of truth from DB)
+// @access  Private (Admin)
+router.get('/vehicles/stats', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    // Count by current_status — each vehicle belongs to exactly one bucket.
+    // Backward-compat: legacy "assigned" is treated as "on_trip".
+    const [total, available, onTrip, maintenance, inactive] = await Promise.all([
+      prisma.transportVehicle.count(),
+      prisma.transportVehicle.count({ where: { current_status: 'available' } }),
+      prisma.transportVehicle.count({ where: { OR: [{ current_status: 'on_trip' }, { current_status: 'assigned' }] } }),
+      prisma.transportVehicle.count({ where: { current_status: 'maintenance' } }),
+      prisma.transportVehicle.count({ where: { current_status: 'inactive' } }),
+    ]);
+
+    res.json({
+      success: true,
+      data: { total, available, onTrip, maintenance, inactive },
+    });
+  } catch (error) {
+    console.error('Get vehicle stats error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// @route   GET /api/admin/vehicles/:id
+// @desc    Get vehicle details with owner, driver, and assignment history
+// @access  Private (Admin)
+router.get('/vehicles/:id', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const vehicleId = parseInt(req.params.id);
+    if (!Number.isFinite(vehicleId)) {
+      return res.status(400).json({ success: false, message: 'Invalid vehicle id' });
+    }
+
+    const vehicle = await prisma.transportVehicle.findUnique({
+      where: { vehicle_id: vehicleId },
+      include: {
+        owner: {
+          select: {
+            owner_id: true,
+            owner_code: true,
+            owner_name: true,
+            company_name: true,
+            mobile: true,
+            email: true,
+            city: true,
+            state: true,
+            gst_number: true,
+            pan_number: true,
+            address: true,
+            status: true,
+          },
+        },
+        driver: {
+          include: {
+            user: {
+              select: {
+                first_name: true,
+                last_name: true,
+                phone: true,
+                email: true,
+              },
+            },
+          },
+        },
+        vehicleAssignments: {
+          include: {
+            driver: {
+              include: {
+                user: {
+                  select: {
+                    first_name: true,
+                    last_name: true,
+                  },
+                },
+              },
+            },
+          },
+          orderBy: { assigned_at: 'desc' },
+          take: 20,
+        },
+        bookings: {
+          include: {
+            user: {
+              select: {
+                first_name: true,
+                last_name: true,
+                phone: true,
+              },
+            },
+            driver: {
+              include: {
+                user: {
+                  select: {
+                    first_name: true,
+                    last_name: true,
+                  },
+                },
+              },
+            },
+          },
+          orderBy: { created_at: 'desc' },
+          take: 20,
+        },
+      },
+    });
+
+    if (!vehicle) {
+      return res.status(404).json({ success: false, message: 'Vehicle not found' });
+    }
+
+    // Flatten the response
+    const response = {
+      ...vehicle,
+      owner_name: vehicle.owner?.owner_name ?? null,
+      owner_phone: vehicle.owner?.mobile ?? null,
+      driver_name: vehicle.driver ? `${vehicle.driver.user.first_name} ${vehicle.driver.user.last_name}` : null,
+      driver_phone: vehicle.driver?.user?.phone ?? null,
+      driver_code: vehicle.driver?.driver_code ?? null,
+      assignment_history: vehicle.vehicleAssignments.map(a => ({
+        assignment_id: a.assignment_id,
+        driver_id: a.driver_id,
+        driver_name: a.driver ? `${a.driver.user.first_name} ${a.driver.user.last_name}` : null,
+        assigned_by: a.assigned_by,
+        assigned_at: a.assigned_at,
+        unassigned_at: a.unassigned_at,
+        status: a.status,
+        notes: a.notes,
+      })),
+      booking_history: vehicle.bookings.map(b => ({
+        booking_id: b.booking_id,
+        booking_number: b.booking_number,
+        pickup_location: b.pickup_location,
+        drop_location: b.drop_location,
+        pickup_date: b.pickup_date,
+        status: b.status,
+        created_at: b.created_at,
+        customer: b.user ? `${b.user.first_name} ${b.user.last_name}` : null,
+        driver: b.driver ? `${b.driver.user.first_name} ${b.driver.user.last_name}` : null,
+      })),
+    };
+
+    // Remove the raw Prisma relations from the response
+    delete response.owner;
+    delete response.driver;
+    delete response.vehicleAssignments;
+    delete response.bookings;
+
+    res.json({ success: true, data: response });
+  } catch (error) {
+    console.error('Get vehicle detail error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
 // @route   GET /api/admin/vehicles
 // @desc    Get all vehicles
 // @access  Private (Admin)
@@ -272,9 +438,25 @@ router.get('/vehicles', protect, async (req, res) => {
               user: {
                 select: {
                   first_name: true,
+                  last_name: true,
                   phone: true,
                 },
               },
+            },
+          },
+          owner: {
+            select: {
+              owner_id: true,
+              owner_name: true,
+              company_name: true,
+              mobile: true,
+            },
+          },
+          sourcePartner: {
+            select: {
+              partner_id: true,
+              partner_code: true,
+              partner_name: true,
             },
           },
         },
@@ -289,6 +471,8 @@ router.get('/vehicles', protect, async (req, res) => {
     const flattened = vehicles.map((v) => ({
       vehicle_id: v.vehicle_id,
       driver_id: v.driver_id,
+      owner_id: v.owner_id,
+      partner_id: v.partner_id,
       vehicle_number: v.vehicle_number,
       vehicle_type: v.vehicle_type,
       vehicle_name: v.vehicle_name,
@@ -312,8 +496,12 @@ router.get('/vehicles', protect, async (req, res) => {
       per_km_rate: v.per_km_rate,
       created_at: v.created_at,
       updated_at: v.updated_at,
-      owner_name: v.driver?.user?.first_name ?? null,
-      owner_phone: v.driver?.user?.phone ?? null,
+      owner_name: v.owner?.owner_name ?? null,
+      owner_phone: v.owner?.mobile ?? null,
+      partner_name: v.sourcePartner?.partner_name ?? null,
+      partner_code: v.sourcePartner?.partner_code ?? null,
+      driver_name: v.driver ? `${v.driver.user.first_name} ${v.driver.user.last_name}` : null,
+      driver_phone: v.driver?.user?.phone ?? null,
     }));
 
     res.json({
@@ -566,6 +754,443 @@ router.put('/vehicles/:id/verify', protect, async (req, res) => {
       success: false,
       message: 'Server error',
     });
+  }
+});
+
+// @route   GET /api/admin/vehicles/:id
+// @desc    Get a single vehicle by ID
+// @access  Private (Admin)
+router.get('/vehicles/:id', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied'
+      });
+    }
+
+    const vehicleId = parseInt(req.params.id);
+    if (!Number.isFinite(vehicleId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid vehicle id'
+      });
+    }
+
+    const vehicle = await vehicleOwnerService.getVehicleById(vehicleId);
+
+    res.json({
+      success: true,
+      data: vehicle,
+    });
+  } catch (error) {
+    console.error('Get vehicle error:', error);
+    if (error.code === 'NOT_FOUND') {
+      return res.status(404).json({
+        success: false,
+        message: error.message || 'Vehicle not found',
+      });
+    }
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+    });
+  }
+});
+
+// @route   PUT /api/admin/vehicles/:id
+// @desc    Update a vehicle
+// @access  Private (Admin)
+router.put('/vehicles/:id', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied'
+      });
+    }
+
+    const vehicleId = parseInt(req.params.id);
+    if (!Number.isFinite(vehicleId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid vehicle id'
+      });
+    }
+
+    const updated = await vehicleOwnerService.updateVehicle(vehicleId, req.body);
+
+    res.json({
+      success: true,
+      message: 'Vehicle updated successfully',
+      data: updated,
+    });
+  } catch (error) {
+    console.error('Update vehicle error:', error);
+    if (error.code === 'NOT_FOUND') {
+      return res.status(404).json({
+        success: false,
+        message: error.message || 'Vehicle not found',
+      });
+    }
+    if (error.code === 'VEHICLE_ALREADY_EXISTS') {
+      return res.status(409).json({
+        success: false,
+        message: error.message || 'Vehicle number already exists',
+      });
+    }
+    if (error.code === 'VALIDATION_ERROR' || error.message.includes('Invalid') || error.message.includes('must be')) {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+    });
+  }
+});
+
+// @route   POST /api/admin/vehicles/:id/assign-driver
+// @desc    Assign a driver to a vehicle
+// @access  Private (Admin)
+router.post('/vehicles/:id/assign-driver', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const vehicleId = parseInt(req.params.id);
+    if (!Number.isFinite(vehicleId)) {
+      return res.status(400).json({ success: false, message: 'Invalid vehicle id' });
+    }
+
+    const { driver_id } = req.body;
+    if (!driver_id || isNaN(parseInt(driver_id))) {
+      return res.status(400).json({ success: false, message: 'Valid driver_id is required' });
+    }
+
+    const driverId = parseInt(driver_id);
+    const updatedVehicle = await vehicleOwnerService.assignDriverToVehicle(vehicleId, driverId);
+
+    res.json({
+      success: true,
+      message: 'Driver assigned to vehicle successfully',
+      data: updatedVehicle,
+    });
+  } catch (error) {
+    console.error('Assign driver to vehicle error:', error);
+    if (error.code === 'NOT_FOUND') {
+      return res.status(404).json({ success: false, message: error.message || 'Vehicle not found' });
+    }
+    res.status(500).json({ success: false, message: error.message || 'Server error' });
+  }
+});
+
+// @route   POST /api/admin/vehicles/:id/remove-driver
+// @desc    Remove driver from a vehicle
+// @access  Private (Admin)
+router.post('/vehicles/:id/remove-driver', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const vehicleId = parseInt(req.params.id);
+    if (!Number.isFinite(vehicleId)) {
+      return res.status(400).json({ success: false, message: 'Invalid vehicle id' });
+    }
+
+    const updatedVehicle = await vehicleOwnerService.removeDriverFromVehicle(vehicleId);
+
+    res.json({
+      success: true,
+      message: 'Driver removed from vehicle successfully',
+      data: updatedVehicle,
+    });
+  } catch (error) {
+    console.error('Remove driver from vehicle error:', error);
+    if (error.code === 'NOT_FOUND') {
+      return res.status(404).json({ success: false, message: error.message || 'Vehicle not found' });
+    }
+    res.status(500).json({ success: false, message: error.message || 'Server error' });
+  }
+});
+
+// @route   POST /api/admin/drivers/:id/assign-vehicle
+// @desc    Assign a vehicle to a driver
+// @access  Private (Admin)
+router.post('/drivers/:id/assign-vehicle', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const driverId = parseInt(req.params.id);
+    if (!Number.isFinite(driverId)) {
+      return res.status(400).json({ success: false, message: 'Invalid driver id' });
+    }
+
+    const { vehicle_id } = req.body;
+    if (!vehicle_id || isNaN(parseInt(vehicle_id))) {
+      return res.status(400).json({ success: false, message: 'Valid vehicle_id is required' });
+    }
+
+    const vehicleId = parseInt(vehicle_id);
+    const updatedVehicle = await vehicleOwnerService.assignDriverToVehicle(vehicleId, driverId);
+
+    res.json({
+      success: true,
+      message: 'Vehicle assigned to driver successfully',
+      data: updatedVehicle,
+    });
+  } catch (error) {
+    console.error('Assign vehicle to driver error:', error);
+    if (error.code === 'NOT_FOUND') {
+      return res.status(404).json({ success: false, message: error.message || 'Vehicle not found' });
+    }
+    res.status(500).json({ success: false, message: error.message || 'Server error' });
+  }
+});
+
+// @route   GET /api/admin/partners/:id/vehicles
+// @desc    Get all vehicles for a specific partner
+// @access  Private (Admin)
+router.get('/partners/:id/vehicles', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const partnerId = parseInt(req.params.id);
+    if (!Number.isFinite(partnerId)) {
+      return res.status(400).json({ success: false, message: 'Invalid partner id' });
+    }
+
+    const result = await vehicleOwnerService.getPartnerVehicles(partnerId, req.query);
+
+    res.json({
+      success: true,
+      data: result.vehicles,
+      pagination: result.pagination,
+    });
+  } catch (error) {
+    console.error('Get partner vehicles error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Server error' });
+  }
+});
+
+// @route   GET /api/admin/vehicles/:id/trips
+// @desc    Get trip history for a vehicle with financial summary
+// @access  Private (Admin)
+router.get('/vehicles/:id/trips', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const vehicleId = parseInt(req.params.id);
+    if (!Number.isFinite(vehicleId)) {
+      return res.status(400).json({ success: false, message: 'Invalid vehicle id' });
+    }
+
+    const { limit = 50, offset = 0 } = req.query;
+
+    // Get bookings for this vehicle with related data
+    const [bookings, total] = await Promise.all([
+      prisma.booking.findMany({
+        where: { vehicle_id: vehicleId },
+        include: {
+          customer: {
+            include: { user: { select: { first_name: true, last_name: true, phone: true, email: true } } }
+          },
+          driver: {
+            include: { user: { select: { first_name: true, last_name: true } } }
+          },
+          transportOwner: {
+            include: { user: { select: { first_name: true, last_name: true } } }
+          },
+          tripFinancial: true,
+          commissionRecord: true,
+          _count: { select: { advances: true, settlements: true } }
+        },
+        orderBy: { created_at: 'desc' },
+        take: parseInt(limit),
+        skip: parseInt(offset),
+      }),
+      prisma.booking.count({ where: { vehicle_id: vehicleId } }),
+    ]);
+
+    // Flatten and enrich with financial data
+    const trips = bookings.map(b => {
+      const financial = b.tripFinancial;
+      const commission = b.commissionRecord;
+      const totalAdvances = b.advances?.reduce((sum, a) => sum + Number(a.amount), 0) || 0;
+      const totalSettlements = b.settlements?.reduce((sum, s) => sum + Number(s.amount), 0) || 0;
+
+      return {
+        booking_id: b.booking_id,
+        booking_number: b.booking_number,
+        pickup_location: b.pickup_location || b.pickup_city,
+        drop_location: b.drop_location || b.drop_city,
+        pickup_date: b.pickup_date,
+        status: b.status,
+        quote_status: b.quote_status,
+        created_at: b.created_at,
+        customer: b.customer ? {
+          name: `${b.customer.user.first_name} ${b.customer.user.last_name}`,
+          phone: b.customer.user.phone,
+          email: b.customer.user.email,
+        } : null,
+        driver: b.driver ? {
+          name: `${b.driver.user.first_name} ${b.driver.user.last_name}`,
+          driver_id: b.driver.driver_id,
+        } : null,
+        transportOwner: b.transportOwner ? {
+          name: `${b.transportOwner.user.first_name} ${b.transportOwner.user.last_name}`,
+          owner_id: b.transportOwner.owner_id,
+        } : null,
+        // Financial summary (ADMIN view - full data)
+        financial: financial ? {
+          customer_fare: financial.customer_fare,
+          driver_payout: financial.driver_payout,
+          owner_settlement_amount: financial.owner_settlement_amount,
+          bt_margin: financial.bt_margin,
+          commission_rate: commission?.commission_rate || null,
+          commission_amount: commission?.commission_amount || null,
+          total_advances: totalAdvances,
+          total_settlements: totalSettlements,
+          remaining_driver_settlement: Number(financial.driver_payout) - totalAdvances - totalSettlements,
+          remaining_owner_settlement: Number(financial.owner_settlement_amount) - totalSettlements,
+          financial_status: financial.financial_status,
+        } : null,
+        advance_count: b._count.advances,
+        settlement_count: b._count.settlements,
+      };
+    });
+
+    res.json({
+      success: true,
+      data: trips,
+      pagination: { total, limit: parseInt(limit), offset: parseInt(offset) },
+    });
+  } catch (error) {
+    console.error('Get vehicle trips error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// @route   GET /api/admin/audit-logs
+// @desc    Get audit logs with optional filters
+// @access  Private (Admin)
+router.get('/audit-logs', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const { entity_type, entity_id, limit = 50, offset = 0 } = req.query;
+
+    const where = {};
+    if (entity_type) where.entity_type = entity_type;
+    if (entity_id) where.entity_id = parseInt(entity_id);
+
+    const [logs, total] = await Promise.all([
+      prisma.auditLog.findMany({
+        where,
+        include: {
+          user: {
+            select: { first_name: true, last_name: true, email: true, role: true }
+          }
+        },
+        orderBy: { created_at: 'desc' },
+        take: parseInt(limit),
+        skip: parseInt(offset),
+      }),
+      prisma.auditLog.count({ where }),
+    ]);
+
+    const formatted = logs.map(log => ({
+      audit_id: log.audit_id,
+      action: log.action,
+      entity_type: log.entity_type,
+      entity_id: log.entity_id,
+      previous_value: log.previous_value,
+      new_value: log.new_value,
+      reason: log.reason,
+      ip_address: log.ip_address,
+      created_at: log.created_at,
+      user: log.user ? {
+        name: `${log.user.first_name} ${log.user.last_name}`,
+        email: log.user.email,
+        role: log.user.role,
+      } : null,
+    }));
+
+    res.json({
+      success: true,
+      data: formatted,
+      pagination: { total, limit: parseInt(limit), offset: parseInt(offset) },
+    });
+  } catch (error) {
+    console.error('Get audit logs error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// @route   GET /api/admin/audit-logs/entity/:entity_type/:entity_id
+// @desc    Get audit logs for a specific entity
+// @access  Private (Admin)
+router.get('/audit-logs/entity/:entity_type/:entity_id', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const { entity_type, entity_id } = req.params;
+    const { limit = 50, offset = 0 } = req.query;
+
+    const [logs, total] = await Promise.all([
+      prisma.auditLog.findMany({
+        where: { entity_type, entity_id: parseInt(entity_id) },
+        include: {
+          user: {
+            select: { first_name: true, last_name: true, email: true, role: true }
+          }
+        },
+        orderBy: { created_at: 'desc' },
+        take: parseInt(limit),
+        skip: parseInt(offset),
+      }),
+      prisma.auditLog.count({ where: { entity_type, entity_id: parseInt(entity_id) } }),
+    ]);
+
+    const formatted = logs.map(log => ({
+      audit_id: log.audit_id,
+      action: log.action,
+      entity_type: log.entity_type,
+      entity_id: log.entity_id,
+      previous_value: log.previous_value,
+      new_value: log.new_value,
+      reason: log.reason,
+      ip_address: log.ip_address,
+      created_at: log.created_at,
+      user: log.user ? {
+        name: `${log.user.first_name} ${log.user.last_name}`,
+        email: log.user.email,
+        role: log.user.role,
+      } : null,
+    }));
+
+    res.json({
+      success: true,
+      data: formatted,
+      pagination: { total, limit: parseInt(limit), offset: parseInt(offset) },
+    });
+  } catch (error) {
+    console.error('Get entity audit logs error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 

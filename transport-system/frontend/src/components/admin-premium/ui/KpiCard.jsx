@@ -12,7 +12,9 @@ export default function KpiCard({
         ? 'from-purple-500/20 to-purple-500'
         : accent === 'sky'
           ? 'from-sky-500/20 to-sky-500'
-          : 'from-amber-500/20 to-amber-500';
+          : accent === 'slate'
+            ? 'from-slate-500/20 to-slate-500'
+            : 'from-amber-500/20 to-amber-500';
 
   return (
     <div className="rounded-3xl border border-border/60 bg-card/40 backdrop-blur-xl p-5 shadow-sm">

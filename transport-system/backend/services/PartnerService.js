@@ -48,20 +48,20 @@ class PartnerService {
     const partnerCode = await this.repo.generatePartnerCode();
     console.log('[SERVICE] Partner code generated:', partnerCode);
 
-    // Normalize: all upper layers pass 'owner_name', only the repository maps to 'partner_name'
-    const ownerName = data.owner_name ? data.owner_name.trim() : null;
-    if (!ownerName) {
-      const err = new Error('Owner name is required');
-      err.code = 'MISSING_OWNER_NAME';
+    // Normalize: all upper layers pass 'partner_name' or 'owner_name'
+    const partnerName = data.partner_name || data.owner_name ? (data.partner_name || data.owner_name).trim() : null;
+    if (!partnerName) {
+      const err = new Error('Partner name is required');
+      err.code = 'MISSING_PARTNER_NAME';
       throw err;
     }
 
-    console.log('[SERVICE] ownerName:', ownerName);
+    console.log('[SERVICE] partnerName:', partnerName);
 
     const partnerData = {
       partner_code: partnerCode,
-      partner_name: ownerName,    // Prisma required field — mapped from owner_name
-      owner_name: ownerName,      // Prisma field — also stored
+      partner_name: partnerName,
+      owner_name: partnerName,
       company_name: data.company_name || null,
       email: data.email || null,
       mobile: data.mobile,
@@ -77,6 +77,8 @@ class PartnerService {
       address: data.address || null,
       status: 'active',
       notes: data.notes || null,
+      available_capacity: data.available_capacity || null,
+      network_locations: data.network_locations || null,
       commission_percentage: commission,
       commission_type: data.commission_type || 'percentage',
       fixed_commission: data.fixed_commission || 0,
@@ -221,23 +223,31 @@ async deletePartner(partnerId) {
   }
 
   // ============================
-  // TRUCK MANAGEMENT
+  // SOURCED VEHICLES MANAGEMENT
   // ============================
 
-  async getTrucks(partnerId) {
-    return await this.repo.getTrucks(partnerId);
+  async getSourcedVehicles(partnerId) {
+    return await this.repo.getSourcedVehicles(partnerId);
   }
 
-  async addTruck(partnerId, data) {
-    return await this.repo.addTruck(partnerId, data);
+  async addSourcedVehicle(partnerId, data) {
+    const vehicleData = {
+      ...data,
+      capacity_kg: data.capacity_kg ? parseFloat(data.capacity_kg) : null,
+      capacity_volume: data.capacity_volume ? parseFloat(data.capacity_volume) : null,
+      manufacturing_year: data.manufacturing_year ? parseInt(data.manufacturing_year) : null,
+      hourly_rate: data.hourly_rate ? parseFloat(data.hourly_rate) : null,
+      per_km_rate: data.per_km_rate ? parseFloat(data.per_km_rate) : null,
+    };
+    return await this.repo.addSourcedVehicle(partnerId, vehicleData);
   }
 
-  async updateTruck(truckId, data) {
-    return await this.repo.updateTruck(truckId, data);
+  async updateSourcedVehicle(vehicleId, data) {
+    return await this.repo.updateSourcedVehicle(vehicleId, data);
   }
 
-  async removeTruck(truckId) {
-    return await this.repo.removeTruck(truckId);
+  async removeSourcedVehicle(vehicleId) {
+    return await this.repo.removeSourcedVehicle(vehicleId);
   }
 
   // ============================

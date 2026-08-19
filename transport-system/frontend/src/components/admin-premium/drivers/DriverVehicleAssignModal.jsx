@@ -18,14 +18,14 @@ export default function DriverVehicleAssignModal({ isOpen, onClose, onSuccess, d
     setLoading(true);
     setError('');
     try {
-      const response = await adminAPI.getAvailableVehicles();
+      const response = await adminAPI.getAvailableVehicles(driver.driver_id);
       if (response.data?.success) {
         setVehicles(response.data.data || []);
       } else {
-        setError('Failed to load available vehicles');
+        setError(response.data?.message || 'Failed to load available vehicles');
       }
     } catch (err) {
-      setError('Failed to load available vehicles');
+      setError(err.response?.data?.message || 'Failed to load available vehicles');
     } finally {
       setLoading(false);
     }

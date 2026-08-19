@@ -49,6 +49,7 @@ const driverRoutes = require('./routes/driverRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const deliveryRoutes = require('./routes/deliveryRoutes');
 const vehicleRoutes = require('./routes/vehicleRoutes');
+const vehicleOwnerRoutes = require('./routes/vehicleOwnerRoutes');
 const licenseRoutes = require('./routes/licenseRoutes');
 const challanRoutes = require('./routes/challanRoutes');
 const appointmentRoutes = require('./routes/appointmentRoutes');
@@ -58,7 +59,9 @@ const webhookRoutes = require('./routes/webhookRoutes');
 const testEmailRoutes = require('./routes/testEmailRoutes');
 const driverManagementRoutes = require('./routes/driverManagementRoutes');
 const partnerRoutes = require('./routes/partnerRoutes');
+const partnerApplicationRoutes = require('./routes/partnerApplicationRoutes');
 const partnerSettlementRoutes = require('./routes/partnerSettlementRoutes');
+const tripFinancialRoutes = require('./routes/tripFinancialRoutes');
 const emailService = require('./services/emailService');
 
 const app = express();
@@ -184,11 +187,25 @@ app.use('/api', mapsRoutes);
 
 // Partner Management Routes
 app.use('/api/admin/partners', adminLimiter, partnerRoutes);
+app.use('/api/partner', partnerApplicationRoutes);
+app.use('/api/admin/partner-applications', adminLimiter, partnerApplicationRoutes);
 app.use('/api/admin/settlements', adminLimiter, partnerSettlementRoutes);
+
+// Vehicle Owner Management Routes
+app.use('/api/admin/vehicle-owners', adminLimiter, vehicleOwnerRoutes);
+
+// Trip Financial Routes (role-based financial data)
+app.use('/api/trips', bookingLimiter, tripFinancialRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
-  res.json({ success: true, status: 'ok', message: 'Bihar Transport API is running', data: null, timestamp: new Date().toISOString() });
+  res.json({
+    success: true,
+    status: 'ok',
+    message: 'Bihar Transport API is running',
+    data: { dbReady },
+    timestamp: new Date().toISOString()
+  });
 });
 
 // PostgreSQL health check via Prisma (Phase 4.1)
@@ -196,6 +213,7 @@ app.get('/api/health/db', async (req, res, next) => {
   try {
     const result = await testPrismaConnection();
     if (result.success) {
+      dbReady = true;
       res.json({
         success: true,
         status: 'ok',
@@ -204,6 +222,7 @@ app.get('/api/health/db', async (req, res, next) => {
         timestamp: new Date().toISOString(),
       });
     } else {
+      dbReady = false;
       res.status(503).json({
         success: false,
         status: 'error',
@@ -213,8 +232,30 @@ app.get('/api/health/db', async (req, res, next) => {
       });
     }
   } catch (err) {
+    dbReady = false;
     next(err);
   }
+});
+
+// Middleware: reject database-dependent requests when Prisma is not ready.
+// This prevents requests from silently hanging when PostgreSQL is cold or down.
+app.use('/api', (req, res, next) => {
+  // Auth and health endpoints are always allowed — they either don't need DB
+  // or are the mechanism to check DB status.
+  const alwaysAllowed = ['/api/health', '/api/health/db', '/api/auth/login', '/api/auth/admin-login', '/api/auth/signup', '/api/auth/driver-signup'];
+  if (alwaysAllowed.some(path => req.path === path || req.path.startsWith(path))) {
+    return next();
+  }
+  if (!dbReadyChecked || !dbReady) {
+    return res.status(503).json({
+      success: false,
+      status: 'service_unavailable',
+      message: 'Database is initializing. Please try again in a few seconds.',
+      data: null,
+      timestamp: new Date().toISOString(),
+    });
+  }
+  next();
 });
 
 // WhatsApp Webhook Events
@@ -233,39 +274,79 @@ app.use(errorHandler);
 
 const PORT = process.env.PORT || 3000;
 
-// Start server
-const startServer = async () => {
-  const dbResult = await testPrismaConnection();
-  if (dbResult.success) {
-    console.log(dbResult.message);
-  } else {
-    console.warn(dbResult.message);
-  }
+// Database readiness state — shared across requests.
+// Starts as false until the background warm-up succeeds.
+let dbReady = false;
+let dbReadyChecked = false;
 
-  app.listen(PORT, '0.0.0.0', () => {
-    // eslint-disable-next-line no-console
-    console.log(`✅ Server running on port ${PORT}`);
-    // eslint-disable-next-line no-console
-    console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  });
+// Start server immediately so HTTP is available even if PostgreSQL is cold.
+app.listen(PORT, '0.0.0.0', () => {
+  // eslint-disable-next-line no-console
+  console.log(`✅ Server running on port ${PORT}`);
+  // eslint-disable-next-line no-console
+  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+});
 
-  // Background SMTP verification — never blocks server startup
-  (async () => {
-    // Verify SMTP connection only (no test email — that's done manually via /api/test/email)
+// Background database warm-up — does not block server startup.
+// Sets dbReady = true once Prisma connectivity is confirmed.
+// Retries periodically if the database is temporarily unavailable.
+const warmupDatabase = async () => {
+  const attempt = async () => {
     try {
-      const verifyResult = await emailService.verifyConnection();
-      if (verifyResult.success) {
-        console.log('✓ Email Service Ready');
+      const dbResult = await testPrismaConnection();
+      if (dbResult.success) {
+        if (!dbReady) {
+          dbReady = true;
+          console.log('[db] Prisma client connected to PostgreSQL successfully');
+        }
       } else {
-        console.warn('[email] Service not available:', verifyResult.message);
+        if (dbReady) {
+          dbReady = false;
+          console.warn('[db] Prisma client connection lost:', dbResult.message);
+        }
       }
     } catch (err) {
-      console.error('[email] SMTP verification threw:', err.message);
+      if (dbReady) {
+        dbReady = false;
+        console.warn('[db] Prisma client connection error:', err.message);
+      }
+    } finally {
+      dbReadyChecked = true;
     }
-  })();
-};
+  };
 
-startServer();
+  await attempt();
+
+  // Retry every 30 seconds if the database is not ready.
+  // This allows recovery from transient failures without restarting the server.
+  const interval = setInterval(async () => {
+    if (dbReady) {
+      clearInterval(interval);
+      return;
+    }
+    await attempt();
+  }, 30000);
+
+  // Clean up interval when the process exits.
+  process.on('exit', () => clearInterval(interval));
+};
+warmupDatabase();
+
+// Background SMTP verification — never blocks server startup
+// eslint-disable-next-line no-async-promise-executor
+const verifyEmail = async () => {
+  try {
+    const verifyResult = await emailService.verifyConnection();
+    if (verifyResult.success) {
+      console.log('✓ Email Service Ready');
+    } else {
+      console.warn('[email] Service not available:', verifyResult.message);
+    }
+  } catch (err) {
+    console.error('[email] SMTP verification threw:', err.message);
+  }
+};
+verifyEmail();
 
 // Graceful shutdown — disconnect Prisma on SIGTERM/SIGINT
 process.on('SIGTERM', async () => {

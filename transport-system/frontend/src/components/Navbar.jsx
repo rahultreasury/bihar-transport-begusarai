@@ -13,84 +13,64 @@ function Navbar() {
   };
 
   return (
-    <nav className="bg-btb-dark text-white shadow-lg sticky top-0 z-50 animate-fade-in-down" style={{ boxShadow: '0 2px 20px rgba(0,0,0,0.15)' }}>
+    <nav className="bg-white border-b border-[#E8EDF3] sticky top-0 z-50 animate-fade-in-down shadow-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16">
-          {/* Logo */}
-          <Link to="/" className="flex items-center">
-            <div className="logo-wrapper">
-              <img src="/assets/logo.png" alt="Bihar Transport Logo" className="site-logo" />
-              <div className="brand-text">
-                <span className="brand-title">Bihar Transport</span>
+        <div className="flex items-center h-16">
+          {/* Logo + Desktop Navigation */}
+          <div className="flex items-center">
+            <Link to="/" className="flex items-center">
+              <div className="logo-wrapper">
+                <img src="/assets/logo.png" alt="Bihar Transport Logo" className="site-logo" />
+                <div className="brand-text">
+                  <span className="brand-title">Bihar Transport</span>
+                </div>
               </div>
-            </div>
-          </Link>
+            </Link>
 
-          {/* Desktop Navigation */}
-          <div className="hidden md:flex items-center space-x-1">
-            <Link to="/" className="px-4 py-2 rounded-lg hover:bg-white/10 transition-colors nav-link">Home</Link>
-            <Link to="/about" className="px-4 py-2 rounded-lg hover:bg-white/10 transition-colors nav-link">About</Link>
-            <Link to="/book-transport" className="px-4 py-2 rounded-lg hover:bg-white/10 transition-colors nav-link">Book Transport</Link>
-            <Link to="/track" className="px-4 py-2 rounded-lg hover:bg-white/10 transition-colors nav-link">Track Delivery</Link>
-            <Link to="/contact" className="px-4 py-2 rounded-lg hover:bg-white/10 transition-colors nav-link">Contact</Link>
-            
-            {/* Resources Dropdown */}
-            <div className="relative group">
-              <button className="px-4 py-2 rounded-lg hover:bg-white/10 transition-colors flex items-center gap-1 cursor-pointer">
-                Resources
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
-              <div className="absolute left-0 mt-2 w-52 bg-white rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 text-gray-800">
-                <Link to="/transport-services" className="block px-4 py-2 hover:bg-gray-100 rounded-t-lg">Transport Services by State</Link>
-                <Link to="/routes" className="block px-4 py-2 hover:bg-gray-100">Popular Transport Routes</Link>
-                <Link to="/blog" className="block px-4 py-2 hover:bg-gray-100">Blog</Link>
-                <Link to="/partner" className="block px-4 py-2 hover:bg-gray-100 rounded-b-lg">Become a Partner</Link>
-              </div>
+            {/* Desktop Navigation */}
+            <div className="hidden md:flex items-center space-x-0.5 ml-6">
+              <Link to="/" className="px-3 py-2 rounded-lg text-[#172B4D] font-medium hover:text-[#F5A623] transition-colors duration-150">Home</Link>
+              <Link to="/about" className="px-3 py-2 rounded-lg text-[#172B4D] font-medium hover:text-[#F5A623] transition-colors duration-150">About</Link>
+              <Link to="/book-transport" className="px-3 py-2 rounded-lg text-[#172B4D] font-medium hover:text-[#F5A623] transition-colors duration-150">Book Transport</Link>
+              <Link to="/track" className="px-3 py-2 rounded-lg text-[#172B4D] font-medium hover:text-[#F5A623] transition-colors duration-150">Track Delivery</Link>
+              <Link to="/partner" className="px-3 py-2 bg-amber-500 text-white rounded-lg font-medium hover:bg-amber-600 transition-colors duration-150">Become a Partner</Link>
+              <Link to="/contact" className="px-3 py-2 rounded-lg text-[#172B4D] font-medium hover:text-[#F5A623] transition-colors duration-150">Contact</Link>
             </div>
           </div>
 
           {/* User Menu */}
-          <div className="hidden md:flex items-center space-x-4">
+          <div className="hidden md:flex items-center space-x-3 ml-auto">
             {user ? (
-              <div className="flex items-center space-x-4">
+              <div className="flex items-center space-x-3">
                 {user.role === 'customer' && (
-                  <Link to="/dashboard" className="px-4 py-2 bg-amber-500 rounded-lg hover:bg-amber-600 transition-colors">
+                  <Link to="/dashboard" className="px-4 py-2 bg-amber-500 rounded-lg hover:bg-amber-600 transition-colors duration-150 font-medium text-white">
                     My Bookings
                   </Link>
                 )}
                 {user.role === 'driver' && (
-                  <Link to="/driver-dashboard" className="px-4 py-2 bg-sky-500 rounded-lg hover:bg-sky-600 transition-colors">
+                  <Link to="/driver-dashboard" className="px-4 py-2 bg-sky-500 rounded-lg hover:bg-sky-600 transition-colors duration-150 font-medium text-white">
                     Driver Panel
                   </Link>
                 )}
                 {user.role === 'admin' && (
-                  <Link to="/admin" className="px-4 py-2 bg-amber-500 rounded-lg hover:bg-amber-600 transition-colors">
+                  <Link to="/admin" className="px-4 py-2 bg-amber-500 rounded-lg hover:bg-amber-600 transition-colors duration-150 font-medium text-white">
                     Admin
                   </Link>
                 )}
-                <button 
+                <button
                   onClick={handleLogout}
-                  className="px-4 py-2 border border-white/30 rounded-lg hover:bg-white/10 transition-colors cursor-pointer"
+                  className="px-4 py-2 border border-[#172B4D]/20 text-[#172B4D] rounded-lg font-medium hover:bg-[#172B4D]/5 transition-colors duration-150 cursor-pointer"
                 >
                   Logout
                 </button>
               </div>
             ) : (
               <div className="flex items-center space-x-3">
-                <Link 
-                  to="/login" 
-                  className="px-4 py-2 border border-white/30 rounded-lg hover:bg-white/10 transition-colors cursor-pointer"
-                  style={{ border: '1.5px solid rgba(255,255,255,0.7)' }}
+                <Link
+                  to="/login"
+                  className="px-4 py-2 border border-[#172B4D]/20 text-[#172B4D] rounded-lg font-medium hover:bg-[#172B4D]/5 transition-colors duration-150 cursor-pointer"
                 >
                   Login
-                </Link>
-                <Link 
-                  to="/signup" 
-                  className="px-4 py-2 bg-amber-500 rounded-lg hover:bg-amber-600 transition-colors btn-hover-scale cursor-pointer"
-                >
-                  Get Free Quote
                 </Link>
               </div>
             )}
@@ -100,7 +80,7 @@ function Navbar() {
           <div className="md:hidden flex items-center">
             <button
               onClick={() => setIsMenuOpen(!isMenuOpen)}
-              className="p-2 rounded-lg hover:bg-white/10 cursor-pointer"
+              className="p-2 rounded-lg hover:bg-gray-100 text-[#172B4D] cursor-pointer"
               aria-label="Toggle menu"
             >
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -117,39 +97,33 @@ function Navbar() {
 
       {/* Mobile Menu */}
       {isMenuOpen && (
-        <div className="md:hidden bg-btb-dark/95 backdrop-blur">
+        <div className="md:hidden bg-white border-b border-[#E8EDF3]">
           <div className="px-4 py-3 space-y-2">
-            <Link to="/" className="block px-4 py-2 rounded-lg hover:bg-white/10">Home</Link>
-            <Link to="/about" className="block px-4 py-2 rounded-lg hover:bg-white/10">About</Link>
-            <Link to="/book-transport" className="block px-4 py-2 rounded-lg hover:bg-white/10">Book Transport</Link>
-            <Link to="/track" className="block px-4 py-2 rounded-lg hover:bg-white/10">Track Delivery</Link>
-            <Link to="/contact" className="block px-4 py-2 rounded-lg hover:bg-white/10">Contact</Link>
-            <hr className="border-white/20 my-2" />
-            <p className="px-4 py-1 text-xs text-gray-400 uppercase">Resources</p>
-            <Link to="/transport-services" className="block px-4 py-2 rounded-lg hover:bg-white/10">Transport Services by State</Link>
-            <Link to="/routes" className="block px-4 py-2 rounded-lg hover:bg-white/10">Popular Transport Routes</Link>
-            <Link to="/blog" className="block px-4 py-2 rounded-lg hover:bg-white/10">Blog</Link>
-            <Link to="/partner" className="block px-4 py-2 rounded-lg hover:bg-white/10">Become a Partner</Link>
-            <hr className="border-white/20 my-2" />
+            <Link to="/" className="block px-4 py-2 rounded-lg text-[#172B4D] font-medium hover:text-[#F5A623] hover:bg-gray-50 transition-colors duration-150">Home</Link>
+            <Link to="/about" className="block px-4 py-2 rounded-lg text-[#172B4D] font-medium hover:text-[#F5A623] hover:bg-gray-50 transition-colors duration-150">About</Link>
+            <Link to="/book-transport" className="block px-4 py-2 rounded-lg text-[#172B4D] font-medium hover:text-[#F5A623] hover:bg-gray-50 transition-colors duration-150">Book Transport</Link>
+            <Link to="/track" className="block px-4 py-2 rounded-lg text-[#172B4D] font-medium hover:text-[#F5A623] hover:bg-gray-50 transition-colors duration-150">Track Delivery</Link>
+            <Link to="/partner" className="block px-4 py-2 bg-amber-500 text-white rounded-lg font-medium hover:bg-amber-600 transition-colors duration-150 text-center">Become a Partner</Link>
+            <Link to="/contact" className="block px-4 py-2 rounded-lg text-[#172B4D] font-medium hover:text-[#F5A623] hover:bg-gray-50 transition-colors duration-150">Contact</Link>
+            <hr className="border-[#E8EDF3] my-2" />
             {user ? (
               <>
                 {user.role === 'customer' && (
-                  <Link to="/dashboard" className="block px-4 py-2 rounded-lg hover:bg-white/10">My Bookings</Link>
+                  <Link to="/dashboard" className="block px-4 py-2 rounded-lg text-[#172B4D] font-medium hover:text-[#F5A623] hover:bg-gray-50 transition-colors duration-150">My Bookings</Link>
                 )}
                 {user.role === 'driver' && (
-                  <Link to="/driver-dashboard" className="block px-4 py-2 rounded-lg hover:bg-white/10">Driver Panel</Link>
+                  <Link to="/driver-dashboard" className="block px-4 py-2 rounded-lg text-[#172B4D] font-medium hover:text-[#F5A623] hover:bg-gray-50 transition-colors duration-150">Driver Panel</Link>
                 )}
                 {user.role === 'admin' && (
-                  <Link to="/admin" className="block px-4 py-2 rounded-lg hover:bg-white/10">Admin Dashboard</Link>
+                  <Link to="/admin" className="block px-4 py-2 rounded-lg text-[#172B4D] font-medium hover:text-[#F5A623] hover:bg-gray-50 transition-colors duration-150">Admin Dashboard</Link>
                 )}
-                <button onClick={handleLogout} className="block w-full text-left px-4 py-2 rounded-lg hover:bg-white/10">
+                <button onClick={handleLogout} className="block w-full text-left px-4 py-2 rounded-lg text-[#172B4D] font-medium hover:text-[#F5A623] hover:bg-gray-50 transition-colors duration-150">
                   Logout
                 </button>
               </>
             ) : (
               <>
-                <Link to="/login" className="block px-4 py-2 rounded-lg hover:bg-white/10">Login</Link>
-                <Link to="/signup" className="block px-4 py-2 rounded-lg hover:bg-white/10">Get Free Quote</Link>
+                <Link to="/login" className="block px-4 py-2 border border-[#172B4D]/20 text-[#172B4D] rounded-lg font-medium hover:bg-[#172B4D]/5 transition-colors duration-150">Login</Link>
               </>
             )}
           </div>
@@ -160,4 +134,3 @@ function Navbar() {
 }
 
 export default Navbar;
-

@@ -7,8 +7,9 @@ import StatusBadge from '../components/admin-premium/booking/StatusBadge';
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: '▦' },
   { key: 'bookings', label: 'Bookings', icon: '⟐' },
-  { key: 'drivers', label: 'Drivers', icon: '⌁' },
   { key: 'owners', label: 'Transport Owners', icon: '⧉' },
+  { key: 'vehicles', label: 'Vehicles', icon: '🚛' },
+  { key: 'drivers', label: 'Drivers', icon: '⌁' },
   { key: 'analytics', label: 'Analytics', icon: '◷' },
   { key: 'ai', label: 'AI Insights', icon: '✦' }
 ];

@@ -9,8 +9,10 @@ import EmptyState from '../components/admin-premium/ui/EmptyState';
 import { LoadingSkeleton } from '../components/admin-premium/ui/LoadingSkeleton';
 
 const NAV_ITEMS = [
-  { key: 'owners', label: 'Transport Owners', icon: '▦' },
+  { key: 'dashboard', label: 'Dashboard', icon: '▦' },
   { key: 'bookings', label: 'Bookings', icon: '⟐' },
+  { key: 'owners', label: 'Transport Owners', icon: '⧉' },
+  { key: 'vehicles', label: 'Vehicles', icon: '🚛' },
   { key: 'drivers', label: 'Drivers', icon: '⌁' },
   { key: 'analytics', label: 'Analytics', icon: '◷' },
   { key: 'reports', label: 'Reports', icon: '📊' },
@@ -129,12 +131,42 @@ export default function AdminPartnerProfile() {
         {/* Dashboard Summary Cards */}
         {dashboard && (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            <SummaryCard label="Total Bookings" value={dashboard.totalBookings} color="amber" />
-            <SummaryCard label="Active" value={dashboard.activeBookings} color="blue" />
-            <SummaryCard label="Completed" value={dashboard.completedBookings} color="green" />
-            <SummaryCard label="Commission Earned" value={`₹${(dashboard.commissionEarned || 0).toLocaleString('en-IN')}`} color="purple" />
-            <SummaryCard label="Outstanding" value={`₹${(dashboard.outstandingBalance || 0).toLocaleString('en-IN')}`} color="red" />
-            <SummaryCard label="Vehicles" value={partner._count?.trucks || 0} color="amber" />
+            <SummaryCard label="Total Trips" value={dashboard.totalTrips || dashboard.totalBookings || 0} color="amber" />
+            <SummaryCard label="Completed" value={dashboard.completedTrips || dashboard.completedBookings || 0} color="green" />
+            <SummaryCard label="Pending Settlement" value={dashboard.pendingSettlement || dashboard.pendingSettlements || 0} color="amber" />
+            <SummaryCard label="Total Paid" value={`₹${(dashboard.totalPaid || 0).toLocaleString('en-IN')}`} color="emerald" />
+            <SummaryCard label="Total Advance" value={`₹${(dashboard.totalAdvance || 0).toLocaleString('en-IN')}`} color="orange" />
+            <SummaryCard label="Commission" value={`₹${(dashboard.commission || dashboard.commissionEarned || 0).toLocaleString('en-IN')}`} color="purple" />
+          </div>
+        )}
+
+        {/* Internal BT Financials — Admin Only */}
+        {dashboard && (dashboard.totalBtMargin != null || dashboard.totalCustomerRevenue != null) && (
+          <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <svg className="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+              <h3 className="text-base font-semibold text-amber-700 dark:text-amber-400">Internal BT Financials (Admin Only)</h3>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div>
+                <div className="text-xs text-muted uppercase tracking-wider">Total Customer Revenue</div>
+                <div className="text-lg font-bold text-text">₹{(dashboard.totalCustomerRevenue || 0).toLocaleString('en-IN')}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted uppercase tracking-wider">Total Owner/Driver Cost</div>
+                <div className="text-lg font-bold text-text">₹{(dashboard.totalOwnerDriverCost || 0).toLocaleString('en-IN')}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted uppercase tracking-wider">Total Commission</div>
+                <div className="text-lg font-bold text-text">₹{(dashboard.totalCommission || 0).toLocaleString('en-IN')}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted uppercase tracking-wider">BT Margin</div>
+                <div className="text-lg font-bold text-emerald-600">₹{(dashboard.totalBtMargin || 0).toLocaleString('en-IN')}</div>
+              </div>
+            </div>
           </div>
         )}
 
@@ -242,22 +274,77 @@ function OverviewTab({ partner, dashboard }) {
 function TrucksTab({ partnerId }) {
   const [trucks, setTrucks] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState('');
+
+  const fetchTrucks = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await adminAPI.getPartnerTrucks(partnerId);
+      if (res.data?.success) setTrucks(res.data.data || []);
+    } catch (err) { console.error(err); }
+    finally { setLoading(false); }
+  }, [partnerId]);
 
   useEffect(() => {
-    const fetchTrucks = async () => {
-      try {
-        const res = await adminAPI.getPartnerTrucks(partnerId);
-        if (res.data?.success) setTrucks(res.data.data || []);
-      } catch (err) { console.error(err); }
-      finally { setLoading(false); }
-    };
     fetchTrucks();
-  }, [partnerId]);
+  }, [partnerId, fetchTrucks]);
+
+  const handleAddVehicle = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setFormError('');
+    const formData = new FormData(e.target);
+    const data = {
+      vehicle_number: formData.get('vehicle_number'),
+      vehicle_type: formData.get('vehicle_type'),
+      vehicle_name: formData.get('vehicle_name'),
+      capacity_kg: formData.get('capacity_kg') ? parseFloat(formData.get('capacity_kg')) : null,
+      capacity_volume: formData.get('capacity_volume') ? parseFloat(formData.get('capacity_volume')) : null,
+      vehicle_make: formData.get('vehicle_make') || null,
+      vehicle_model: formData.get('vehicle_model') || null,
+      manufacturing_year: formData.get('manufacturing_year') ? parseInt(formData.get('manufacturing_year')) : null,
+      registration_date: formData.get('registration_date') || null,
+      insurance_number: formData.get('insurance_number') || null,
+      insurance_expiry: formData.get('insurance_expiry') || null,
+      permit_number: formData.get('permit_number') || null,
+      permit_expiry: formData.get('permit_expiry') || null,
+      pollution_certificate: formData.get('pollution_certificate') || null,
+      pollution_expiry: formData.get('pollution_expiry') || null,
+      base_location: formData.get('base_location') || null,
+      hourly_rate: formData.get('hourly_rate') ? parseFloat(formData.get('hourly_rate')) : null,
+      per_km_rate: formData.get('per_km_rate') ? parseFloat(formData.get('per_km_rate')) : null,
+    };
+    try {
+      const res = await adminAPI.addPartnerSourcedVehicle(partnerId, data);
+      if (res.data?.success) {
+        setShowAddModal(false);
+        fetchTrucks();
+      } else {
+        setFormError(res.data?.message || 'Failed to add vehicle');
+      }
+    } catch (err) {
+      setFormError(err.response?.data?.message || 'Failed to add vehicle');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   if (loading) return <LoadingSkeleton className="h-48 w-full" />;
 
   return (
-    <SectionCard title="Partner Trucks">
+    <SectionCard
+      title="Partner Trucks"
+      right={
+        <button
+          onClick={() => setShowAddModal(true)}
+          className="px-4 py-2 bg-amber-500 text-white rounded-xl text-sm font-medium hover:bg-amber-600 transition"
+        >
+          + Add Vehicle
+        </button>
+      }
+    >
       {trucks.length === 0 ? (
         <EmptyState title="No trucks assigned" subtitle="Add trucks to this partner." />
       ) : (
@@ -272,6 +359,119 @@ function TrucksTab({ partnerId }) {
           rows={trucks.map(t => ({ ...t, id: t.vehicle_id }))}
           loading={false}
         />
+      )}
+
+      {showAddModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setShowAddModal(false)} />
+          <div className="relative w-full max-w-md bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-border/60 p-6" role="dialog" aria-modal="true" aria-label="Add Vehicle">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-text">Add Vehicle</h3>
+              <button onClick={() => setShowAddModal(false)} className="text-muted hover:text-text transition">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <form onSubmit={handleAddVehicle} className="space-y-4">
+              {formError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-600 text-sm">
+                  {formError}
+                </div>
+              )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-text mb-1">Vehicle Number *</label>
+                  <input name="vehicle_number" required placeholder="e.g. BR01AB1234" className="w-full px-3 py-2 rounded-xl border border-border bg-card text-text text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-text mb-1">Vehicle Type *</label>
+                  <input name="vehicle_type" required placeholder="e.g. truck, van, car" className="w-full px-3 py-2 rounded-xl border border-border bg-card text-text text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-text mb-1">Vehicle Name *</label>
+                  <input name="vehicle_name" required placeholder="e.g. Tata Ace" className="w-full px-3 py-2 rounded-xl border border-border bg-card text-text text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-text mb-1">Capacity (kg)</label>
+                  <input name="capacity_kg" type="number" placeholder="e.g. 1000" className="w-full px-3 py-2 rounded-xl border border-border bg-card text-text text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-text mb-1">Capacity (m³)</label>
+                  <input name="capacity_volume" type="number" placeholder="e.g. 5.5" className="w-full px-3 py-2 rounded-xl border border-border bg-card text-text text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-text mb-1">Make</label>
+                  <input name="vehicle_make" placeholder="e.g. Tata" className="w-full px-3 py-2 rounded-xl border border-border bg-card text-text text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-text mb-1">Model</label>
+                  <input name="vehicle_model" placeholder="e.g. 407" className="w-full px-3 py-2 rounded-xl border border-border bg-card text-text text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-text mb-1">Manufacturing Year</label>
+                  <input name="manufacturing_year" type="number" placeholder="e.g. 2022" className="w-full px-3 py-2 rounded-xl border border-border bg-card text-text text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-text mb-1">Registration Date</label>
+                  <input name="registration_date" type="date" className="w-full px-3 py-2 rounded-xl border border-border bg-card text-text text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-text mb-1">Insurance Number</label>
+                  <input name="insurance_number" placeholder="e.g. INS123456" className="w-full px-3 py-2 rounded-xl border border-border bg-card text-text text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-text mb-1">Insurance Expiry</label>
+                  <input name="insurance_expiry" type="date" className="w-full px-3 py-2 rounded-xl border border-border bg-card text-text text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-text mb-1">Permit Number</label>
+                  <input name="permit_number" placeholder="e.g. PERM789" className="w-full px-3 py-2 rounded-xl border border-border bg-card text-text text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-text mb-1">Permit Expiry</label>
+                  <input name="permit_expiry" type="date" className="w-full px-3 py-2 rounded-xl border border-border bg-card text-text text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-text mb-1">Pollution Certificate</label>
+                  <input name="pollution_certificate" placeholder="e.g. PUC456" className="w-full px-3 py-2 rounded-xl border border-border bg-card text-text text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-text mb-1">Pollution Expiry</label>
+                  <input name="pollution_expiry" type="date" className="w-full px-3 py-2 rounded-xl border border-border bg-card text-text text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-text mb-1">Base Location</label>
+                  <input name="base_location" placeholder="e.g. Begusarai" className="w-full px-3 py-2 rounded-xl border border-border bg-card text-text text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-text mb-1">Hourly Rate (₹)</label>
+                  <input name="hourly_rate" type="number" placeholder="e.g. 200" className="w-full px-3 py-2 rounded-xl border border-border bg-card text-text text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-text mb-1">Per KM Rate (₹)</label>
+                  <input name="per_km_rate" type="number" placeholder="e.g. 15" className="w-full px-3 py-2 rounded-xl border border-border bg-card text-text text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50" />
+                </div>
+              </div>
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAddModal(false)}
+                  className="px-4 py-2 border border-border rounded-xl text-sm font-medium text-text hover:bg-hover/60 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="px-4 py-2 bg-amber-500 text-white rounded-xl text-sm font-medium hover:bg-amber-600 transition disabled:opacity-50"
+                >
+                  {submitting ? 'Saving...' : 'Save Vehicle'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </SectionCard>
   );

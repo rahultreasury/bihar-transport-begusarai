@@ -197,22 +197,22 @@ router.get('/:id/dashboard', protect, adminCheck, async (req, res) => {
 });
 
 // ============================
-// TRUCKS
+// SOURCED VEHICLES
 // ============================
 
-router.get('/:id/trucks', protect, adminCheck, async (req, res) => {
+router.get('/:id/sourced-vehicles', protect, adminCheck, async (req, res) => {
   try {
     const partnerId = parseInt(req.params.id);
     if (isNaN(partnerId)) return res.status(400).json({ success: false, message: 'Invalid partner ID' });
 
-    const trucks = await partnerService.getTrucks(partnerId);
-    res.json({ success: true, data: trucks });
+    const vehicles = await partnerService.getSourcedVehicles(partnerId);
+    res.json({ success: true, data: vehicles });
   } catch (error) {
     handleError(res, error);
   }
 });
 
-router.post('/:id/trucks', protect, adminCheck, [
+router.post('/:id/sourced-vehicles', protect, adminCheck, [
   body('vehicle_number').notEmpty().withMessage('Vehicle number is required'),
   body('vehicle_type').notEmpty().withMessage('Vehicle type is required'),
 ], handleValidation, async (req, res) => {
@@ -220,32 +220,32 @@ router.post('/:id/trucks', protect, adminCheck, [
     const partnerId = parseInt(req.params.id);
     if (isNaN(partnerId)) return res.status(400).json({ success: false, message: 'Invalid partner ID' });
 
-    const truck = await partnerService.addTruck(partnerId, req.body);
-    res.status(201).json({ success: true, message: 'Truck added successfully', data: truck });
+    const vehicle = await partnerService.addSourcedVehicle(partnerId, req.body);
+    res.status(201).json({ success: true, message: 'Vehicle added successfully', data: vehicle });
   } catch (error) {
     handleError(res, error);
   }
 });
 
-router.put('/trucks/:truckId', protect, adminCheck, async (req, res) => {
+router.put('/sourced-vehicles/:vehicleId', protect, adminCheck, async (req, res) => {
   try {
-    const truckId = parseInt(req.params.truckId);
-    if (isNaN(truckId)) return res.status(400).json({ success: false, message: 'Invalid truck ID' });
+    const vehicleId = parseInt(req.params.vehicleId);
+    if (isNaN(vehicleId)) return res.status(400).json({ success: false, message: 'Invalid vehicle ID' });
 
-    const truck = await partnerService.updateTruck(truckId, req.body);
-    res.json({ success: true, message: 'Truck updated successfully', data: truck });
+    const vehicle = await partnerService.updateSourcedVehicle(vehicleId, req.body);
+    res.json({ success: true, message: 'Vehicle updated successfully', data: vehicle });
   } catch (error) {
     handleError(res, error);
   }
 });
 
-router.delete('/trucks/:truckId', protect, adminCheck, async (req, res) => {
+router.delete('/sourced-vehicles/:vehicleId', protect, adminCheck, async (req, res) => {
   try {
-    const truckId = parseInt(req.params.truckId);
-    if (isNaN(truckId)) return res.status(400).json({ success: false, message: 'Invalid truck ID' });
+    const vehicleId = parseInt(req.params.vehicleId);
+    if (isNaN(vehicleId)) return res.status(400).json({ success: false, message: 'Invalid vehicle ID' });
 
-    await partnerService.removeTruck(truckId);
-    res.json({ success: true, message: 'Truck removed from partner' });
+    await partnerService.removeSourcedVehicle(vehicleId);
+    res.json({ success: true, message: 'Vehicle removed from partner' });
   } catch (error) {
     handleError(res, error);
   }

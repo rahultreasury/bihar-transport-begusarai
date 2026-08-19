@@ -27,8 +27,9 @@ import {
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: '▦' },
   { key: 'bookings', label: 'Bookings', icon: '⟐' },
-  { key: 'drivers', label: 'Drivers', icon: '⌁' },
   { key: 'owners', label: 'Transport Owners', icon: '⧉' },
+  { key: 'vehicles', label: 'Vehicles', icon: '🚛' },
+  { key: 'drivers', label: 'Drivers', icon: '⌁' },
   { key: 'analytics', label: 'Analytics', icon: '◷' },
   { key: 'reports', label: 'Reports', icon: '▤' },
   { key: 'ai', label: 'AI Insights', icon: '✦' },
@@ -73,15 +74,15 @@ const stateData = [
 function AdminAnalytics() {
   const [activeKey, setActiveKey] = useState('analytics');
 
-  // Fetch dashboard data
-  const { data: dashboardData, isLoading, error } = useQuery({
-    queryKey: ['admin-dashboard'],
+  // Fetch analytics data
+  const { data: analyticsData, isLoading, error } = useQuery({
+    queryKey: ['admin-analytics'],
     queryFn: () => adminAPI.getDashboard().then(r => r.data?.data),
     staleTime: 60 * 1000,
     retry: 2,
   });
 
-  const stats = useMemo(() => dashboardData?.stats || {}, [dashboardData]);
+  const stats = useMemo(() => analyticsData?.stats || {}, [analyticsData]);
 
   const kpiCards = useMemo(() => [
     { label: 'Avg Monthly Revenue', value: `₹${(stats.todayRevenue || 42000).toLocaleString('en-IN')}`, icon: TrendingUp, color: 'text-green-500' },
@@ -102,6 +103,23 @@ function AdminAnalytics() {
           </div>
           <LoadingSkeleton className="h-80 w-full" />
           <LoadingSkeleton className="h-80 w-full" />
+        </div>
+      </AdminShell>
+    );
+  }
+
+  if (error) {
+    return (
+      <AdminShell navItems={NAV_ITEMS} activeKey={activeKey} onNav={(k) => setActiveKey(k)}>
+        <div className="rounded-2xl border border-red-500/30 bg-red-500/5 p-8 text-center">
+          <div className="text-red-500 font-semibold mb-2">Unable to load analytics data</div>
+          <div className="text-sm text-muted mb-4">{error.message}</div>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition-colors"
+          >
+            Try Again
+          </button>
         </div>
       </AdminShell>
     );

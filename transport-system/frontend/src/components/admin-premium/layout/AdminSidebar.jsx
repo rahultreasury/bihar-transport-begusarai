@@ -6,6 +6,7 @@ import {
   Package,
   Users,
   Truck,
+  Car,
   BarChart3,
   FileText,
   Settings,
@@ -22,9 +23,12 @@ import {
 const DEFAULT_NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/admin' },
   { key: 'bookings', label: 'Bookings', icon: Package, path: '/admin/bookings' },
-  { key: 'drivers', label: 'Drivers', icon: Users, path: '/admin/drivers' },
   { key: 'owners', label: 'Transport Owners', icon: Truck, path: '/admin/owners' },
+  { key: 'vehicles', label: 'Vehicles', icon: Car, path: '/admin/vehicles' },
+  { key: 'drivers', label: 'Drivers', icon: Users, path: '/admin/drivers' },
+  { key: 'vehicle-owners', label: 'Vehicle Owners', icon: Truck, path: '/admin/vehicle-owners' },
   { key: 'analytics', label: 'Analytics', icon: BarChart3, path: '/admin/analytics' },
+  { key: 'reports', label: 'Reports', icon: FileText, path: '/admin/reports' },
   { key: 'ai', label: 'AI Insights', icon: Sparkles, path: '/admin/ai' },
 ];
 
@@ -62,17 +66,21 @@ export default function AdminSidebar({
   }, [collapsed]);
 
 const handleNav = useCallback(
-    (key, path) => {
+  (key, path) => {
       if (path) {
         navigate(path);
       } else if (key === 'dashboard') {
         navigate('/admin');
       } else if (key === 'bookings') {
         navigate('/admin/bookings');
-      } else if (key === 'owners' || key === 'partners') {
-        navigate('/admin/owners');
       } else if (key === 'drivers') {
         navigate('/admin/drivers');
+      } else if (key === 'vehicles') {
+        navigate('/admin/vehicles');
+      } else if (key === 'vehicle-owners') {
+        navigate('/admin/vehicle-owners');
+      } else if (key === 'owners' || key === 'partners') {
+        navigate('/admin/owners');
       } else if (key === 'settlements') {
         navigate('/admin/settlements');
       } else if (key === 'analytics') {
@@ -270,10 +278,16 @@ const handleNav = useCallback(
                         aria-hidden="true"
                       />
                     )}
-                    <Icon
-                      className={`shrink-0 ${collapsed ? 'w-6 h-6' : 'w-5 h-5'}`}
-                      aria-hidden="true"
-                    />
+                    {typeof Icon === 'function' ? (
+                      <Icon
+                        className={`shrink-0 ${collapsed ? 'w-6 h-6' : 'w-5 h-5'}`}
+                        aria-hidden="true"
+                      />
+                    ) : (
+                      <span className={`shrink-0 ${collapsed ? 'w-6 h-6' : 'w-5 h-5'} flex items-center justify-center`} aria-hidden="true">
+                        {Icon}
+                      </span>
+                    )}
                     {!collapsed && (
                       <span className="text-sm font-medium whitespace-nowrap">{it.label}</span>
                     )}

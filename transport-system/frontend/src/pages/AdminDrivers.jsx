@@ -16,8 +16,9 @@ import DriverVehicleAssignModal from '../components/admin-premium/drivers/Driver
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: '▦' },
   { key: 'bookings', label: 'Bookings', icon: '⟐' },
-  { key: 'drivers', label: 'Drivers', icon: '⌁' },
   { key: 'owners', label: 'Transport Owners', icon: '⧉' },
+  { key: 'vehicles', label: 'Vehicles', icon: '🚛' },
+  { key: 'drivers', label: 'Drivers', icon: '⌁' },
   { key: 'analytics', label: 'Analytics', icon: '◷' },
   { key: 'ai', label: 'AI Insights', icon: '✦' }
 ];
@@ -80,13 +81,11 @@ function ActionMenuItem({ icon, label, onClick, href, color = 'text-text' }) {
 
 // Quick filter buttons
 const QUICK_FILTERS = [
+  { key: 'all', label: 'All' },
   { key: 'available', label: 'Available', color: 'emerald' },
   { key: 'on_trip', label: 'On Trip', color: 'blue' },
   { key: 'inactive', label: 'Inactive', color: 'gray' },
-  { key: 'assigned', label: 'Has Vehicle', color: 'amber' },
   { key: 'unassigned', label: 'No Vehicle', color: 'slate' },
-  { key: 'today_active', label: "Today's Active", color: 'violet' },
-  { key: 'newest', label: 'Newest', color: 'sky' },
 ];
 
 function AdminDrivers() {
@@ -318,7 +317,11 @@ const searchInputRef = useRef(null);
 
   // Handle quick filter click
   const handleQuickFilter = useCallback((key) => {
-    setActiveQuickFilter(prev => prev === key ? null : key);
+    if (key === 'all') {
+      setActiveQuickFilter(null);
+    } else {
+      setActiveQuickFilter(prev => prev === key ? null : key);
+    }
     setPagination(prev => ({ ...prev, page: 1 }));
   }, []);
 
@@ -343,16 +346,17 @@ const searchInputRef = useRef(null);
   }, [fetchDrivers, fetchStats]);
 
   // KPI data
+  const noVehicleCount = useMemo(() => drivers.filter(d => !d.currentVehicle && !d.transportVehicles?.length).length, [drivers]);
+
   const kpis = useMemo(() => {
     if (!stats) return [];
     return [
       { key: 'total', title: 'Total Drivers', value: stats.total ?? 0, sub: 'Registered', accent: 'amber', loading: false },
-      { key: 'available', title: 'Available Drivers', value: stats.available ?? 0, sub: 'Ready for dispatch', accent: 'green', loading: false },
-      { key: 'onTrip', title: 'Drivers on Trip', value: stats.onTrip ?? 0, sub: 'Currently active', accent: 'sky', loading: false },
-      { key: 'inactive', title: 'Inactive Drivers', value: stats.inactive ?? 0, sub: 'Not available', accent: 'purple', loading: false },
-      { key: 'todaysTrips', title: "Today's Trips", value: stats.todaysTrips ?? 0, sub: 'Started today', accent: 'amber', loading: false },
+      { key: 'available', title: 'Available', value: stats.available ?? 0, sub: 'Ready for dispatch', accent: 'green', loading: false },
+      { key: 'onTrip', title: 'On Trip', value: stats.onTrip ?? 0, sub: 'Currently active', accent: 'sky', loading: false },
+      { key: 'noVehicle', title: 'No Vehicle', value: noVehicleCount, sub: 'Needs assignment', accent: 'slate', loading: false },
     ];
-  }, [stats]);
+  }, [stats, noVehicleCount]);
 
   // Table columns
   const columns = useMemo(() => [
@@ -364,18 +368,18 @@ const searchInputRef = useRef(null);
         return (
           <div className="flex items-center gap-3 cursor-pointer" onClick={() => navigate(`/admin/drivers/${r.driver_id}`)}>
             {/* Avatar with initials */}
-            <div className="h-11 w-11 rounded-full bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center text-white font-bold text-xs shrink-0 shadow-sm">
+            <div className="h-10 w-10 rounded-full bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center text-white font-bold text-xs shrink-0 shadow-sm">
               {initials}
             </div>
             {/* Driver info - hierarchical: name > code > phone */}
             <div className="min-w-0">
-              <div className="text-base font-bold text-text truncate max-w-[200px] leading-tight group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors">
+              <div className="text-sm font-bold text-text truncate max-w-[180px] leading-tight">
                 <HighlightText text={r.driver_name || 'Unknown'} highlight={debouncedSearch} />
               </div>
-              <div className="font-mono text-[11px] text-amber-600 dark:text-amber-400 font-semibold mt-0.5">
+              <div className="font-mono text-[10px] text-amber-600 dark:text-amber-400 font-semibold mt-0.5">
                 <HighlightText text={r.driver_code || `DRV${String(r.driver_id).padStart(6, '0')}`} highlight={debouncedSearch} />
               </div>
-              <div className="text-[11px] text-muted mt-0.5 flex items-center gap-1">
+              <div className="text-[10px] text-muted mt-0.5 flex items-center gap-1">
                 <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
                 </svg>
@@ -387,56 +391,55 @@ const searchInputRef = useRef(null);
       }
     },
     {
+      key: 'transport_owner',
+      header: 'Transport Owner',
+      render: (r) => {
+        const owner = r.transportOwner;
+        if (!owner) {
+          return <span className="text-xs text-muted">—</span>;
+        }
+        return (
+          <button
+            onClick={() => navigate(`/admin/vehicle-owners/${owner.owner_id}`)}
+            className="text-left text-sm hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
+          >
+            <div className="font-medium text-text">{owner.owner_name}</div>
+            {owner.company_name && <div className="text-[10px] text-muted">{owner.company_name}</div>}
+          </button>
+        );
+      }
+    },
+    {
+      key: 'vehicle',
+      header: 'Vehicle',
+      render: (r) => {
+        const vehicle = r.transportVehicles?.[0] || r.currentVehicle;
+        if (vehicle) {
+          return (
+            <button
+              onClick={() => navigate(`/admin/vehicles/${vehicle.vehicle_id}`)}
+              className="text-left text-sm hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
+            >
+              <div className="font-mono font-semibold text-text">{vehicle.vehicle_number}</div>
+              <div className="text-[10px] text-muted">{vehicle.vehicle_name || vehicle.vehicle_type || ''}</div>
+            </button>
+          );
+        }
+        return (
+          <button
+            onClick={() => { setSelectedDriver(r); setShowVehicleAssignModal(true); }}
+            className="text-xs font-medium text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 transition-colors"
+          >
+            + Assign Vehicle
+          </button>
+        );
+      }
+    },
+    {
       key: 'status',
       header: 'Status',
       sortable: true,
       render: (r) => <DriverStatusBadge status={r.status} size="sm" showIcon={true} />
-    },
-{
-      key: 'vehicle_type',
-      header: 'Vehicle Type',
-      render: (r) => (
-        <div className="text-sm">
-          <div className="font-medium">{r.vehicle_type || '—'}</div>
-        </div>
-      )
-    },
-    {
-      key: 'vehicle_number',
-      header: 'Vehicle Number',
-      render: (r) => {
-        const raw = r.vehicle_number || r.transportVehicles?.[0]?.vehicle_number || '';
-        return (
-          <div className="text-sm">
-            {raw ? (
-              <div className="font-mono font-semibold text-amber-600 dark:text-amber-400">
-                <HighlightText text={raw} highlight={debouncedSearch} />
-              </div>
-            ) : (
-              <span className="text-muted text-xs">—</span>
-            )}
-          </div>
-        );
-      }
-    },
-    {
-      key: 'assigned_vehicle',
-      header: 'Assigned Vehicle',
-      render: (r) => {
-        const vehicle = r.transportVehicles?.[0];
-        return (
-          <div className="text-sm">
-            {vehicle ? (
-              <div>
-                <div className="font-medium font-mono">{vehicle.vehicle_number}</div>
-                <div className="text-[10px] text-muted">{vehicle.vehicle_name || vehicle.vehicle_type || ''}</div>
-              </div>
-            ) : (
-              <span className="text-muted text-xs">Not assigned</span>
-            )}
-          </div>
-        );
-      }
     },
     {
       key: 'total_deliveries',
@@ -547,6 +550,7 @@ const searchInputRef = useRef(null);
   // Mobile card view
   const renderMobileCard = useCallback((driver) => {
     const vehicle = driver.transportVehicles?.[0];
+    const owner = driver.transportOwner;
     return (
       <div
         key={driver.driver_id}
@@ -554,7 +558,7 @@ const searchInputRef = useRef(null);
         onClick={() => navigate(`/admin/drivers/${driver.driver_id}`)}
       >
         <div className="flex items-center justify-between">
-<div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2.5">
             <div className="h-9 w-9 rounded-full bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center text-white font-bold text-xs shrink-0">
               {getInitials(driver.driver_name)}
             </div>
@@ -565,22 +569,24 @@ const searchInputRef = useRef(null);
           </div>
           <DriverStatusBadge status={driver.status} size="sm" />
         </div>
-<div className="grid grid-cols-2 gap-2 text-sm">
+        <div className="grid grid-cols-2 gap-2 text-sm">
           <div>
-            <span className="text-muted text-xs">Mobile</span>
-            <div className="font-medium">{driver.mobile || '—'}</div>
+            <span className="text-muted text-xs">Transport Owner</span>
+            <div className="font-medium">{owner ? owner.owner_name : '—'}</div>
           </div>
           <div>
-            <span className="text-muted text-xs">City</span>
-            <div className="font-medium">{driver.city || '—'}</div>
+            <span className="text-muted text-xs">Vehicle</span>
+            <div className="font-medium">
+              {vehicle ? (
+                <span>{vehicle.vehicle_number} {vehicle.vehicle_type ? <span className="text-muted">({vehicle.vehicle_type})</span> : ''}</span>
+              ) : (
+                <span className="text-muted">Not assigned</span>
+              )}
+            </div>
           </div>
           <div>
-            <span className="text-muted text-xs">Vehicle Type</span>
-            <div className="font-medium">{driver.vehicle_type || '—'}</div>
-          </div>
-          <div>
-            <span className="text-muted text-xs">Vehicle No.</span>
-            <div className="font-medium font-mono">{driver.vehicle_number || vehicle?.vehicle_number || '—'}</div>
+            <span className="text-muted text-xs">Today's Trips</span>
+            <div className="font-medium">{driver.total_deliveries || 0} trips</div>
           </div>
         </div>
       </div>
@@ -632,7 +638,7 @@ const searchInputRef = useRef(null);
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
             </svg>
-            Register Driver
+            + Add Driver
           </button>
         </div>
 
@@ -659,7 +665,7 @@ const searchInputRef = useRef(null);
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-placeholder="Search by name, driver code, mobile, vehicle number, city..."
+              placeholder="Search driver, mobile, licence, vehicle..."
               className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-border/60 bg-card/40 backdrop-blur-xl text-sm font-medium placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500/50 transition-all"
               aria-label="Search drivers"
             />
@@ -685,23 +691,24 @@ placeholder="Search by name, driver code, mobile, vehicle number, city..."
           </div>
 
           {/* Quick Filter Buttons */}
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {QUICK_FILTERS.map((qf) => {
               const isActive = activeQuickFilter === qf.key;
+              const isAll = qf.key === 'all';
               const colorMap = {
                 emerald: isActive ? 'bg-emerald-500 text-white border-emerald-500' : 'border-emerald-500/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10',
                 blue: isActive ? 'bg-blue-500 text-white border-blue-500' : 'border-blue-500/30 text-blue-600 dark:text-blue-400 hover:bg-blue-500/10',
                 gray: isActive ? 'bg-gray-500 text-white border-gray-500' : 'border-gray-500/30 text-gray-600 dark:text-gray-400 hover:bg-gray-500/10',
-                amber: isActive ? 'bg-amber-500 text-white border-amber-500' : 'border-amber-500/30 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10',
                 slate: isActive ? 'bg-slate-500 text-white border-slate-500' : 'border-slate-500/30 text-slate-600 dark:text-slate-400 hover:bg-slate-500/10',
-                violet: isActive ? 'bg-violet-500 text-white border-violet-500' : 'border-violet-500/30 text-violet-600 dark:text-violet-400 hover:bg-violet-500/10',
-                sky: isActive ? 'bg-sky-500 text-white border-sky-500' : 'border-sky-500/30 text-sky-600 dark:text-sky-400 hover:bg-sky-500/10',
               };
+              const baseClass = isAll
+                ? (isActive ? 'bg-text text-white border-text' : 'border-border/60 text-muted hover:text-text hover:bg-hover/60')
+                : colorMap[qf.color] || 'border-border/60 text-muted hover:text-text hover:bg-hover/60';
               return (
                 <button
                   key={qf.key}
                   onClick={() => handleQuickFilter(qf.key)}
-                  className={`px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all ${colorMap[qf.color]}`}
+                  className={`px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all ${baseClass}`}
                   aria-pressed={isActive}
                 >
                   {qf.label}
@@ -713,8 +720,6 @@ placeholder="Search by name, driver code, mobile, vehicle number, city..."
 
         {/* Filters */}
         <DriverFilters
-          search={search}
-          onSearchChange={setSearch}
           status={statusFilter}
           onStatusChange={setStatusFilter}
           availability={availabilityFilter}
@@ -814,7 +819,7 @@ placeholder="Search by name, driver code, mobile, vehicle number, city..."
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
                     </svg>
-                    Register First Driver
+                    + Add Driver
                   </button>
                 )}
               </>

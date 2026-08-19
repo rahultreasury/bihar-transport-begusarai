@@ -14,6 +14,7 @@ const asyncHandler = require('../middleware/asyncHandler');
 const BookingService = require('../services/BookingService');
 const BookingAssignmentService = require('../services/BookingAssignmentService');
 const DriverManagementService = require('../services/DriverManagementService');
+const TripFinancialService = require('../services/TripFinancialService');
 const { validateRequest } = require('../middleware/validateRequest');
 const { logger } = require('../utils/logger');
 
@@ -29,6 +30,7 @@ function createAdminBookingController(deps = {}) {
   const bookingService = deps.bookingService || new BookingService();
   const assignmentService = deps.assignmentService || new BookingAssignmentService();
   const driverService = deps.driverService || new DriverManagementService();
+  const tripFinancialService = deps.tripFinancialService || new TripFinancialService();
 
   /**
    * GET /api/admin/booking-drivers
@@ -151,9 +153,20 @@ function createAdminBookingController(deps = {}) {
       return res.status(404).json({ success: false, message: 'Booking not found' });
     }
 
+    const bookingData = booking[0];
+
+    // Include trip financial data for admin
+    try {
+      const financialSummary = await tripFinancialService.getTripFinancialSummary(bookingId, 'ADMIN', req.user);
+      bookingData.financial = financialSummary;
+    } catch (err) {
+      // Financial data may not exist yet for new bookings
+      bookingData.financial = null;
+    }
+
     return res.json({
       success: true,
-      data: booking[0],
+      data: bookingData,
     });
   });
 

@@ -12,6 +12,7 @@ const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: '▦' },
   { key: 'bookings', label: 'Bookings', icon: '⟐' },
   { key: 'owners', label: 'Transport Owners', icon: '⧉' },
+  { key: 'vehicles', label: 'Vehicles', icon: '🚛' },
   { key: 'drivers', label: 'Drivers', icon: '⌁' },
   { key: 'settlements', label: 'Settlements', icon: '📊' },
   { key: 'analytics', label: 'Analytics', icon: '◷' },

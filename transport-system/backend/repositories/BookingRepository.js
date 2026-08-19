@@ -55,6 +55,24 @@ const BookingInclude = {
       current_status: true,
     },
   },
+  partner: {
+    select: {
+      partner_id: true,
+      partner_code: true,
+      partner_name: true,
+      owner_name: true,
+      mobile: true,
+    },
+  },
+  vehicleOwner: {
+    select: {
+      owner_id: true,
+      owner_code: true,
+      owner_name: true,
+      company_name: true,
+      mobile: true,
+    },
+  },
   delivery: {
     select: {
       current_status: true,
@@ -336,6 +354,9 @@ class BookingRepository {
     }
     if (filters.driver_id) {
       where.driver_id = Number(filters.driver_id);
+    }
+    if (filters.vehicle_id) {
+      where.vehicle_id = Number(filters.vehicle_id);
     }
     if (filters.goods_type) {
       where.goods_type = { contains: String(filters.goods_type), mode: 'insensitive' };

@@ -392,7 +392,7 @@ function BookTransport() {
     setLoading(true);
 
     try {
-      const response = await bookingAPI.create(submitData);
+      const response = await bookingAPI.createAuthenticated(submitData);
       
       if (response.data.success) {
         const bookingRef = response.data.data.booking_reference;

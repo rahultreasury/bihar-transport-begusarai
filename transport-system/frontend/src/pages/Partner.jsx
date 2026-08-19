@@ -1,75 +1,112 @@
-/**
- * Partner — Become a Transport Partner with Bihar Transport
- * Production-ready landing page with SEO
- */
 import { Link } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Truck, Building2, ArrowRight, CheckCircle2, Phone, Shield, TrendingUp, HeadphonesIcon } from 'lucide-react';
 import SEO from '../components/seo/SEO';
+
+const heroBenefits = [
+  {
+    icon: Shield,
+    title: 'Verified Loads',
+    description: 'Regular & genuine transport opportunities',
+  },
+  {
+    icon: TrendingUp,
+    title: 'Better Earnings',
+    description: 'Higher margins on every booking',
+  },
+  {
+    icon: HeadphonesIcon,
+    title: 'Dedicated Support',
+    description: 'Help & guidance at every step',
+  },
+  {
+    icon: Truck,
+    title: 'Business Growth',
+    description: 'Expand your fleet and grow faster',
+  },
+];
 
 const benefits = [
   {
-    title: 'Regular Loads',
-    description: 'Get consistent business with regular transport orders from our wide customer base across India.',
-    icon: (
-      <svg className="w-8 h-8 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
-      </svg>
-    ),
+    number: '01',
+    title: 'More Trip Opportunities',
+    description: 'Connect your vehicles with verified transport opportunities across Bihar and beyond.',
   },
   {
-    title: 'Timely Payments',
-    description: 'Get paid on time, every time. Transparent payment cycles with no delays or hidden deductions.',
-    icon: (
-      <svg className="w-8 h-8 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-      </svg>
-    ),
+    number: '02',
+    title: 'Fleet & Driver Management',
+    description: 'Manage your fleet, drivers, and schedules through a single professional platform.',
   },
   {
-    title: 'Pan India Network',
-    description: 'Access routes across all 28 states. Expand your business reach with our established network.',
-    icon: (
-      <svg className="w-8 h-8 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-      </svg>
-    ),
+    number: '03',
+    title: 'Transparent Tracking',
+    description: 'Track every trip in real time with clear visibility and accountability.',
   },
   {
-    title: 'GPS-Enabled Platform',
-    description: 'Track all your trips digitally. Our platform gives you and your customers complete visibility.',
-    icon: (
-      <svg className="w-8 h-8 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
-      </svg>
-    ),
-  },
-  {
-    title: 'Dedicated Support',
-    description: 'Get priority support from our partner relations team. We help you resolve issues quickly.',
-    icon: (
-      <svg className="w-8 h-8 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M18.364 5.636l-3.536 3.536m0 5.656l3.536 3.536M9.172 9.172L5.636 5.636m3.536 9.192l-3.536 3.536M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-5 0a4 4 0 11-8 0 4 4 0 018 0z" />
-      </svg>
-    ),
-  },
-  {
-    title: 'Digital Documentation',
-    description: 'Paperless onboarding and trip management. All documents managed digitally for your convenience.',
-    icon: (
-      <svg className="w-8 h-8 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-      </svg>
-    ),
+    number: '04',
+    title: 'Simple Settlement',
+    description: 'Receive timely, transparent settlements with full financial clarity.',
   },
 ];
 
-const requirements = [
-  { label: 'Vehicle Type', value: 'Pickup, Mini Truck, Truck, Trailer' },
-  { label: 'Vehicle Age', value: 'Less than 10 years old' },
-  { label: 'Documentation', value: 'RC, Insurance, Pollution, Driving License' },
-  { label: 'GPS Tracking', value: 'Active GPS device required' },
-  { label: 'PAN Card', value: 'Mandatory for payment processing' },
-  { label: 'Bank Account', value: 'Valid current account for settlements' },
+const steps = [
+  {
+    number: '01',
+    title: 'Register',
+    description: 'Submit your details and vehicle or fleet information online.',
+  },
+  {
+    number: '02',
+    title: 'Verify',
+    description: 'Our team reviews your documents and completes verification.',
+  },
+  {
+    number: '03',
+    title: 'Add Vehicles',
+    description: 'List your vehicles with registration and insurance details.',
+  },
+  {
+    number: '04',
+    title: 'Connect Drivers',
+    description: 'Add licensed drivers with valid documentation.',
+  },
+  {
+    number: '05',
+    title: 'Start Receiving Trips',
+    description: 'Get matched with transport opportunities and start earning.',
+  },
 ];
+
+// Intersection Observer hook for scroll-triggered animations
+function useInView(options = {}) {
+  const ref = useRef(null);
+  const [isInView, setIsInView] = useState(false);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setIsInView(true);
+          observer.unobserve(entry.target);
+        }
+      },
+      { threshold: 0.1, ...options }
+    );
+
+    const currentRef = ref.current;
+    if (currentRef) {
+      observer.observe(currentRef);
+    }
+
+    return () => {
+      if (currentRef) {
+        observer.unobserve(currentRef);
+      }
+    };
+  }, []);
+
+  return [ref, isInView];
+}
 
 export default function Partner() {
   const breadcrumbSchema = {
@@ -85,223 +122,369 @@ export default function Partner() {
     '@context': 'https://schema.org',
     '@type': 'Organization',
     name: 'Bihar Transport Partner Program',
-    description: 'Join Bihar Transport as a transport partner and get regular loads, timely payments, and dedicated support.',
+    description: 'Join Bihar Transport as a transport partner and grow your business with more transportation opportunities.',
     url: 'https://bihartransport.in/partner',
   };
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    const formData = new FormData(e.target);
-    const data = {
-      name: formData.get('name'),
-      phone: formData.get('phone'),
-      city: formData.get('city'),
-      vehicleType: formData.get('vehicleType'),
-    };
-    // Encode as mailto or handle via backend
-    window.location.href = `mailto:partner@bihartransport.com?subject=Partner%20Enquiry%20-%20${encodeURIComponent(data.name)}&body=Name:%20${encodeURIComponent(data.name)}%0APhone:%20${encodeURIComponent(data.phone)}%0ACity:%20${encodeURIComponent(data.city)}%0AVehicle%20Type:%20${encodeURIComponent(data.vehicleType)}`;
-  };
+  const [heroRef, heroInView] = useInView();
+  const [benefitStripRef, benefitStripInView] = useInView();
+  const [cardsRef, cardsInView] = useInView();
+  const [whyRef, whyInView] = useInView();
+  const [stepsRef, stepsInView] = useInView();
+  const [reqRef, reqInView] = useInView();
+  const [ctaRef, ctaInView] = useInView();
 
   return (
     <>
       <SEO
-        title="Become a Transport Partner"
-        description="Partner with Bihar Transport and get regular loads, timely payments, and dedicated support. Join India's growing transport network across 28 states."
-        keywords="transport partner, truck partner, logistics partner, vehicle owner partner, Bihar Transport partner"
+        title="Become a Bihar Transport Partner"
+        description="Join the Bihar Transport network and connect your vehicles with more transportation opportunities. Choose Vehicle Owner or Transport Owner partnership."
+        keywords="transport partner, vehicle owner, transport owner, Bihar Transport partner, logistics partner"
         canonical="https://bihartransport.in/partner"
         schema={[breadcrumbSchema, partnerSchema]}
       />
 
-      <div className="min-h-screen bg-gray-50">
-        {/* Hero */}
-        <section className="hero-gradient py-20">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="text-center max-w-3xl mx-auto">
-              <h1 className="text-4xl md:text-5xl font-bold text-white mb-6">
-                Become a Transport Partner
-              </h1>
-              <p className="text-blue-100 text-lg md:text-xl mb-8">
-                Join India's fastest-growing transport network. Get regular loads, 
-                timely payments, and a dedicated partner support team.
-              </p>
-              <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                <a
-                  href="#partner-form"
-                  className="bg-amber-500 text-white px-8 py-3 rounded-lg font-semibold hover:bg-amber-600 transition-colors inline-flex items-center justify-center"
-                >
-                  Apply Now
-                </a>
-                <a
-                  href="tel:+918210931799"
-                  className="border-2 border-white/40 text-white px-8 py-3 rounded-lg font-semibold hover:bg-white/10 transition-colors inline-flex items-center justify-center"
-                >
-                  Call +91 82109 31799
-                </a>
+      <div className="min-h-screen bg-white">
+        {/* ============================================
+            HERO SECTION
+            ============================================ */}
+        <section ref={heroRef} className="relative bg-white">
+          {/* Subtle premium accent line */}
+          <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[#C8922E]/40 to-transparent" />
+
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 md:pt-10 lg:pt-10 pb-8 md:pb-10 lg:pb-12">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-10 items-center">
+              {/* Left: Text Content */}
+              <div className={`transition-all duration-700 ${heroInView ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
+                {/* Eyebrow */}
+                <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#EEF4FA] border border-[#0B1F3A]/10 mb-5">
+                  <span className="text-xs font-bold text-[#0B1F3A] uppercase tracking-widest">Partner with Bihar Transport</span>
+                </div>
+
+                {/* Headline with emphasized words */}
+                <h1 className="text-4xl md:text-5xl lg:text-[56px] xl:text-[62px] font-extrabold text-[#111827] tracking-tight mb-4 leading-[1.05]">
+                  Grow Your<br />
+                  Transport Business<br />
+                  With a{' '}
+                  <span className="text-[#E84A16]">Trusted</span>{' '}
+                  <span className="text-[#E84A16]">Network</span>
+                </h1>
+
+                {/* Supporting text */}
+                <p className="text-lg md:text-xl text-[#64748B] mb-6 leading-relaxed max-w-xl">
+                  Join hands with Bihar Transport and unlock verified opportunities, expand your reach and grow your business across India.
+                </p>
+
+                {/* CTAs */}
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <Link
+                    to="/partner/vehicle-owner"
+                    className="group inline-flex items-center justify-center gap-2 bg-[#F59E0B] text-white px-7 py-3.5 rounded-lg font-semibold hover:bg-[#d97706] transition-all duration-300 shadow-lg shadow-[#F59E0B]/20 hover:shadow-xl hover:shadow-[#F59E0B]/30 hover:-translate-y-0.5"
+                  >
+                    Become a Partner
+                    <ArrowRight className="w-4 h-4 transition-transform duration-300 group-hover:translate-x-1" />
+                  </Link>
+                  <Link
+                    to="/contact"
+                    className="inline-flex items-center justify-center gap-2 bg-white border-2 border-[#E5E7EB] text-[#0B1F3A] px-7 py-3.5 rounded-lg font-semibold hover:border-[#0B1F3A]/20 hover:bg-[#F7F9FC] transition-all duration-300"
+                  >
+                    Talk to Our Team
+                  </Link>
+                </div>
+              </div>
+
+              {/* Right: Branded Transport Visual */}
+              <div className={`relative transition-all duration-700 delay-200 ${heroInView ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-6'}`}>
+                <div className="partner-hero-image-frame relative w-full max-w-[560px] aspect-square rounded-[24px] border border-[#E5E7EB]/60 overflow-hidden">
+                  <img
+                    src="/assets/partner-hero.jpg"
+                    alt="Bihar Transport - Stronger Partners, Stronger Deliveries"
+                    className="w-full h-full object-cover object-center"
+                    loading="eager"
+                  />
+                </div>
               </div>
             </div>
           </div>
         </section>
 
-        {/* Benefits */}
-        <section className="py-16">
+        {/* ============================================
+            BENEFIT STRIP UNDER HERO
+            ============================================ */}
+        <section ref={benefitStripRef} className="border-y border-[#E5E7EB] bg-[#F7F9FC]">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 md:py-8">
+            <div className={`grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-0 transition-all duration-700 ${benefitStripInView ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
+              {heroBenefits.map((benefit, index) => {
+                const Icon = benefit.icon;
+                return (
+                  <div key={benefit.title} className="flex items-start gap-3">
+                    <div className="flex-shrink-0 w-9 h-9 rounded-full bg-[#0B1F3A]/5 flex items-center justify-center">
+                      <Icon className="w-4 h-4 text-[#0B1F3A]" />
+                    </div>
+                    <div className="min-w-0">
+                      <h4 className="text-sm font-bold text-[#111827] mb-0.5">{benefit.title}</h4>
+                      <p className="text-xs text-[#64748B] leading-relaxed">{benefit.description}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+
+        {/* ============================================
+            CHOOSE PARTNERSHIP TYPE
+            ============================================ */}
+        <section ref={cardsRef} className="py-16 md:py-24 bg-white">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="text-center mb-12">
-              <h2 className="text-3xl font-bold text-gray-900 mb-4">
-                Why Partner With Us?
+            {/* Section Header */}
+            <div className={`text-center mb-10 md:mb-12 transition-all duration-700 ${cardsInView ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
+              <h2 className="text-3xl md:text-4xl lg:text-[42px] font-bold text-[#111827] mb-4 tracking-tight">
+                Choose How You Want to Partner
               </h2>
-              <p className="text-gray-600 max-w-2xl mx-auto">
-                We believe in building long-term partnerships. Here's what you get when you join Bihar Transport.
+              <p className="text-[#64748B] text-lg max-w-2xl mx-auto leading-relaxed">
+                Whether you operate a single vehicle or manage a fleet, choose the partnership that fits your business.
               </p>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-              {benefits.map((benefit, index) => (
-                <div
-                  key={index}
-                  className="bg-white rounded-xl p-6 shadow-sm hover:shadow-lg transition-all duration-300"
-                >
-                  <div className="w-14 h-14 bg-amber-50 rounded-lg flex items-center justify-center mb-4">
-                    {benefit.icon}
-                  </div>
-                  <h3 className="text-lg font-bold text-gray-900 mb-2">{benefit.title}</h3>
-                  <p className="text-gray-600 text-sm">{benefit.description}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
 
-        {/* Requirements */}
-        <section className="py-16 bg-white">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="text-center mb-12">
-              <h2 className="text-3xl font-bold text-gray-900 mb-4">
-                What You Need
-              </h2>
-              <p className="text-gray-600 max-w-2xl mx-auto">
-                Simple requirements to get started as a Bihar Transport partner.
-              </p>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {requirements.map((req, index) => (
-                <div
-                  key={index}
-                  className="border border-gray-200 rounded-lg p-5 hover:border-amber-300 transition-colors"
-                >
-                  <h3 className="font-semibold text-gray-900 mb-1">{req.label}</h3>
-                  <p className="text-gray-600 text-sm">{req.value}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* Partner Form */}
-        <section id="partner-form" className="py-16">
-          <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="bg-white rounded-2xl shadow-sm p-8">
-              <h2 className="text-2xl font-bold text-gray-900 mb-2 text-center">
-                Apply to Become a Partner
-              </h2>
-              <p className="text-gray-600 text-center mb-8">
-                Fill out the form below and our team will get back to you within 24 hours.
-              </p>
-              <form onSubmit={handleSubmit} className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-1">
-                      Full Name *
-                    </label>
-                    <input
-                      type="text"
-                      id="name"
-                      name="name"
-                      required
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-colors"
-                      placeholder="Your full name"
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-1">
-                      Phone Number *
-                    </label>
-                    <input
-                      type="tel"
-                      id="phone"
-                      name="phone"
-                      required
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-colors"
-                      placeholder="+91 98765 43210"
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="city" className="block text-sm font-medium text-gray-700 mb-1">
-                      City / Base Location *
-                    </label>
-                    <input
-                      type="text"
-                      id="city"
-                      name="city"
-                      required
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-colors"
-                      placeholder="e.g., Patna, Delhi"
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="vehicleType" className="block text-sm font-medium text-gray-700 mb-1">
-                      Vehicle Type *
-                    </label>
-                    <select
-                      id="vehicleType"
-                      name="vehicleType"
-                      required
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-colors bg-white"
-                    >
-                      <option value="">Select vehicle type</option>
-                      <option value="pickup">Pickup</option>
-                      <option value="mini-truck">Mini Truck</option>
-                      <option value="truck">Truck (FTL)</option>
-                      <option value="trailer">Trailer</option>
-                      <option value="container">Container</option>
-                    </select>
-                  </div>
-                </div>
-                <button
-                  type="submit"
-                  className="w-full bg-amber-500 text-white py-3 rounded-lg font-semibold hover:bg-amber-600 transition-colors"
-                >
-                  Submit Application
-                </button>
-                <p className="text-xs text-gray-400 text-center">
-                  By submitting, you agree to our terms and privacy policy. We'll contact you within 24 hours.
-                </p>
-              </form>
-            </div>
-          </div>
-        </section>
-
-        {/* CTA */}
-        <section className="py-16 bg-gradient-to-br from-amber-50 to-yellow-50">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-            <h2 className="text-3xl font-bold text-gray-900 mb-4">
-              Ready to Grow Your Business?
-            </h2>
-            <p className="text-gray-600 mb-8 max-w-2xl mx-auto">
-              Join hundreds of transport partners across India who trust Bihar Transport 
-              for regular business and timely payments.
-            </p>
-            <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <a
-                href="#partner-form"
-                className="btn-primary inline-flex items-center justify-center"
-              >
-                Apply Now
-              </a>
+            {/* Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8 max-w-5xl mx-auto">
+              {/* Vehicle Owner Card */}
               <Link
-                to="/contact"
-                className="btn-outline inline-flex items-center justify-center"
+                to="/partner/vehicle-owner"
+                className={`group relative bg-white rounded-[20px] border border-[#E5E7EB] shadow-sm hover:shadow-md hover:shadow-[#0B1F3A]/5 hover:-translate-y-1 transition-all duration-300 p-8 md:p-10 flex flex-col ${cardsInView ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}
+                style={{ transitionDelay: '100ms' }}
               >
-                Talk to Our Team
+                <div className="flex-shrink-0 w-12 h-12 bg-[#0B1F3A]/5 rounded-xl flex items-center justify-center mb-5 group-hover:bg-[#F59E0B]/10 transition-all duration-300">
+                  <Truck className="w-6 h-6 text-[#0B1F3A] group-hover:text-[#F59E0B] transition-colors duration-300" />
+                </div>
+                <h3 className="text-xl md:text-2xl font-bold text-[#0F2747] mb-1">Vehicle Owner</h3>
+                <p className="text-[#64748B] text-sm font-medium mb-3">Have a vehicle? Start earning.</p>
+                <p className="text-[#64748B] text-base leading-relaxed mb-6 flex-grow">
+                  Connect your vehicle with verified transport opportunities and keep it working.
+                </p>
+                <div className="inline-flex items-center gap-2 text-[#F59E0B] font-semibold text-sm group-hover:gap-3 transition-all duration-300">
+                  Register as Vehicle Owner
+                  <ArrowRight className="w-4 h-4 transition-transform duration-300 group-hover:translate-x-1" />
+                </div>
               </Link>
+
+              {/* Transport Owner Card */}
+              <Link
+                to="/partner/transport-owner"
+                className={`group relative bg-white rounded-[20px] border border-[#E5E7EB] shadow-sm hover:shadow-md hover:shadow-[#0B1F3A]/5 hover:-translate-y-1 transition-all duration-300 p-8 md:p-10 flex flex-col ${cardsInView ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}
+                style={{ transitionDelay: '200ms' }}
+              >
+                {/* Recommended badge */}
+                <div className="absolute top-4 right-4">
+                  <span className="inline-flex items-center px-3 py-1 rounded-full bg-[#F59E0B]/10 border border-[#F59E0B]/20 text-[#F59E0B] text-xs font-bold uppercase tracking-wider">
+                    Recommended
+                  </span>
+                </div>
+                <div className="flex-shrink-0 w-12 h-12 bg-[#0B1F3A]/5 rounded-xl flex items-center justify-center mb-5 group-hover:bg-[#F59E0B]/10 transition-all duration-300">
+                  <Building2 className="w-6 h-6 text-[#0B1F3A] group-hover:text-[#F59E0B] transition-colors duration-300" />
+                </div>
+                <h3 className="text-xl md:text-2xl font-bold text-[#0F2747] mb-1">Transport Owner</h3>
+                <p className="text-[#64748B] text-sm font-medium mb-3">Manage your fleet. Grow your business.</p>
+                <p className="text-[#64748B] text-base leading-relaxed mb-4 flex-grow">
+                  Manage vehicles, drivers and transport opportunities through Bihar Transport.
+                </p>
+                {/* Visual relationship hint */}
+                <div className="flex items-center gap-2 mb-5 text-xs text-[#64748B]">
+                  <span className="font-semibold text-[#0F2747]">Transport Owner</span>
+                  <svg className="w-4 h-4 text-[#F59E0B]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                  </svg>
+                  <span className="font-semibold text-[#0F2747]">Vehicles + Drivers</span>
+                </div>
+                <div className="inline-flex items-center gap-2 text-[#F59E0B] font-semibold text-sm group-hover:gap-3 transition-all duration-300">
+                  Register as Transport Owner
+                  <ArrowRight className="w-4 h-4 transition-transform duration-300 group-hover:translate-x-1" />
+                </div>
+              </Link>
+            </div>
+          </div>
+        </section>
+
+        {/* ============================================
+            WHY BIHAR TRANSPORT
+            ============================================ */}
+        <section ref={whyRef} className="py-20 md:py-28 bg-[#0B1F3A] relative">
+          {/* Subtle gold accent line at top */}
+          <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[#C8922E]/50 to-transparent" />
+
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className={`text-center mb-14 md:mb-20 transition-all duration-700 ${whyInView ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
+              <h2 className="text-3xl md:text-4xl lg:text-[42px] font-bold text-white mb-4 tracking-tight">
+                Why Transport Owners Choose Bihar Transport
+              </h2>
+              <p className="text-[#9CA3AF] text-lg max-w-2xl mx-auto leading-relaxed">
+                A professional logistics network built for reliability, transparency, and growth.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8 max-w-6xl mx-auto">
+              {benefits.map((benefit) => (
+                <div
+                  key={benefit.number}
+                  className={`transition-all duration-700 ${whyInView ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}
+                  style={{ transitionDelay: `${parseInt(benefit.number) * 100}ms` }}
+                >
+                  <div className="text-4xl font-bold text-[#C8922E] mb-4">{benefit.number}</div>
+                  <h3 className="text-lg font-bold text-white mb-2">{benefit.title}</h3>
+                  <p className="text-[#9CA3AF] text-base leading-relaxed">{benefit.description}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ============================================
+            HOW PARTNERSHIP WORKS
+            ============================================ */}
+        <section ref={stepsRef} className="py-20 md:py-28 bg-[#F8F7F3]">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className={`text-center mb-14 md:mb-20 transition-all duration-700 ${stepsInView ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
+              <h2 className="text-3xl md:text-4xl lg:text-[42px] font-bold text-[#111827] mb-4 tracking-tight">
+                How Partnership Works
+              </h2>
+              <p className="text-[#64748B] text-lg max-w-2xl mx-auto leading-relaxed">
+                A straightforward process to get your fleet connected and earning.
+              </p>
+            </div>
+
+            <div className="max-w-5xl mx-auto">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-8 lg:gap-0 lg:relative">
+                {/* Connecting line (desktop only) */}
+                <div className="hidden lg:block absolute top-5 left-[10%] right-[10%] h-px bg-[#0B1F3A]/15" />
+
+                {steps.map((step, index) => (
+                  <div key={step.number} className="text-center relative">
+                    <div className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-white border-2 border-[#0B1F3A]/20 text-[#0B1F3A] font-bold text-sm mb-5 relative z-10">
+                      {step.number}
+                    </div>
+                    <h3 className="text-base font-bold text-[#111827] mb-2">{step.title}</h3>
+                    <p className="text-[#64748B] text-sm leading-relaxed max-w-[200px] mx-auto">{step.description}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ============================================
+            PROFESSIONAL REQUIREMENTS
+            ============================================ */}
+        <section ref={reqRef} className="py-20 md:py-28 bg-white relative">
+          {/* Subtle gold accent line at top */}
+          <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[#C8922E]/30 to-transparent" />
+
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className={`text-center mb-14 md:mb-20 transition-all duration-700 ${reqInView ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
+              <h2 className="text-3xl md:text-4xl lg:text-[42px] font-bold text-[#111827] mb-4 tracking-tight">
+                What You Need to Get Started
+              </h2>
+              <p className="text-[#64748B] text-lg max-w-2xl mx-auto leading-relaxed">
+                Prepare the following documents and information for a smooth onboarding process.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-10 max-w-5xl mx-auto">
+              {/* Vehicle Owner Requirements */}
+              <div className={`bg-[#F8F7F3] rounded-lg p-8 md:p-10 transition-all duration-700 ${reqInView ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`} style={{ transitionDelay: '100ms' }}>
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-10 h-10 bg-[#0B1F3A]/5 rounded-lg flex items-center justify-center">
+                    <Truck className="w-5 h-5 text-[#0B1F3A]" />
+                  </div>
+                  <h3 className="text-xl font-bold text-[#111827]">Vehicle Owner</h3>
+                </div>
+                <ul className="space-y-3">
+                  <li className="flex items-start gap-3 text-[#64748B] text-base">
+                    <CheckCircle2 className="w-5 h-5 text-[#F59E0B] mt-0.5 flex-shrink-0" />
+                    Owner information and contact details
+                  </li>
+                  <li className="flex items-start gap-3 text-[#64748B] text-base">
+                    <CheckCircle2 className="w-5 h-5 text-[#F59E0B] mt-0.5 flex-shrink-0" />
+                    Vehicle registration details (RC)
+                  </li>
+                  <li className="flex items-start gap-3 text-[#64748B] text-base">
+                    <CheckCircle2 className="w-5 h-5 text-[#F59E0B] mt-0.5 flex-shrink-0" />
+                    Vehicle documents and fitness certificate
+                  </li>
+                  <li className="flex items-start gap-3 text-[#64748B] text-base">
+                    <CheckCircle2 className="w-5 h-5 text-[#F59E0B] mt-0.5 flex-shrink-0" />
+                    Insurance and permit details
+                  </li>
+                  <li className="flex items-start gap-3 text-[#64748B] text-base">
+                    <CheckCircle2 className="w-5 h-5 text-[#F59E0B] mt-0.5 flex-shrink-0" />
+                    Driver information and license details
+                  </li>
+                </ul>
+              </div>
+
+              {/* Transport Owner Requirements */}
+              <div className={`bg-[#F8F7F3] rounded-lg p-8 md:p-10 transition-all duration-700 ${reqInView ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`} style={{ transitionDelay: '200ms' }}>
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-10 h-10 bg-[#0B1F3A]/5 rounded-lg flex items-center justify-center">
+                    <Building2 className="w-5 h-5 text-[#0B1F3A]" />
+                  </div>
+                  <h3 className="text-xl font-bold text-[#111827]">Transport Owner</h3>
+                </div>
+                <ul className="space-y-3">
+                  <li className="flex items-start gap-3 text-[#64748B] text-base">
+                    <CheckCircle2 className="w-5 h-5 text-[#F59E0B] mt-0.5 flex-shrink-0" />
+                    Owner or business information
+                  </li>
+                  <li className="flex items-start gap-3 text-[#64748B] text-base">
+                    <CheckCircle2 className="w-5 h-5 text-[#F59E0B] mt-0.5 flex-shrink-0" />
+                    Fleet details and vehicle list
+                  </li>
+                  <li className="flex items-start gap-3 text-[#64748B] text-base">
+                    <CheckCircle2 className="w-5 h-5 text-[#F59E0B] mt-0.5 flex-shrink-0" />
+                    Vehicle documents for each vehicle
+                  </li>
+                  <li className="flex items-start gap-3 text-[#64748B] text-base">
+                    <CheckCircle2 className="w-5 h-5 text-[#F59E0B] mt-0.5 flex-shrink-0" />
+                    Driver information and valid licenses
+                  </li>
+                  <li className="flex items-start gap-3 text-[#64748B] text-base">
+                    <CheckCircle2 className="w-5 h-5 text-[#F59E0B] mt-0.5 flex-shrink-0" />
+                    Required verification documents
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ============================================
+            FINAL CTA
+            ============================================ */}
+        <section ref={ctaRef} className="py-20 md:py-28 bg-[#0B1F3A]">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+            <div className={`max-w-3xl mx-auto transition-all duration-700 ${ctaInView ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
+              <h2 className="text-3xl md:text-4xl lg:text-[42px] font-bold text-white mb-4 tracking-tight">
+                Ready to Put Your Fleet to Work?
+              </h2>
+              <p className="text-[#9CA3AF] text-lg mb-10 leading-relaxed">
+                Join Bihar Transport and connect your vehicles with new transport opportunities.
+              </p>
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+                <Link
+                  to="/partner/vehicle-owner"
+                  className="group inline-flex items-center justify-center gap-2 bg-[#F59E0B] text-white px-8 py-4 rounded-lg font-semibold hover:bg-[#d97706] transition-all duration-300 shadow-lg shadow-[#F59E0B]/20 hover:shadow-xl hover:shadow-[#F59E0B]/30 hover:-translate-y-0.5"
+                >
+                  Become a Partner
+                  <ArrowRight className="w-4 h-4 transition-transform duration-300 group-hover:translate-x-1" />
+                </Link>
+                <Link
+                  to="/contact"
+                  className="inline-flex items-center justify-center gap-2 border-2 border-white/20 text-white px-8 py-4 rounded-lg font-semibold hover:bg-white/5 hover:border-white/30 transition-all duration-300"
+                >
+                  <Phone className="w-4 h-4" />
+                  Contact Our Team
+                </Link>
+              </div>
             </div>
           </div>
         </section>
@@ -309,4 +492,3 @@ export default function Partner() {
     </>
   );
 }
-

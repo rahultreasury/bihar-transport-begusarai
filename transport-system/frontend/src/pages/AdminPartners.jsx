@@ -10,8 +10,10 @@ import { LoadingSkeleton } from '../components/admin-premium/ui/LoadingSkeleton'
 import OwnerRegisterModal from '../components/admin-premium/owners/OwnerRegisterModal';
 
 const NAV_ITEMS = [
-  { key: 'owners', label: 'Transport Owners', icon: '▦' },
+  { key: 'dashboard', label: 'Dashboard', icon: '▦' },
   { key: 'bookings', label: 'Bookings', icon: '⟐' },
+  { key: 'owners', label: 'Transport Owners', icon: '⧉' },
+  { key: 'vehicles', label: 'Vehicles', icon: '🚛' },
   { key: 'drivers', label: 'Drivers', icon: '⌁' },
   { key: 'analytics', label: 'Analytics', icon: '◷' },
   { key: 'reports', label: 'Reports', icon: '📊' },
@@ -101,12 +103,25 @@ export default function AdminPartners() {
   const [statusFilter, setStatusFilter] = useState('');
   const [sortField, setSortField] = useState('created_at');
   const [sortDirection, setSortDirection] = useState('desc');
-const [showRegisterModal, setShowRegisterModal] = useState(false);
+  const [showRegisterModal, setShowRegisterModal] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deletingOwner, setDeletingOwner] = useState(false);
   const [deleteOwnerError, setDeleteOwnerError] = useState(null);
   const [toast, setToast] = useState(null);
   const debouncedSearch = useDebounce(search, 300);
+
+  // Applications tab state
+  const [activeTab, setActiveTab] = useState('owners');
+  const [applications, setApplications] = useState([]);
+  const [applicationsLoading, setApplicationsLoading] = useState(false);
+  const [applicationsError, setApplicationsError] = useState(null);
+  const [applicationsPagination, setApplicationsPagination] = useState({ page: 1, limit: ITEMS_PER_PAGE, total: 0, pages: 0 });
+  const [appStatusFilter, setAppStatusFilter] = useState('pending');
+  const [appTypeFilter, setAppTypeFilter] = useState('all');
+  const [reviewTarget, setReviewTarget] = useState(null);
+  const [reviewAction, setReviewAction] = useState(null); // 'approve' | 'reject'
+  const [reviewNotes, setReviewNotes] = useState('');
+  const [reviewing, setReviewing] = useState(false);
 
   const showToast = useCallback((message, type = 'success') => {
     setToast({ message, type });
@@ -146,6 +161,62 @@ const [showRegisterModal, setShowRegisterModal] = useState(false);
 
   useEffect(() => { fetchPartners(1); fetchStats(); }, []);
   useEffect(() => { fetchPartners(1); }, [debouncedSearch, statusFilter, sortField, sortDirection]);
+
+  // Applications fetch
+  const fetchApplications = useCallback(async (page = 1) => {
+    setApplicationsLoading(true);
+    setApplicationsError(null);
+    try {
+      const params = {
+        page,
+        limit: ITEMS_PER_PAGE,
+        status: appStatusFilter !== 'all' ? appStatusFilter : undefined,
+        partnership_type: appTypeFilter !== 'all' ? appTypeFilter : undefined,
+      };
+      const response = await adminAPI.getPartnerApplications(params);
+      if (response.data?.success) {
+        setApplications(response.data.data || []);
+        if (response.data.pagination) setApplicationsPagination(response.data.pagination);
+      }
+    } catch (err) {
+      setApplicationsError(err.message || 'Failed to load applications');
+    } finally {
+      setApplicationsLoading(false);
+    }
+  }, [appStatusFilter, appTypeFilter]);
+
+  useEffect(() => {
+    if (activeTab === 'applications') {
+      fetchApplications(1);
+    }
+  }, [activeTab, appStatusFilter, appTypeFilter, fetchApplications]);
+
+  const handleApprove = useCallback(async () => {
+    if (!reviewTarget || !reviewAction) return;
+    setReviewing(true);
+    try {
+      const payload = reviewAction === 'approve'
+        ? { admin_notes: reviewNotes }
+        : { rejection_reason: reviewNotes };
+      const apiCall = reviewAction === 'approve'
+        ? adminAPI.approvePartnerApplication(reviewTarget.application_id, payload)
+        : adminAPI.rejectPartnerApplication(reviewTarget.application_id, payload);
+      const res = await apiCall;
+      if (res.data?.success) {
+        showToast(reviewAction === 'approve' ? 'Application approved' : 'Application rejected', 'success');
+        setReviewTarget(null);
+        setReviewAction(null);
+        setReviewNotes('');
+        fetchApplications(applicationsPagination.page);
+      } else {
+        showToast(res.data?.message || 'Action failed', 'error');
+      }
+    } catch (err) {
+      showToast(err.response?.data?.message || 'Server error', 'error');
+    } finally {
+      setReviewing(false);
+    }
+  }, [reviewTarget, reviewAction, reviewNotes, applicationsPagination.page, fetchApplications, showToast]);
 
   const handleDeactivate = useCallback(async (owner) => {
     const newStatus = owner.status === 'active' ? 'inactive' : 'active';
@@ -364,31 +435,57 @@ const [showRegisterModal, setShowRegisterModal] = useState(false);
       )}
 
       <div className="space-y-5">
-        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">Transport Owners</h1>
-            <p className="text-sm text-muted mt-1">
-              {pagination.total > 0 ? `${pagination.total} owner${pagination.total !== 1 ? 's' : ''} registered` : 'Manage all transport owners'}
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={() => navigate('/admin/settlements')}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border/60 text-sm font-semibold hover:bg-hover/60 transition"
-            >
-              Settlements
-            </button>
-            <button
-              onClick={() => setShowRegisterModal(true)}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition shadow-sm shadow-amber-500/20"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
-              </svg>
-              Register Owner
-            </button>
-          </div>
+        {/* Tabs */}
+        <div className="flex items-center gap-1 p-1 bg-[#1e3a5f]/5 rounded-xl w-fit">
+          <button
+            onClick={() => setActiveTab('owners')}
+            className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+              activeTab === 'owners'
+                ? 'bg-white text-[#0F2B55] shadow-sm'
+                : 'text-[#1e3a5f]/60 hover:text-[#1e3a5f]'
+            }`}
+          >
+            Transport Owners
+          </button>
+          <button
+            onClick={() => setActiveTab('applications')}
+            className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+              activeTab === 'applications'
+                ? 'bg-white text-[#0F2B55] shadow-sm'
+                : 'text-[#1e3a5f]/60 hover:text-[#1e3a5f]'
+            }`}
+          >
+            Applications
+          </button>
         </div>
+
+        {activeTab === 'owners' && (
+          <>
+            <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+              <div>
+                <h1 className="text-3xl font-bold tracking-tight">Transport Owners</h1>
+                <p className="text-sm text-muted mt-1">
+                  {pagination.total > 0 ? `${pagination.total} owner${pagination.total !== 1 ? 's' : ''} registered` : 'Manage all transport owners'}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => navigate('/admin/settlements')}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border/60 text-sm font-semibold hover:bg-hover/60 transition"
+                >
+                  Settlements
+                </button>
+                <button
+                  onClick={() => setShowRegisterModal(true)}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition shadow-sm shadow-amber-500/20"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                  </svg>
+                  Register Owner
+                </button>
+              </div>
+            </div>
 
         {stats && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
@@ -462,7 +559,232 @@ const [showRegisterModal, setShowRegisterModal] = useState(false);
             </div>
           </div>
         )}
+      </>
+    )}
       </div>
+
+      {/* Applications Tab Content */}
+      {activeTab === 'applications' && (
+        <div className="space-y-5">
+          <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight">Partner Applications</h1>
+              <p className="text-sm text-muted mt-1">
+                {applicationsPagination.total > 0 ? `${applicationsPagination.total} application${applicationsPagination.total !== 1 ? 's' : ''} found` : 'Review partner applications'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <select
+              value={appStatusFilter}
+              onChange={(e) => setAppStatusFilter(e.target.value)}
+              className="px-3 py-2.5 rounded-xl border border-border/60 bg-card/40 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+            >
+              <option value="all">All Status</option>
+              <option value="pending">Pending</option>
+              <option value="approved">Approved</option>
+              <option value="rejected">Rejected</option>
+            </select>
+            <select
+              value={appTypeFilter}
+              onChange={(e) => setAppTypeFilter(e.target.value)}
+              className="px-3 py-2.5 rounded-xl border border-border/60 bg-card/40 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+            >
+              <option value="all">All Types</option>
+              <option value="vehicle_owner">Vehicle Owner</option>
+              <option value="transport_owner">Transport Owner</option>
+            </select>
+          </div>
+
+          {applicationsError && !applicationsLoading && (
+            <div className="rounded-2xl border border-red-500/30 bg-red-500/5 p-6 text-center">
+              <div className="text-red-500 font-semibold mb-2">Failed to load applications</div>
+              <div className="text-sm text-muted mb-4">{applicationsError}</div>
+              <button onClick={() => fetchApplications(1)} className="px-5 py-2 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition">Retry</button>
+            </div>
+          )}
+
+          {applicationsLoading && (
+            <div className="space-y-4">
+              <LoadingSkeleton className="h-12 w-full" />
+              {Array.from({ length: 5 }).map((_, i) => <LoadingSkeleton key={i} className="h-16 w-full" />)}
+            </div>
+          )}
+
+          {!applicationsLoading && !applicationsError && applications.length === 0 && (
+            <EmptyState title="No applications found" subtitle="Applications will appear here when users submit them." />
+          )}
+
+          {!applicationsLoading && !applicationsError && applications.length > 0 && (
+            <>
+              <div className="bg-white rounded-2xl border border-[#1e3a5f]/8 shadow-sm overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-[#1e3a5f]/10">
+                      <th className="text-left px-6 py-4 font-semibold text-[#1e3a5f]/70">Application</th>
+                      <th className="text-left px-6 py-4 font-semibold text-[#1e3a5f]/70">Applicant</th>
+                      <th className="text-left px-6 py-4 font-semibold text-[#1e3a5f]/70">Type</th>
+                      <th className="text-left px-6 py-4 font-semibold text-[#1e3a5f]/70">City</th>
+                      <th className="text-left px-6 py-4 font-semibold text-[#1e3a5f]/70">Status</th>
+                      <th className="text-left px-6 py-4 font-semibold text-[#1e3a5f]/70">Date</th>
+                      <th className="text-right px-6 py-4 font-semibold text-[#1e3a5f]/70">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {applications.map((app) => (
+                      <tr key={app.application_id} className="border-b border-[#1e3a5f]/5 hover:bg-[#F4F7FB]/50 transition">
+                        <td className="px-6 py-4">
+                          <div className="font-mono text-xs font-bold text-amber-600">{app.application_code}</div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="font-semibold text-[#0F2B55]">{app.first_name} {app.last_name}</div>
+                          <div className="text-xs text-[#1e3a5f]/50">{app.email}</div>
+                          <div className="text-xs text-[#1e3a5f]/50">{app.phone}</div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={`px-2.5 py-1 rounded-lg text-xs font-semibold ${
+                            app.partnership_type === 'vehicle_owner'
+                              ? 'bg-blue-100 text-blue-700'
+                              : 'bg-purple-100 text-purple-700'
+                          }`}>
+                            {app.partnership_type === 'vehicle_owner' ? 'Vehicle Owner' : 'Transport Owner'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-[#1e3a5f]/70">{app.city}</td>
+                        <td className="px-6 py-4">
+                          <span className={`px-2.5 py-1 rounded-lg text-xs font-semibold ${
+                            app.status === 'pending' ? 'bg-amber-100 text-amber-700' :
+                            app.status === 'approved' ? 'bg-green-100 text-green-700' :
+                            'bg-red-100 text-red-700'
+                          }`}>
+                            {app.status.charAt(0).toUpperCase() + app.status.slice(1)}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-[#1e3a5f]/50 text-xs">
+                          {new Date(app.created_at).toLocaleDateString('en-IN')}
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          {app.status === 'pending' && (
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                onClick={() => { setReviewTarget(app); setReviewAction('approve'); setReviewNotes(''); }}
+                                className="px-3 py-1.5 rounded-lg bg-green-500 text-white text-xs font-semibold hover:bg-green-600 transition"
+                              >
+                                Approve
+                              </button>
+                              <button
+                                onClick={() => { setReviewTarget(app); setReviewAction('reject'); setReviewNotes(''); }}
+                                className="px-3 py-1.5 rounded-lg bg-red-500 text-white text-xs font-semibold hover:bg-red-600 transition"
+                              >
+                                Reject
+                              </button>
+                            </div>
+                          )}
+                          {app.status !== 'pending' && (
+                            <span className="text-xs text-[#1e3a5f]/40">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {applicationsPagination.pages > 1 && (
+                <div className="flex items-center justify-between pt-2">
+                  <div className="text-sm text-muted">
+                    Showing {(applicationsPagination.page - 1) * applicationsPagination.limit + 1}–{Math.min(applicationsPagination.page * applicationsPagination.limit, applicationsPagination.total)} of {applicationsPagination.total}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => fetchApplications(applicationsPagination.page - 1)} disabled={applicationsPagination.page <= 1}
+                      className="px-3 py-2 rounded-xl border border-border/60 bg-card/40 text-sm font-medium hover:bg-hover/60 transition disabled:opacity-40">← Prev</button>
+                    <span className="text-sm text-muted">Page {applicationsPagination.page} of {applicationsPagination.pages}</span>
+                    <button onClick={() => fetchApplications(applicationsPagination.page + 1)} disabled={applicationsPagination.page >= applicationsPagination.pages}
+                      className="px-3 py-2 rounded-xl border border-border/60 bg-card/40 text-sm font-medium hover:bg-hover/60 transition disabled:opacity-40">Next →</button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Review Modal */}
+      {reviewTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => { setReviewTarget(null); setReviewAction(null); setReviewNotes(''); }} />
+          <div className="relative w-full max-w-md bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-border/60 p-6" role="dialog" aria-modal="true">
+            <div className="text-center">
+              <div className={`w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4 ${
+                reviewAction === 'approve' ? 'bg-green-500/10' : 'bg-red-500/10'
+              }`}>
+                <svg className={`w-7 h-7 ${reviewAction === 'approve' ? 'text-green-500' : 'text-red-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  {reviewAction === 'approve' ? (
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  ) : (
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  )}
+                </svg>
+              </div>
+              <h3 className="text-lg font-bold mb-2">
+                {reviewAction === 'approve' ? 'Approve Application' : 'Reject Application'}
+              </h3>
+              <div className="mb-4 rounded-xl border border-border/60 bg-card/40 px-4 py-3 text-left space-y-1.5">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted">Applicant:</span>
+                  <span className="font-semibold">{reviewTarget.first_name} {reviewTarget.last_name}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted">Code:</span>
+                  <span className="font-mono font-semibold text-amber-600">{reviewTarget.application_code}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted">Type:</span>
+                  <span className="font-semibold">{reviewTarget.partnership_type === 'vehicle_owner' ? 'Vehicle Owner' : 'Transport Owner'}</span>
+                </div>
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm font-semibold text-[#1e3a5f] mb-1.5 text-left">
+                  {reviewAction === 'approve' ? 'Admin Notes (optional)' : 'Rejection Reason *'}
+                </label>
+                <textarea
+                  value={reviewNotes}
+                  onChange={(e) => setReviewNotes(e.target.value)}
+                  rows={3}
+                  required={reviewAction === 'reject'}
+                  className="w-full px-4 py-2.5 rounded-xl border border-[#1e3a5f]/15 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#F5A623]/30 focus:border-[#F5A623]"
+                  placeholder={reviewAction === 'approve' ? 'Optional notes for the applicant...' : 'Please provide a reason for rejection...'}
+                />
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => { setReviewTarget(null); setReviewAction(null); setReviewNotes(''); }}
+                  disabled={reviewing}
+                  className="flex-1 px-4 py-2.5 rounded-xl border border-border/60 text-sm font-semibold hover:bg-hover/60 transition disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleApprove}
+                  disabled={reviewing || (reviewAction === 'reject' && !reviewNotes.trim())}
+                  className={`flex-1 px-4 py-2.5 rounded-xl text-white text-sm font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2 ${
+                    reviewAction === 'approve' ? 'bg-green-500 hover:bg-green-600' : 'bg-red-500 hover:bg-red-600'
+                  }`}
+                >
+                  {reviewing && (
+                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                  )}
+                  {reviewing ? 'Processing...' : (reviewAction === 'approve' ? 'Approve' : 'Reject')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </AdminShell>
   );
 }

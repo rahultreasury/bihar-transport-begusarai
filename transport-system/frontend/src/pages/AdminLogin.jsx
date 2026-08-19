@@ -200,7 +200,11 @@ function AdminLogin() {
         throw new Error(response?.data?.message || 'Admin login failed');
       }
     } catch (err) {
-      if (err?.response?.status === 401) {
+      if (err._isTimeout) {
+        setError('The server is taking too long to respond. Please try again.');
+      } else if (err._isNetworkError) {
+        setError('Unable to connect to the server. Please try again.');
+      } else if (err?.response?.status === 401) {
         setError(err?.response?.data?.message || 'Invalid credentials');
       } else {
         setError(

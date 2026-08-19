@@ -158,8 +158,7 @@ class PartnerRepository {
     return await prisma.partner.findUnique({
       where: { partner_id: partnerId },
       include: {
-        trucks: {
-          where: { is_available: true },
+        sourcedVehicles: {
           orderBy: { created_at: 'desc' },
         },
         drivers: {
@@ -178,7 +177,7 @@ class PartnerRepository {
         _count: {
           select: {
             bookings: true,
-            trucks: true,
+            sourcedVehicles: true,
             drivers: true,
             ledgerEntries: true,
             payments: true,
@@ -242,7 +241,7 @@ class PartnerRepository {
             _count: {
               select: {
                 bookings: true,
-                trucks: true,
+                sourcedVehicles: true,
                 drivers: true,
               },
             },
@@ -468,6 +467,22 @@ class PartnerRepository {
       _sum: { debit: true },
     });
 
+    // Enhanced financial summary from trip financial records
+    const tripFinancialAgg = await prisma.tripFinancial.aggregate({
+      where: { booking: { partner_id: partnerId } },
+      _sum: {
+        customer_fare: true,
+        driver_payout: true,
+        owner_settlement_amount: true,
+        bt_margin: true,
+      },
+    });
+
+    const totalSettlementsAgg = await prisma.tripSettlement.aggregate({
+      where: { booking: { partner_id: partnerId } },
+      _sum: { owner_settlement_amount: true },
+    });
+
     return {
       partner,
       totalBookings,
@@ -482,6 +497,18 @@ class PartnerRepository {
       pendingSettlements,
       totalCredit: creditAgg._sum.credit || 0,
       totalDebit: debitAgg._sum.debit || 0,
+      // Enhanced financial summary
+      totalTrips: totalBookings,
+      completedTrips: completedBookings,
+      pendingSettlement: pendingSettlements,
+      totalPaid: totalSettlementsAgg._sum.owner_settlement_amount || 0,
+      totalAdvance: (debitAgg._sum.debit || 0) + (fuelAdvanceAgg._sum.debit || 0),
+      commission: commissionAgg._sum.commission_amount || 0,
+      // Admin-only internal BT financials
+      totalCustomerRevenue: tripFinancialAgg._sum.customer_fare || 0,
+      totalOwnerDriverCost: (tripFinancialAgg._sum.driver_payout || 0) + (tripFinancialAgg._sum.owner_settlement_amount || 0),
+      totalCommission: commissionAgg._sum.commission_amount || 0,
+      totalBtMargin: tripFinancialAgg._sum.bt_margin || 0,
     };
   }
 
@@ -520,13 +547,13 @@ class PartnerRepository {
   }
 
   // ============================
-  // TRUCK OPERATIONS
+  // SOURCED VEHICLES OPERATIONS
   // ============================
 
   /**
-   * Get trucks for a partner
+   * Get sourced vehicles for a partner (vehicles this partner has provided)
    */
-  async getTrucks(partnerId) {
+  async getSourcedVehicles(partnerId) {
     return await prisma.transportVehicle.findMany({
       where: { partner_id: partnerId },
       orderBy: { created_at: 'desc' },
@@ -534,9 +561,9 @@ class PartnerRepository {
   }
 
   /**
-   * Add a truck to a partner
+   * Add a sourced vehicle to a partner
    */
-  async addTruck(partnerId, data, tx = null) {
+  async addSourcedVehicle(partnerId, data, tx = null) {
     const client = tx || prisma;
     return await client.transportVehicle.create({
       data: {
@@ -548,23 +575,23 @@ class PartnerRepository {
   }
 
   /**
-   * Update a truck
+   * Update a sourced vehicle
    */
-  async updateTruck(truckId, data, tx = null) {
+  async updateSourcedVehicle(vehicleId, data, tx = null) {
     const client = tx || prisma;
     return await client.transportVehicle.update({
-      where: { vehicle_id: truckId },
+      where: { vehicle_id: vehicleId },
       data,
     });
   }
 
   /**
-   * Remove a truck (soft - set partner_id to null)
+   * Remove a sourced vehicle (soft - set partner_id to null)
    */
-  async removeTruck(truckId, tx = null) {
+  async removeSourcedVehicle(vehicleId, tx = null) {
     const client = tx || prisma;
     return await client.transportVehicle.update({
-      where: { vehicle_id: truckId },
+      where: { vehicle_id: vehicleId },
       data: { partner_id: null },
     });
   }

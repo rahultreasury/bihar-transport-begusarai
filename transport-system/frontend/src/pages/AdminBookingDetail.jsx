@@ -4,13 +4,16 @@ import { adminAPI } from '../services/api';
 import AdminShell from '../components/admin-premium/layout/AdminShell';
 import StatusBadge from '../components/admin-premium/booking/StatusBadge';
 import BookingTimeline from '../components/admin-premium/booking/BookingTimeline';
+import TripFinancialSummary from '../components/admin-premium/booking/TripFinancialSummary';
+import AuditTimeline from '../components/admin-premium/booking/AuditTimeline';
 import { LoadingSkeleton } from '../components/admin-premium/ui/LoadingSkeleton';
 
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: '▦' },
   { key: 'bookings', label: 'Bookings', icon: '⟐' },
-  { key: 'drivers', label: 'Drivers', icon: '⌁' },
   { key: 'owners', label: 'Transport Owners', icon: '⧉' },
+  { key: 'vehicles', label: 'Vehicles', icon: '🚛' },
+  { key: 'drivers', label: 'Drivers', icon: '⌁' },
   { key: 'analytics', label: 'Analytics', icon: '◷' },
   { key: 'ai', label: 'AI Insights', icon: '✦' }
 ];
@@ -301,6 +304,26 @@ function AdminBookingDetail() {
               <SectionCard title="Booking Timeline" className="lg:col-span-2">
                 <BookingTimeline booking={booking} />
               </SectionCard>
+
+              {/* Financial Summary — Admin sees complete financial breakdown */}
+              {booking?.financial && (
+                <div className="lg:col-span-2">
+                  <TripFinancialSummary
+                    financial={booking.financial}
+                    userRole="ADMIN"
+                    bookingId={booking.booking_id}
+                  />
+                </div>
+              )}
+
+              {/* Audit Timeline — Admin sees all audit records */}
+              <div className="lg:col-span-2">
+                <AuditTimeline
+                  entityType="booking"
+                  entityId={booking.booking_id}
+                  limit={50}
+                />
+              </div>
             </div>
           </div>
         )}

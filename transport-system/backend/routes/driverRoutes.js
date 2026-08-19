@@ -5,8 +5,10 @@ const { protect } = require('../middleware/auth');
 const { body, validationResult } = require('express-validator');
 const { validateTransition } = require('../utils/BookingStateMachine');
 const BookingTimelineRepository = require('../repositories/BookingTimelineRepository');
+const TripFinancialService = require('../services/TripFinancialService');
 
 const timelineRepo = new BookingTimelineRepository();
+const tripFinancialService = new TripFinancialService();
 
 // @route   GET /api/drivers/available-jobs
 // @desc    Get available transport jobs
@@ -296,6 +298,12 @@ if (booking.status !== 'pending' && booking.status !== 'quote_sent') {
         where: { vehicle_id: parseInt(vehicle_id) },
         data: { is_available: false, current_status: 'on_trip' },
       });
+
+      // Initialize trip financial record
+      await tripFinancialService.initializeTripFinancial(bookingId, {
+        user_id: driver.driver_id,
+        role: 'driver',
+      });
     });
 
     res.json({
@@ -366,6 +374,7 @@ router.get('/my-jobs', protect, async (req, res) => {
             delivery_otp: true,
           },
         },
+        tripFinancial: true,
       },
     });
 
@@ -385,60 +394,73 @@ router.get('/my-jobs', protect, async (req, res) => {
       return aOrder - bOrder;
     });
 
-    // Flatten to match original SQL response format
-    const flattened = sorted.map((b) => ({
-      booking_id: b.booking_id,
-      booking_reference: b.booking_reference,
-      booking_number: b.booking_number,
-      user_id: b.user_id,
-      driver_id: b.driver_id,
-      vehicle_id: b.vehicle_id,
-      pickup_location: b.pickup_location,
-      pickup_address: b.pickup_address,
-      pickup_city: b.pickup_city,
-      pickup_state: b.pickup_state,
-      pickup_pincode: b.pickup_pincode,
-      pickup_date: b.pickup_date,
-      pickup_time: b.pickup_time,
-      drop_location: b.drop_location,
-      drop_address: b.drop_address,
-      drop_city: b.drop_city,
-      drop_state: b.drop_state,
-      drop_pincode: b.drop_pincode,
-      goods_description: b.goods_description,
-      goods_type: b.goods_type,
-      goods_weight_kg: b.goods_weight_kg,
-      goods_volume: b.goods_volume,
-      number_of_items: b.number_of_items,
-      fragile: b.fragile,
-      vehicle_type_required: b.vehicle_type_required,
-      estimated_distance_km: b.estimated_distance_km,
-      estimated_price: b.estimated_price,
-      final_price: b.final_price,
-      status: b.status,
-      created_at: b.created_at,
-      updated_at: b.updated_at,
-      confirmed_at: b.confirmed_at,
-      driver_assigned_at: b.driver_assigned_at,
-      pickup_completed_at: b.pickup_completed_at,
-      delivered_at: b.delivered_at,
-      customer_first_name: b.user?.first_name ?? null,
-      customer_last_name: b.user?.last_name ?? null,
-      customer_phone: b.user?.phone ?? null,
-      customer_address: b.user?.address ?? null,
-      vehicle_number: b.vehicle?.vehicle_number ?? null,
-      vehicle_name: b.vehicle?.vehicle_name ?? null,
-      vehicle_type: b.vehicle?.vehicle_type ?? null,
-      vehicle_make: b.vehicle?.vehicle_make ?? null,
-      vehicle_model: b.vehicle?.vehicle_model ?? null,
-      current_status: b.delivery?.current_status ?? null,
-      status_description: b.delivery?.status_description ?? null,
-      estimated_pickup_time: b.delivery?.estimated_pickup_time ?? null,
-      estimated_delivery_time: b.delivery?.estimated_delivery_time ?? null,
-      actual_pickup_time: b.delivery?.actual_pickup_time ?? null,
-      actual_delivery_time: b.delivery?.actual_delivery_time ?? null,
-      delivery_otp: b.delivery?.delivery_otp ?? null,
-    }));
+    // Flatten to match original SQL response format with role-based financial data
+    const flattened = sorted.map((b) => {
+      // Get driver-specific financial summary (NO customer fare, NO BT margin)
+      const financial = b.tripFinancial ? {
+        tripAmount: b.tripFinancial.driver_payout,
+        advanceReceived: b.tripFinancial.total_advance,
+        fuelAdvance: b.tripFinancial.total_fuel_advance,
+        remainingAmount: b.tripFinancial.remaining_driver_settlement,
+        paymentStatus: b.tripFinancial.status,
+      } : null;
+
+      return {
+        booking_id: b.booking_id,
+        booking_reference: b.booking_reference,
+        booking_number: b.booking_number,
+        user_id: b.user_id,
+        driver_id: b.driver_id,
+        vehicle_id: b.vehicle_id,
+        pickup_location: b.pickup_location,
+        pickup_address: b.pickup_address,
+        pickup_city: b.pickup_city,
+        pickup_state: b.pickup_state,
+        pickup_pincode: b.pickup_pincode,
+        pickup_date: b.pickup_date,
+        pickup_time: b.pickup_time,
+        drop_location: b.drop_location,
+        drop_address: b.drop_address,
+        drop_city: b.drop_city,
+        drop_state: b.drop_state,
+        drop_pincode: b.drop_pincode,
+        goods_description: b.goods_description,
+        goods_type: b.goods_type,
+        goods_weight_kg: b.goods_weight_kg,
+        goods_volume: b.goods_volume,
+        number_of_items: b.number_of_items,
+        fragile: b.fragile,
+        vehicle_type_required: b.vehicle_type_required,
+        estimated_distance_km: b.estimated_distance_km,
+        estimated_price: b.estimated_price,
+        final_price: b.final_price,
+        status: b.status,
+        created_at: b.created_at,
+        updated_at: b.updated_at,
+        confirmed_at: b.confirmed_at,
+        driver_assigned_at: b.driver_assigned_at,
+        pickup_completed_at: b.pickup_completed_at,
+        delivered_at: b.delivered_at,
+        customer_first_name: b.user?.first_name ?? null,
+        customer_last_name: b.user?.last_name ?? null,
+        customer_phone: b.user?.phone ?? null,
+        customer_address: b.user?.address ?? null,
+        vehicle_number: b.vehicle?.vehicle_number ?? null,
+        vehicle_name: b.vehicle?.vehicle_name ?? null,
+        vehicle_type: b.vehicle?.vehicle_type ?? null,
+        vehicle_make: b.vehicle?.vehicle_make ?? null,
+        vehicle_model: b.vehicle?.vehicle_model ?? null,
+        current_status: b.delivery?.current_status ?? null,
+        status_description: b.delivery?.status_description ?? null,
+        estimated_pickup_time: b.delivery?.estimated_pickup_time ?? null,
+        estimated_delivery_time: b.delivery?.estimated_delivery_time ?? null,
+        actual_pickup_time: b.delivery?.actual_pickup_time ?? null,
+        actual_delivery_time: b.delivery?.actual_delivery_time ?? null,
+        delivery_otp: b.delivery?.delivery_otp ?? null,
+        // Driver-specific financial data (NO customer fare, NO BT margin)
+        financial,
+      };
+    });
 
     res.json({
       success: true,

@@ -196,6 +196,7 @@ router.post('/login', [
   body('email').isEmail().withMessage('Valid email is required'),
   body('password').notEmpty().withMessage('Password is required')
 ], async (req, res) => {
+  const loginStart = Date.now();
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -207,12 +208,27 @@ router.post('/login', [
 
     const { email, password } = req.body;
 
-    // Find user (Prisma/PostgreSQL)
+    // Find user (Prisma/PostgreSQL) — email is indexed, select only required fields.
+    const dbLookupStart = Date.now();
     const user = await prisma.user.findUnique({
-      where: { email: email }
+      where: { email: email },
+      select: {
+        user_id: true,
+        first_name: true,
+        last_name: true,
+        email: true,
+        phone: true,
+        role: true,
+        city: true,
+        address: true,
+        is_active: true,
+        password_hash: true,
+      }
     });
+    const dbLookupMs = Date.now() - dbLookupStart;
 
     if (!user) {
+      console.log(`AUTH_LOGIN duration=${Date.now() - loginStart}ms dbLookup=${dbLookupMs}ms result=invalid_credentials`);
       return res.status(401).json({
         success: false,
         message: 'Invalid credentials'
@@ -220,8 +236,12 @@ router.post('/login', [
     }
 
     // Check password
+    const passwordVerifyStart = Date.now();
     const isMatch = await bcrypt.compare(password, user.password_hash);
+    const passwordVerifyMs = Date.now() - passwordVerifyStart;
+
     if (!isMatch) {
+      console.log(`AUTH_LOGIN duration=${Date.now() - loginStart}ms dbLookup=${dbLookupMs}ms passwordVerify=${passwordVerifyMs}ms result=invalid_credentials`);
       return res.status(401).json({
         success: false,
         message: 'Invalid credentials'
@@ -230,13 +250,16 @@ router.post('/login', [
 
     // Check if user is active
     if (!user.is_active) {
+      console.log(`AUTH_LOGIN duration=${Date.now() - loginStart}ms dbLookup=${dbLookupMs}ms passwordVerify=${passwordVerifyMs}ms result=deactivated`);
       return res.status(401).json({
         success: false,
         message: 'Account is deactivated'
       });
     }
 
+    const tokenGenStart = Date.now();
     const token = generateToken(user.user_id);
+    const tokenGenMs = Date.now() - tokenGenStart;
 
     // Get driver details if user is driver via Prisma
     let driverData = null;
@@ -245,6 +268,9 @@ router.post('/login', [
         where: { user_id: user.user_id },
       });
     }
+
+    const totalMs = Date.now() - loginStart;
+    console.log(`AUTH_LOGIN duration=${totalMs}ms dbLookup=${dbLookupMs}ms passwordVerify=${passwordVerifyMs}ms tokenGen=${tokenGenMs}ms result=success role=${user.role}`);
 
     res.json({
       success: true,
@@ -403,6 +429,7 @@ router.post('/admin-login', [
   body('email').isEmail().withMessage('Valid email is required'),
   body('password').notEmpty().withMessage('Password is required')
 ], async (req, res) => {
+  const loginStart = Date.now();
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -414,12 +441,23 @@ router.post('/admin-login', [
 
     const { email, password } = req.body;
 
-    // Find admin (Prisma/PostgreSQL)
+    // Find admin (Prisma/PostgreSQL) — email is indexed, select only required fields.
+    const dbLookupStart = Date.now();
     const admin = await prisma.admin.findUnique({
-      where: { email: email }
+      where: { email: email },
+      select: {
+        admin_id: true,
+        full_name: true,
+        email: true,
+        role: true,
+        is_active: true,
+        password_hash: true,
+      }
     });
+    const dbLookupMs = Date.now() - dbLookupStart;
 
     if (!admin) {
+      console.log(`AUTH_ADMIN_LOGIN duration=${Date.now() - loginStart}ms dbLookup=${dbLookupMs}ms result=invalid_credentials`);
       return res.status(401).json({
         success: false,
         message: 'Invalid credentials'
@@ -427,8 +465,12 @@ router.post('/admin-login', [
     }
 
     // Check password
+    const passwordVerifyStart = Date.now();
     const isMatch = await bcrypt.compare(password, admin.password_hash);
+    const passwordVerifyMs = Date.now() - passwordVerifyStart;
+
     if (!isMatch) {
+      console.log(`AUTH_ADMIN_LOGIN duration=${Date.now() - loginStart}ms dbLookup=${dbLookupMs}ms passwordVerify=${passwordVerifyMs}ms result=invalid_credentials`);
       return res.status(401).json({
         success: false,
         message: 'Invalid credentials'
@@ -437,13 +479,19 @@ router.post('/admin-login', [
 
     // Check if admin is active
     if (!admin.is_active) {
+      console.log(`AUTH_ADMIN_LOGIN duration=${Date.now() - loginStart}ms dbLookup=${dbLookupMs}ms passwordVerify=${passwordVerifyMs}ms result=deactivated`);
       return res.status(401).json({
         success: false,
         message: 'Account is deactivated'
       });
     }
 
+    const tokenGenStart = Date.now();
     const token = generateToken(admin.admin_id, 'admin');
+    const tokenGenMs = Date.now() - tokenGenStart;
+
+    const totalMs = Date.now() - loginStart;
+    console.log(`AUTH_ADMIN_LOGIN duration=${totalMs}ms dbLookup=${dbLookupMs}ms passwordVerify=${passwordVerifyMs}ms tokenGen=${tokenGenMs}ms result=success role=${admin.role}`);
 
     res.json({
       success: true,
@@ -458,6 +506,114 @@ router.post('/admin-login', [
     });
   } catch (error) {
     console.error('Admin login error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error during login'
+    });
+  }
+});
+
+// @route   POST /api/auth/partner-login
+// @desc    Login partner (transport owner/vehicle owner)
+// @access  Public
+router.post('/partner-login', [
+  body('email').isEmail().withMessage('Valid email is required'),
+  body('password').notEmpty().withMessage('Password is required')
+], async (req, res) => {
+  const loginStart = Date.now();
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        errors: errors.array()
+      });
+    }
+
+    const { email, password } = req.body;
+
+    // Find user with partner role (Prisma/PostgreSQL)
+    const dbLookupStart = Date.now();
+    const user = await prisma.user.findUnique({
+      where: { email: email },
+      select: {
+        user_id: true,
+        first_name: true,
+        last_name: true,
+        email: true,
+        phone: true,
+        role: true,
+        city: true,
+        address: true,
+        is_active: true,
+        password_hash: true,
+      }
+    });
+    const dbLookupMs = Date.now() - dbLookupStart;
+
+    if (!user) {
+      console.log(`AUTH_PARTNER_LOGIN duration=${Date.now() - loginStart}ms dbLookup=${dbLookupMs}ms result=invalid_credentials`);
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid credentials'
+      });
+    }
+
+    // Check role is partner
+    if (user.role !== 'partner') {
+      console.log(`AUTH_PARTNER_LOGIN duration=${Date.now() - loginStart}ms dbLookup=${dbLookupMs}ms result=invalid_role`);
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid credentials'
+      });
+    }
+
+    // Check password
+    const passwordVerifyStart = Date.now();
+    const isMatch = await bcrypt.compare(password, user.password_hash);
+    const passwordVerifyMs = Date.now() - passwordVerifyStart;
+
+    if (!isMatch) {
+      console.log(`AUTH_PARTNER_LOGIN duration=${Date.now() - loginStart}ms dbLookup=${dbLookupMs}ms passwordVerify=${passwordVerifyMs}ms result=invalid_credentials`);
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid credentials'
+      });
+    }
+
+    // Check if user is active
+    if (!user.is_active) {
+      console.log(`AUTH_PARTNER_LOGIN duration=${Date.now() - loginStart}ms dbLookup=${dbLookupMs}ms passwordVerify=${passwordVerifyMs}ms result=deactivated`);
+      return res.status(401).json({
+        success: false,
+        message: 'Account is deactivated'
+      });
+    }
+
+    const tokenGenStart = Date.now();
+    const token = generateToken(user.user_id);
+    const tokenGenMs = Date.now() - tokenGenStart;
+
+    const totalMs = Date.now() - loginStart;
+    console.log(`AUTH_PARTNER_LOGIN duration=${totalMs}ms dbLookup=${dbLookupMs}ms passwordVerify=${passwordVerifyMs}ms tokenGen=${tokenGenMs}ms result=success role=${user.role}`);
+
+    res.json({
+      success: true,
+      message: 'Partner login successful',
+      data: {
+        user_id: user.user_id,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        city: user.city,
+        address: user.address,
+      },
+      token
+    });
+  } catch (error) {
+    console.error('Partner login error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error during login'

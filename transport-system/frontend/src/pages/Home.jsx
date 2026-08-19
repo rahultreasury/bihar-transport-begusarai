@@ -791,10 +791,10 @@ function Home() {
                   Book Transport
                 </Link>
                 <Link
-                  to="/track"
+                  to="/partner"
                   className="w-full sm:w-auto flex-1 md:flex-none px-4 md:px-6 py-3 bg-white/10 backdrop-blur text-white rounded-xl font-semibold hover:bg-white/20 transition-all border border-white/30 text-center btn-hover-scale cursor-pointer"
                 >
-                  Track Delivery
+                  Become a Partner
                 </Link>
                 <a
                   href="tel:+918210931799"
