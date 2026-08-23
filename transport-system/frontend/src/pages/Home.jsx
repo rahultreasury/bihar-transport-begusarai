@@ -605,7 +605,7 @@ function Home() {
       />
       <div className="overflow-hidden">
       {/* HERO SECTION */}
-      <section className="hero-gradient relative overflow-hidden hero-pattern">
+      <section className="hero-gradient relative overflow-hidden">
         <div className="absolute inset-0 overflow-hidden">
           <div className="absolute -top-40 -right-40 w-80 h-80 bg-amber-500/20 rounded-full blur-3xl"></div>
           <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-blue-500/20 rounded-full blur-3xl"></div>
@@ -813,27 +813,6 @@ function Home() {
               </div>
             </div>
 
-            <div className="order-1 lg:order-2 flex justify-center lg:justify-start animate-slide-in-right">
-              <div className="relative">
-                <svg viewBox="0 0 200 120" className="w-32 md:w-48 lg:w-80 animate-float" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <rect x="20" y="35" width="100" height="50" rx="4" fill="#F5A623" />
-                  <rect x="120" y="45" width="35" height="40" rx="4" fill="#F5A623" />
-                  <rect x="125" y="50" width="10" height="12" rx="2" fill="#1e3a5f" />
-                  <circle cx="50" cy="90" r="14" fill="#1e3a5f" />
-                  <circle cx="50" cy="90" r="8" fill="#374151" />
-                  <circle cx="50" cy="90" r="4" fill="#9CA3AF" />
-                  <circle cx="135" cy="90" r="14" fill="#1e3a5f" />
-                  <circle cx="135" cy="90" r="8" fill="#374151" />
-                  <circle cx="135" cy="90" r="4" fill="#9CA3AF" />
-                  <rect x="25" y="42" width="15" height="10" rx="2" fill="#1e3a5f" opacity="0.3" />
-                  <rect x="45" y="42" width="15" height="10" rx="2" fill="#1e3a5f" opacity="0.3" />
-                  <rect x="65" y="42" width="15" height="10" rx="2" fill="#1e3a5f" opacity="0.3" />
-                  <rect x="85" y="42" width="15" height="10" rx="2" fill="#1e3a5f" opacity="0.3" />
-                  <rect x="152" y="55" width="4" height="6" rx="1" fill="#FBBF24" />
-                  <line x1="0" y1="108" x2="200" y2="108" stroke="#4B5563" strokeWidth="2" strokeDasharray="10 5" />
-                </svg>
-              </div>
-            </div>
           </div>
         </div>
 

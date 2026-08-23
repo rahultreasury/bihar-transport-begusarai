@@ -387,7 +387,10 @@ html.admin-dark body {
 
 /* Hero gradient background */
 .hero-gradient {
-  background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%);
+  background-image: url('/bihar-transport-hero.jpg');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
 }
 
 /* Status badges */
