@@ -363,8 +363,10 @@ router.post('/:id/approve', protect, adminCheck, [
         commission_percentage: 10,
         available_capacity: application.available_capacity,
         network_locations: application.network_locations,
+        partner_capability: 'TRANSPORT_OPERATOR',
       });
       partner_id = partner.partner_id;
+      vehicle_owner_id = partner.linked_vehicle_owner_id || null;
     }
 
     // Update application

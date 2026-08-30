@@ -177,11 +177,130 @@ class VehicleOwnerRepository {
   }
 
   /**
+   * Generate next driver code (DRV000001, DRV000002, etc.)
+   */
+  async generateDriverCode(tx = null) {
+    const client = tx || prisma;
+    const lastDriver = await client.driver.findFirst({
+      orderBy: { driver_code: 'desc' },
+      select: { driver_code: true },
+    });
+
+    let nextNum = 1;
+    if (lastDriver && lastDriver.driver_code) {
+      const match = lastDriver.driver_code.match(/DRV(\d+)/);
+      if (match) {
+        nextNum = parseInt(match[1]) + 1;
+      }
+    }
+    return `DRV${String(nextNum).padStart(6, '0')}`;
+  }
+
+  /**
    * Create a new vehicle owner
    */
   async create(data, tx = null) {
     const client = tx || prisma;
     return await client.vehicleOwner.create({ data });
+  }
+
+  /**
+   * Create a VehicleOwner and optionally link/create a Driver atomically.
+   * Used for DRIVER_OWNER type owners.
+   */
+  async createOwnerWithDriver(ownerData, driverId = null, driverData = null, tx = null) {
+    const client = tx || prisma;
+
+    return await client.$transaction(async (prismaTx) => {
+      // Create the owner
+      const owner = await prismaTx.vehicleOwner.create({
+        data: ownerData,
+      });
+
+      let linkedDriverId = null;
+
+      if (driverId) {
+        // Link existing driver
+        const driver = await prismaTx.driver.findUnique({
+          where: { driver_id: driverId },
+          select: { driver_id: true, transport_owner_id: true, status: true },
+        });
+        if (!driver) {
+          throw new Error('Driver not found');
+        }
+        if (driver.transport_owner_id && driver.transport_owner_id !== owner.owner_id) {
+          throw new Error('Driver is already linked to another transport owner');
+        }
+        if (driver.status === 'inactive') {
+          throw new Error('Driver is not active');
+        }
+
+        await prismaTx.driver.update({
+          where: { driver_id: driverId },
+          data: { transport_owner_id: owner.owner_id },
+        });
+        linkedDriverId = driverId;
+      } else if (driverData) {
+        // Create new driver
+        const existingDriver = await prismaTx.driver.findFirst({
+          where: { mobile: driverData.mobile },
+        });
+        if (existingDriver) {
+          throw new Error('Driver with this mobile already exists');
+        }
+
+        let user = await prismaTx.user.findUnique({ where: { phone: driverData.mobile } });
+        if (!user) {
+          const bcrypt = require('bcryptjs');
+          const defaultPassword = 'driver123';
+          const password_hash = await bcrypt.hash(defaultPassword, 10);
+
+          user = await prismaTx.user.create({
+            data: {
+              first_name: driverData.driver_name.split(' ')[0] || driverData.driver_name,
+              last_name: driverData.driver_name.split(' ').slice(1).join(' ') || '',
+              email: `${driverData.mobile}@driver.bihar-transport.com`,
+              phone: driverData.mobile,
+              password_hash,
+              role: 'driver',
+            },
+          });
+        }
+
+        const driverCode = await this.generateDriverCode(prismaTx);
+
+        const driver = await prismaTx.driver.create({
+          data: {
+            driver_code: driverCode,
+            user_id: user.user_id,
+            driver_name: driverData.driver_name,
+            mobile: driverData.mobile,
+            alternate_mobile: driverData.alternate_mobile || null,
+            license_number: driverData.license_number || null,
+            city: driverData.city || null,
+            state: driverData.state || 'Bihar',
+            address: driverData.address || null,
+            transport_owner_id: owner.owner_id,
+            status: 'available',
+            profile_image: driverData.profile_image || null,
+            is_available: true,
+            is_verified: false,
+          },
+        });
+
+        await prismaTx.driverTimeline.create({
+          data: {
+            driver_id: driver.driver_id,
+            event_type: 'driver_created',
+            description: `Driver ${driverData.driver_name} registered with code ${driverCode}`,
+          },
+        });
+
+        linkedDriverId = driver.driver_id;
+      }
+
+      return { owner, linkedDriverId };
+    });
   }
 
   /**
@@ -383,6 +502,17 @@ class VehicleOwnerRepository {
     return await client.driver.findUnique({
       where: { driver_id: driverId },
       select: { driver_id: true, driver_code: true, driver_name: true, partner_id: true, current_vehicle_id: true },
+    });
+  }
+
+  /**
+   * Find drivers linked to a specific vehicle owner via transport_owner_id.
+   */
+  async findDriverByOwnerId(ownerId, tx = null) {
+    const client = tx || prisma;
+    return await client.driver.findMany({
+      where: { transport_owner_id: ownerId },
+      select: { driver_id: true, driver_name: true, mobile: true, current_vehicle_id: true },
     });
   }
 
@@ -705,6 +835,54 @@ class VehicleOwnerRepository {
     return await client.transportVehicle.update({
       where: { vehicle_id: vehicleId },
       data,
+    });
+  }
+
+  /**
+   * Update a vehicle's owner_id with full validation inside a transaction.
+   * Checks that the new owner exists, is active, and that any assigned driver
+   * does not have a conflicting transport_owner_id.
+   */
+  async updateVehicleOwnerValidated(vehicleId, newOwnerId, tx = null) {
+    const client = tx || prisma;
+
+    return await client.$transaction(async (prismaTx) => {
+      // Get current vehicle with assigned driver
+      const vehicle = await prismaTx.transportVehicle.findUnique({
+        where: { vehicle_id: vehicleId },
+        include: {
+          driver: {
+            select: {
+              driver_id: true,
+              driver_name: true,
+              transport_owner_id: true,
+            },
+          },
+        },
+      });
+
+      if (!vehicle) {
+        throw new Error('Vehicle not found');
+      }
+
+      // Validate new owner exists and is active
+      const newOwner = await prismaTx.vehicleOwner.findUnique({
+        where: { owner_id: newOwnerId },
+        select: { owner_id: true, status: true, is_active: true },
+      });
+
+      if (!newOwner) {
+        throw new Error('Transport Owner not found');
+      }
+      if (newOwner.status !== 'active' || !newOwner.is_active) {
+        throw new Error('Transport Owner is not active');
+      }
+
+      // Perform the ownership update
+      return await prismaTx.transportVehicle.update({
+        where: { vehicle_id: vehicleId },
+        data: { owner_id: newOwnerId },
+      });
     });
   }
 

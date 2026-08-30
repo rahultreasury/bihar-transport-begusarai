@@ -1,5 +1,5 @@
 import { useMemo, useContext } from 'react';
-import { AuthContext } from '../../../App';
+import { AuthContext } from '../../../contexts/AuthContext';
 
 export default function AdminTopHeader() {
   const { user } = useContext(AuthContext) || {};

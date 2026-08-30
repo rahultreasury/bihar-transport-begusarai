@@ -15,9 +15,9 @@ class PartnerService {
    * Register a new transport partner
    */
   async registerPartner(data) {
-    const { mobile } = data;
+    const { mobile, partner_capability = 'PARTNER_ONLY' } = data;
 
-    console.log('[SERVICE] registerPartner ENTERED. mobile:', mobile);
+    console.log('[SERVICE] registerPartner ENTERED. mobile:', mobile, 'capability:', partner_capability);
 
     // Validate commission
     const commission = parseFloat(data.commission_percentage) || 10;
@@ -27,26 +27,29 @@ class PartnerService {
       throw err;
     }
 
-    console.log('[SERVICE] Commission validated:', commission);
+    // Validate capability
+    const allowedCapabilities = ['PARTNER_ONLY', 'TRANSPORT_OPERATOR', 'BOTH'];
+    if (!allowedCapabilities.includes(partner_capability)) {
+      const err = new Error('Invalid partner_capability. Must be PARTNER_ONLY, TRANSPORT_OPERATOR, or BOTH');
+      err.code = 'INVALID_PARTNER_CAPABILITY';
+      throw err;
+    }
 
-    // Check unique mobile
-    console.log('[SERVICE] Checking existing partner by mobile:', mobile);
-    const existing = await this.repo.findByMobile(mobile);
-    console.log('[SERVICE] findByMobile returned:', existing ? 'FOUND - partner_id:' + existing.partner_id : 'NOT FOUND');
-    if (existing) {
+    // Check unique mobile for Partner
+    const existingPartner = await this.repo.findByMobile(mobile);
+    if (existingPartner) {
       const err = new Error('A partner with this mobile number already exists');
       err.code = 'PARTNER_ALREADY_EXISTS';
       err.data = {
-        partner_id: existing.partner_id,
-        partner_name: existing.partner_name,
-        partner_code: existing.partner_code,
+        partner_id: existingPartner.partner_id,
+        partner_name: existingPartner.partner_name,
+        partner_code: existingPartner.partner_code,
       };
       throw err;
     }
 
-    console.log('[SERVICE] Generating partner code...');
-    const partnerCode = await this.repo.generatePartnerCode();
-    console.log('[SERVICE] Partner code generated:', partnerCode);
+    // Check unique mobile for VehicleOwner (if we might create one)
+    const existingOwner = await this.repo.findVehicleOwnerByMobile(mobile);
 
     // Normalize: all upper layers pass 'partner_name' or 'owner_name'
     const partnerName = data.partner_name || data.owner_name ? (data.partner_name || data.owner_name).trim() : null;
@@ -56,7 +59,7 @@ class PartnerService {
       throw err;
     }
 
-    console.log('[SERVICE] partnerName:', partnerName);
+    const partnerCode = await this.repo.generatePartnerCode();
 
     const partnerData = {
       partner_code: partnerCode,
@@ -83,16 +86,118 @@ class PartnerService {
       commission_type: data.commission_type || 'percentage',
       fixed_commission: data.fixed_commission || 0,
       is_active: true,
+      partner_capability,
     };
 
-    console.log('[SERVICE] Calling repo.create()...');
-    const result = await this.repo.create(partnerData);
-    console.log('[SERVICE] repo.create returned. partner_id:', result?.partner_id);
+    // Atomic creation: Partner + optional VehicleOwner
+    const result = await this.repo.create(partnerData, null, existingOwner);
+    console.log('[SERVICE] Partner created. partner_id:', result?.partner_id);
     return result;
   }
 
   async getPartnerProfile(partnerId) {
     return await this.repo.findById(partnerId);
+  }
+
+  /**
+   * Link an existing VehicleOwner to an existing Partner.
+   * Validates both exist, checks for existing links, and updates atomically.
+   */
+  async linkVehicleOwnerToPartner(partnerId, vehicleOwnerId) {
+    const partner = await this.repo.findById(partnerId);
+    if (!partner) {
+      const err = new Error('Partner not found');
+      err.code = 'PARTNER_NOT_FOUND';
+      throw err;
+    }
+
+    const vehicleOwner = await this.repo.findVehicleOwnerByMobile(partner.mobile);
+    if (!vehicleOwner || vehicleOwner.owner_id !== vehicleOwnerId) {
+      const err = new Error('VehicleOwner not found or mobile does not match Partner');
+      err.code = 'VEHICLE_OWNER_NOT_FOUND';
+      throw err;
+    }
+
+    // Check if already linked
+    if (vehicleOwner.partner_link === partnerId) {
+      return {
+        partner_id: partner.partner_id,
+        partner_name: partner.partner_name,
+        vehicle_owner_id: vehicleOwner.owner_id,
+        vehicle_owner_name: vehicleOwner.owner_name,
+        already_linked: true,
+      };
+    }
+
+    // Check if VehicleOwner is linked to another Partner
+    if (vehicleOwner.partner_link && vehicleOwner.partner_link !== partnerId) {
+      const err = new Error('VehicleOwner is already linked to another Partner');
+      err.code = 'VEHICLE_OWNER_ALREADY_LINKED';
+      err.data = { current_partner_id: vehicleOwner.partner_link };
+      throw err;
+    }
+
+    // Link atomically
+    const result = await this.repo.linkVehicleOwner(partnerId, vehicleOwnerId);
+    return {
+      partner_id: partner.partner_id,
+      partner_name: partner.partner_name,
+      vehicle_owner_id: result.owner_id,
+      vehicle_owner_name: result.owner_name,
+      already_linked: false,
+    };
+  }
+
+  /**
+   * Create a VehicleOwner from an existing Partner.
+   * Checks for existing VehicleOwner by exact mobile first.
+   * If found, links it instead of creating a duplicate.
+   */
+  async createVehicleOwnerFromPartner(partnerId) {
+    const partner = await this.repo.findById(partnerId);
+    if (!partner) {
+      const err = new Error('Partner not found');
+      err.code = 'PARTNER_NOT_FOUND';
+      throw err;
+    }
+
+    // Check if Partner already has a linked VehicleOwner
+    const existingLinked = await this.repo.findVehicleOwnerByMobile(partner.mobile);
+    if (existingLinked && existingLinked.partner_link === partnerId) {
+      return {
+        partner_id: partner.partner_id,
+        partner_name: partner.partner_name,
+        vehicle_owner_id: existingLinked.owner_id,
+        vehicle_owner_name: existingLinked.owner_name,
+        already_existed: true,
+      };
+    }
+
+    // Check if VehicleOwner with same mobile exists but linked to different Partner
+    if (existingLinked && existingLinked.partner_link !== partnerId) {
+      const err = new Error('A VehicleOwner with this mobile already exists and is linked to another Partner');
+      err.code = 'VEHICLE_OWNER_ALREADY_LINKED';
+      err.data = { vehicle_owner_id: existingLinked.owner_id, current_partner_id: existingLinked.partner_link };
+      throw err;
+    }
+
+    // Create new VehicleOwner linked to this Partner
+    const vehicleOwner = await this.repo.createLinkedVehicleOwner({
+      owner_name: partner.owner_name,
+      company_name: partner.company_name,
+      mobile: partner.mobile,
+      city: partner.city,
+      state: partner.state,
+      partner_link: partner.partner_id,
+    });
+
+    return {
+      partner_id: partner.partner_id,
+      partner_name: partner.partner_name,
+      vehicle_owner_id: vehicleOwner.owner_id,
+      vehicle_owner_name: vehicleOwner.owner_name,
+      already_existed: false,
+    };
   }
 
   async getPartnerDashboard(partnerId) {

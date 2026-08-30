@@ -1,8 +1,9 @@
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { useState, useEffect, createContext, useContext, lazy, Suspense, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useContext, lazy, Suspense, useMemo, useCallback, useRef } from 'react';
 
-// Context
-export const AuthContext = createContext(null);
+// Context — defined in a separate module so React Fast Refresh does not
+// treat App.jsx as both a component and a context exporter.
+import { AuthContext } from './contexts/AuthContext';
 
 // Components (keep Navbar + Footer eager for instant shell)
 import Navbar from './components/Navbar';
@@ -47,6 +48,8 @@ const AdminAnalytics = lazy(() => import('./pages/AdminAnalytics'));
 const AdminPartners = lazy(() => import('./pages/AdminPartners'));
 const AdminPartnerProfile = lazy(() => import('./pages/AdminPartnerProfile'));
 const AdminSettlements = lazy(() => import('./pages/AdminSettlements'));
+const AdminTrips = lazy(() => import('./pages/AdminTrips'));
+const AdminCreateTrip = lazy(() => import('./pages/AdminCreateTrip'));
 const AdminOwners = lazy(() => import('./pages/AdminPartners'));
 const AdminOwnerProfile = lazy(() => import('./pages/AdminPartnerProfile'));
 const VehicleSearch = lazy(() => import('./pages/VehicleSearch'));
@@ -173,13 +176,29 @@ function AppContent() {
             </ProtectedRoute>
           }
         />
-        <Route 
-          path="/admin/bookings" 
+        <Route
+          path="/admin/bookings"
           element={
             <ProtectedRoute>
               <Suspense fallback={<PageLoader label="Loading Bookings..." />}><AdminBookings /></Suspense>
             </ProtectedRoute>
-          } 
+          }
+        />
+        <Route
+          path="/admin/trips"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading Trips..." />}><AdminTrips /></Suspense>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/trips/create"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading Create Trip..." />}><AdminCreateTrip /></Suspense>
+            </ProtectedRoute>
+          }
         />
         {/* Admin booking detail (read-only) + dedicated assignment workflows */}
         <Route 

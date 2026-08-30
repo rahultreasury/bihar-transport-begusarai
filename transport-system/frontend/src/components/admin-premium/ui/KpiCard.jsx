@@ -4,6 +4,8 @@ export default function KpiCard({
   sub,
   accent = 'amber',
   loading,
+  onClick,
+  active = false,
 }) {
   const accentClass =
     accent === 'green'
@@ -17,12 +19,17 @@ export default function KpiCard({
             : 'from-amber-500/20 to-amber-500';
 
   return (
-    <div className="rounded-3xl border border-border/60 bg-card/40 backdrop-blur-xl p-5 shadow-sm">
+    <div
+      onClick={onClick}
+      className={`rounded-3xl border bg-card/40 backdrop-blur-xl p-5 shadow-sm transition-all ${
+        onClick ? 'cursor-pointer hover:shadow-md hover:scale-[1.02]' : ''
+      } ${active ? 'border-amber-500 ring-2 ring-amber-500/20' : 'border-border/60'}`}
+    >
       <div className="flex items-start justify-between">
         <div>
           <div className="text-sm text-muted font-medium">{title}</div>
           {loading ? (
-            <div className="h-7 w-28 mt-3 rounded-lg bg-skeleton" />
+            <div className="h-7 w-28 mt-3 rounded-lg bg-skeleton animate-pulse" />
           ) : (
             <div className="text-3xl font-semibold mt-1">
               {value}

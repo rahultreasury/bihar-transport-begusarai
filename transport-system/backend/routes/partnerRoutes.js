@@ -88,6 +88,7 @@ router.post('/', protect, adminCheck, [
     .matches(/^[6-9]\d{9}$/).withMessage('Please enter a valid 10-digit phone number.'),
   body('city').trim().notEmpty().withMessage('City is required.'),
   body('commission_percentage').optional().isFloat({ min: 0, max: 100 }).withMessage('Commission must be between 0 and 100%.'),
+  body('partner_capability').optional().isIn(['PARTNER_ONLY', 'TRANSPORT_OPERATOR', 'BOTH']).withMessage('Invalid partner capability.'),
 ], handleValidation, async (req, res, next) => {
   try {
     console.log('[ROUTE] POST /admin/partners - ENTERED');
@@ -101,7 +102,13 @@ router.post('/', protect, adminCheck, [
     return res.status(201).json({
       success: true,
       message: 'Transport Owner registered successfully.',
-      data: { partner_id: partner.partner_id, partner_code: partner.partner_code, partner_name: partner.partner_name },
+      data: {
+        partner_id: partner.partner_id,
+        partner_code: partner.partner_code,
+        partner_name: partner.partner_name,
+        partner_capability: partner.partner_capability,
+        linked_vehicle_owner_id: partner.linked_vehicle_owner_id || null,
+      },
     });
   } catch (error) {
     console.error('[ROUTE] Create partner error:', error.message, 'code:', error.code);
@@ -116,6 +123,9 @@ router.post('/', protect, adminCheck, [
     }
     if (error.code === 'INVALID_COMMISSION') {
       return res.status(400).json({ success: false, message: 'Commission must be between 0 and 100%.' });
+    }
+    if (error.code === 'INVALID_PARTNER_CAPABILITY') {
+      return res.status(400).json({ success: false, message: error.message });
     }
     console.log('[ROUTE] Sending 500 error response');
     return res.status(500).json({ success: false, message: 'Something went wrong. Please try again.' });
@@ -491,6 +501,43 @@ router.get('/:id/commission', protect, adminCheck, async (req, res) => {
     if (!summary) return res.status(404).json({ success: false, message: 'Partner not found' });
 
     res.json({ success: true, data: summary });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+// ============================
+// VEHICLE OWNER LINKING
+// ============================
+
+// Link an existing VehicleOwner to this Partner
+router.post('/:id/link-vehicle-owner', protect, adminCheck, [
+  body('vehicle_owner_id').isInt({ min: 1 }).withMessage('Valid vehicle_owner_id is required'),
+], handleValidation, async (req, res) => {
+  try {
+    const partnerId = parseInt(req.params.id);
+    const vehicleOwnerId = parseInt(req.body.vehicle_owner_id);
+    if (isNaN(partnerId) || isNaN(vehicleOwnerId)) {
+      return res.status(400).json({ success: false, message: 'Invalid partner ID or vehicle owner ID' });
+    }
+
+    const result = await partnerService.linkVehicleOwnerToPartner(partnerId, vehicleOwnerId);
+    res.json({ success: true, message: 'Vehicle Owner linked to Partner successfully', data: result });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+// Create a VehicleOwner from an existing Partner
+router.post('/:id/create-vehicle-owner', protect, adminCheck, async (req, res) => {
+  try {
+    const partnerId = parseInt(req.params.id);
+    if (isNaN(partnerId)) {
+      return res.status(400).json({ success: false, message: 'Invalid partner ID' });
+    }
+
+    const result = await partnerService.createVehicleOwnerFromPartner(partnerId);
+    res.status(201).json({ success: true, message: 'Vehicle Owner created from Partner successfully', data: result });
   } catch (error) {
     handleError(res, error);
   }

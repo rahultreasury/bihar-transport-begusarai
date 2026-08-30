@@ -253,17 +253,16 @@ function OverviewTab({ driver }) {
 // ============================
 function TripsTab({ driverId }) {
   const [trips, setTrips] = useState([]);
-  const [summary, setSummary] = useState({ revenue: 0, totalDistance: 0 });
+  const [summary, setSummary] = useState({ totalTrips: 0, completed: 0, inTransit: 0, totalFreight: 0, totalExpenses: 0, totalProfit: 0, totalPayments: 0, outstanding: 0 });
   const [loading, setLoading] = useState(true);
   const [pagination, setPagination] = useState({ page: 1, limit: 20, total: 0, pages: 0 });
 
   const fetchTrips = useCallback(async (page = 1) => {
     setLoading(true);
     try {
-      const response = await adminAPI.getDriverTrips(driverId, { page, limit: 20 });
+      const response = await adminAPI.getTripsByDriverId(driverId, { page, limit: 20 });
       if (response.data?.success) {
         setTrips(response.data.data || []);
-        setSummary({ revenue: response.data.revenue || 0, totalDistance: response.data.totalDistance || 0 });
         if (response.data.pagination) setPagination(response.data.pagination);
       }
     } catch (err) {
@@ -275,12 +274,21 @@ function TripsTab({ driverId }) {
 
   useEffect(() => { fetchTrips(); }, [fetchTrips]);
 
+  const formatCurrency = (amount) => {
+    if (amount === null || amount === undefined) return '₹0';
+    return new Intl.NumberFormat('en-IN', {
+      style: 'currency',
+      currency: 'INR',
+      maximumFractionDigits: 0,
+    }).format(amount);
+  };
+
   const columns = useMemo(() => [
     {
-      key: 'booking_reference',
-      header: 'Booking #',
+      key: 'trip_number',
+      header: 'Trip #',
       render: (r) => (
-        <span className="font-mono font-semibold text-amber-600 dark:text-amber-400">{r.booking_reference || '—'}</span>
+        <span className="font-mono font-semibold text-amber-600">{r.trip_number || '—'}</span>
       )
     },
     {
@@ -297,9 +305,9 @@ function TripsTab({ driverId }) {
       )
     },
     {
-      key: 'goods_description',
-      header: 'Goods',
-      render: (r) => <span className="text-sm text-muted">{r.goods_type || r.goods_description || '—'}</span>
+      key: 'client',
+      header: 'Client',
+      render: (r) => <span className="text-sm">{r.user ? `${r.user.first_name} ${r.user.last_name}` : '—'}</span>
     },
     {
       key: 'vehicle',
@@ -311,33 +319,40 @@ function TripsTab({ driverId }) {
       header: 'Status',
       render: (r) => {
         const statusColors = {
-          pending: 'text-amber-500',
-          confirmed: 'text-blue-500',
-          in_transit: 'text-indigo-500',
-          delivered: 'text-green-500',
-          completed: 'text-emerald-500',
-          cancelled: 'text-red-500'
+          PENDING: 'text-yellow-500',
+          ASSIGNED: 'text-blue-500',
+          IN_TRANSIT: 'text-indigo-500',
+          DELIVERED: 'text-green-500',
+          COMPLETED: 'text-emerald-500',
+          CANCELLED: 'text-red-500'
         };
         return (
           <span className={`text-sm font-medium ${statusColors[r.status] || 'text-muted'}`}>
-            {(r.status || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+            {(r.status || '').replace(/_/g, ' ')}
           </span>
         );
       }
     },
     {
-      key: 'final_price',
-      header: 'Revenue',
+      key: 'freight',
+      header: 'Freight',
       render: (r) => (
-        <span className="font-semibold text-sm">₹{Number(r.final_price || 0).toLocaleString('en-IN')}</span>
+        <span className="font-semibold text-sm">{formatCurrency(r.freight_amount)}</span>
       )
     },
     {
-      key: 'created_at',
+      key: 'profit',
+      header: 'Profit',
+      render: (r) => (
+        <span className="font-semibold text-sm text-green-600">{formatCurrency(r.profit)}</span>
+      )
+    },
+    {
+      key: 'trip_date',
       header: 'Date',
       render: (r) => (
         <span className="text-sm text-muted">
-          {r.created_at ? new Date(r.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '—'}
+          {r.trip_date ? new Date(r.trip_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '—'}
         </span>
       )
     }
@@ -362,16 +377,18 @@ function TripsTab({ driverId }) {
         <div className="rounded-2xl border border-border/60 bg-card/40 p-4">
           <div className="text-xs text-muted">Completed</div>
           <div className="text-2xl font-bold text-green-500">
-            {trips.filter(t => ['delivered', 'completed'].includes(t.status)).length}
+            {trips.filter(t => t.status === 'COMPLETED').length}
           </div>
         </div>
         <div className="rounded-2xl border border-border/60 bg-card/40 p-4">
-          <div className="text-xs text-muted">Revenue Generated</div>
-          <div className="text-2xl font-bold text-amber-500">₹{Number(summary.revenue).toLocaleString('en-IN')}</div>
+          <div className="text-xs text-muted">In Transit</div>
+          <div className="text-2xl font-bold text-purple-500">
+            {trips.filter(t => t.status === 'IN_TRANSIT').length}
+          </div>
         </div>
         <div className="rounded-2xl border border-border/60 bg-card/40 p-4">
-          <div className="text-xs text-muted">Distance Travelled</div>
-          <div className="text-2xl font-bold text-sky-500">{Number(summary.totalDistance).toLocaleString('en-IN')} km</div>
+          <div className="text-xs text-muted">Total Profit</div>
+          <div className="text-2xl font-bold text-green-600">{formatCurrency(trips.reduce((sum, t) => sum + (t.profit || 0), 0))}</div>
         </div>
       </div>
 
@@ -380,7 +397,7 @@ function TripsTab({ driverId }) {
         {trips.length === 0 ? (
           <EmptyState title="No trips found" subtitle="Trip history will appear here once the driver completes trips." />
         ) : (
-          <PremiumTable columns={columns} rows={trips.map(t => ({ ...t, id: t.booking_id }))} loading={false} />
+          <PremiumTable columns={columns} rows={trips.map(t => ({ ...t, id: t.trip_id }))} loading={false} />
         )}
         {pagination.pages > 1 && (
           <div className="flex justify-center mt-4 gap-2">

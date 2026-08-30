@@ -9,7 +9,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { adminAPI, driverAPI } from '../../../../src/services/api';
+import { adminAPI, driverAPI } from '../../../services/api';
 
 export default function TripFinancialSummary({ bookingId, userRole = 'ADMIN' }) {
   const [financial, setFinancial] = useState(null);

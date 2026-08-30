@@ -1,6 +1,6 @@
 import { useEffect, useState, useContext, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AuthContext } from '../App';
+import { AuthContext } from '../contexts/AuthContext';
 import { adminAPI } from '../services/api';
 
 import AdminShell from '../components/admin-premium/layout/AdminShell';

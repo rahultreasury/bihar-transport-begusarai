@@ -16,7 +16,7 @@ import {
   Target,
   BarChart3,
 } from 'lucide-react';
-import { AuthContext } from '../App';
+import { AuthContext } from '../contexts/AuthContext';
 import { authAPI } from '../services/api';
 
 // ─── Floating background shape component ────────────────────

@@ -1,0 +1,287 @@
+diff --git a/transport-system/backend/prisma/schema.prisma b/transport-system/backend/prisma/schema.prisma
+index eab955d..f1c7d76 100644
+--- a/transport-system/backend/prisma/schema.prisma
++++ b/transport-system/backend/prisma/schema.prisma
+@@ -86,6 +86,45 @@ enum InvoiceStatus {
+   CANCELLED
+ }
+ 
++// ============================================================
++// TRIP MANAGEMENT ENUMS
++// ============================================================
++
++enum TripStatus {
++  PENDING
++  ASSIGNED
++  IN_TRANSIT
++  DELIVERED
++  COMPLETED
++  CANCELLED
++}
++
++enum TripExpenseType {
++  DRIVER
++  DIESEL
++  TOLL
++  LOADING
++  UNLOADING
++  OWNER
++  MAINTENANCE
++  OTHER
++}
++
++enum TripPaymentType {
++  ADVANCE
++  PARTIAL
++  FULL
++  SETTLEMENT
++  OTHER
++}
++
++// Trip payment category - distinguishes who the payment is from/for
++enum TripPaymentCategory {
++  CLIENT_PAYMENT
++  OWNER_PAYMENT
++  DRIVER_PAYMENT
++}
++
+ // ============================================================
+ // TRIP FINANCIAL ENUMS
+ // ============================================================
+@@ -208,6 +247,7 @@ model User {
+   drivers            Driver[]
+   bookings           Booking[]
+   partnerApplications PartnerApplication[]
++  trips              Trip[]
+ 
+   @@index([email], name: "idx_users_email")
+   @@index([phone], name: "idx_users_phone")
+@@ -260,6 +300,7 @@ model Driver {
+   driverAssignments    DriverAssignment[]  @relation("assigned_driver_history")
+   reservations         Reservation[]
+   vehicleAssignments   VehicleAssignment[] @relation("assigned_driver")
++  trips                Trip[]
+ 
+   current_vehicle_id  Int?    @unique // Currently assigned vehicle (first-class entity)
+ 
+@@ -341,18 +382,22 @@ model VehicleOwner {
+   bank_name           String?
+   upi_id              String?
+   address             String?
+-  status              String?       @default("active") // active, inactive, suspended
++  status              String?   @default("active") // active, inactive, suspended
++  owner_type          String?   @default("TRANSPORT_COMPANY") // TRANSPORT_COMPANY, INDIVIDUAL_OWNER, DRIVER_OWNER
+   notes               String?
+-  is_active           Boolean?      @default(true)
++  is_active           Boolean?  @default(true)
+   created_at          DateTime?     @default(now())
+   updated_at          DateTime?     @default(now())
+   deleted_at          DateTime?     // Soft delete
++  partner_link        Int?      @unique  // FK to Partner.partner_id (nullable, 1:1)
+ 
+   // Relations
+   vehicles            TransportVehicle[] @relation("vehicle_owner")
+   drivers             Driver[]           @relation("transport_owner_drivers")
+   applications        PartnerApplication[] @relation("vehicle_owner_applications")
+   bookings            Booking[]
++  trips               Trip[]
++  linkedPartner       Partner?           @relation("vehicle_owner_link", fields: [partner_link], references: [partner_id], onDelete: SetNull)
+ 
+   @@index([owner_code], name: "idx_vehicle_owner_code")
+   @@index([mobile], name: "idx_vehicle_owner_mobile")
+@@ -360,6 +405,8 @@ model VehicleOwner {
+   @@index([city], name: "idx_vehicle_owner_city")
+   @@index([state], name: "idx_vehicle_owner_state")
+   @@index([is_active], name: "idx_vehicle_owner_active")
++  @@index([owner_type], name: "idx_vehicle_owner_type")
++  @@index([partner_link], name: "idx_vehicle_owner_partner_link")
+   @@map("vehicle_owners")
+ }
+ 
+@@ -404,6 +451,7 @@ model TransportVehicle {
+   bookingAssignments  BookingAssignment[]
+   reservations        Reservation[]
+   vehicleAssignments  VehicleAssignment[]
++  trips                Trip[]
+ 
+   @@index([driver_id], name: "idx_vehicles_driver")
+   @@index([owner_id], name: "idx_vehicles_owner")
+@@ -505,6 +553,7 @@ model Booking {
+   tripSettlements    TripSettlement[]
+   commissionRecords  CommissionRecord[]
+   financialTransactions FinancialTransaction[]
++  trips              Trip[]
+ 
+   @@index([user_id], name: "idx_bookings_user")
+   @@index([driver_id], name: "idx_bookings_driver")
+@@ -628,7 +677,7 @@ model Partner {
+   mobile            String
+   alternate_mobile  String?
+   city              String?
+-  state             String?      @default("Bihar")
++  state             String?       @default("Bihar")
+   gst_number        String?
+   pan_number        String?
+   bank_account      String?
+@@ -648,6 +697,7 @@ model Partner {
+   created_at        DateTime?    @default(now())
+   updated_at        DateTime?    @default(now())
+   deleted_at        DateTime?    // Soft delete
++  partner_capability String?     @default("PARTNER_ONLY") // PARTNER_ONLY, TRANSPORT_OPERATOR, BOTH
+ 
+   // Relations
+   sourcedVehicles   TransportVehicle[] @relation("sourced_vehicles")
+@@ -659,6 +709,7 @@ model Partner {
+   documents         PartnerDocument[]
+   driverAssignments DriverAssignment[]  @relation("partner_assignments")
+   applications      PartnerApplication[]
++  linkedVehicleOwner VehicleOwner?      @relation("vehicle_owner_link")
+ 
+   @@index([partner_code], name: "idx_partner_code")
+   @@index([mobile], name: "idx_partner_mobile")
+@@ -666,6 +717,7 @@ model Partner {
+   @@index([city], name: "idx_partner_city")
+   @@index([state], name: "idx_partner_state")
+   @@index([is_active], name: "idx_partner_active")
++  @@index([partner_capability], name: "idx_partner_capability")
+   @@map("partners")
+ }
+ 
+@@ -1157,3 +1209,137 @@ model AuditLog {
+   @@map("audit_logs")
+ }
+ 
++// ============================================================
++// TRIP MANAGEMENT MODULE
++// ============================================================
++
++// --- Trip ---
++// Central entity for offline/online trip management.
++// A Trip can be created independently or from a Booking.
++model Trip {
++  trip_id            Int       @id @default(autoincrement())
++  trip_number        String    @unique // BTBT-YYYY-NNNNN
++  booking_id         Int?      // Optional link to existing booking
++  user_id            Int       // Client (User)
++  transport_owner_id Int       // Transport Owner (VehicleOwner)
++  vehicle_id         Int       // Vehicle (TransportVehicle)
++  driver_id          Int       // Driver
++
++  // Route
++  pickup_location    String
++  pickup_city        String
++  drop_location      String
++  drop_city          String
++  distance_km        Float?
++  expected_delivery_date DateTime?  // Expected delivery date
++  trip_delivered_date    DateTime?  // Actual delivery date
++
++  // Financial
++  freight_amount     Float
++  driver_payment     Float?
++  owner_payment      Float?
++  advance            Float?    @default(0)
++  // Tracking paid amounts for quick calculations
++  client_received    Float?    @default(0)  // Total received from client
++  owner_paid         Float?    @default(0)  // Total paid to owner
++  driver_paid        Float?    @default(0)  // Total paid to driver
++  notes              String?
++
++  // Status
++  status             TripStatus @default(PENDING)
++
++  // Timestamps
++  trip_date          DateTime?
++  created_at         DateTime? @default(now())
++  updated_at         DateTime? @default(now())
++  completed_at       DateTime?
++  cancelled_at       DateTime?
++
++  // Relations
++  user               User              @relation(fields: [user_id], references: [user_id])
++  transportOwner     VehicleOwner      @relation(fields: [transport_owner_id], references: [owner_id])
++  vehicle            TransportVehicle  @relation(fields: [vehicle_id], references: [vehicle_id])
++  driver             Driver            @relation(fields: [driver_id], references: [driver_id])
++  booking            Booking?          @relation(fields: [booking_id], references: [booking_id])
++  expenses           TripExpense[]
++  payments           TripPayment[]
++  timeline           TripTimeline[]
++
++  @@index([trip_number], name: "idx_trips_number")
++  @@index([user_id], name: "idx_trips_user")
++  @@index([transport_owner_id], name: "idx_trips_owner")
++  @@index([vehicle_id], name: "idx_trips_vehicle")
++  @@index([driver_id], name: "idx_trips_driver")
++  @@index([status], name: "idx_trips_status")
++  @@index([trip_date], name: "idx_trips_date")
++  @@index([booking_id], name: "idx_trips_booking")
++  @@map("trips")
++}
++
++// --- Trip Expense ---
++// Individual expense records for a trip.
++model TripExpense {
++  expense_id    Int            @id @default(autoincrement())
++  trip_id       Int
++  expense_type  TripExpenseType
++  amount        Float
++  expense_date  DateTime?      @default(now())
++  description   String?
++  created_at    DateTime?      @default(now())
++  updated_at    DateTime?      @default(now())
++
++  // Relations
++  trip          Trip           @relation(fields: [trip_id], references: [trip_id], onDelete: Cascade)
++
++  @@index([trip_id], name: "idx_trip_expenses_trip")
++  @@index([expense_type], name: "idx_trip_expenses_type")
++  @@map("trip_expenses")
++}
++
++// --- Trip Payment ---
++// Individual payment records for a trip.
++model TripPayment {
++  payment_id     Int            @id @default(autoincrement())
++  trip_id        Int
++  amount         Float
++  payment_type   TripPaymentType
++  payment_category TripPaymentCategory @default(CLIENT_PAYMENT) // Who: CLIENT_PAYMENT, OWNER_PAYMENT, DRIVER_PAYMENT
++  payment_date   DateTime?      @default(now())
++  payment_method String?        // cash, bank, upi, cheque
++  reference      String?
++  notes          String?
++  created_at     DateTime?      @default(now())
++  updated_at     DateTime?      @default(now())
++
++  // Relations
++  trip           Trip           @relation(fields: [trip_id], references: [trip_id], onDelete: Cascade)
++
++  @@index([trip_id], name: "idx_trip_payments_trip")
++  @@index([payment_type], name: "idx_trip_payments_type")
++  @@index([payment_category], name: "idx_trip_payments_category")
++  @@map("trip_payments")
++}
++
++// --- Trip Timeline ---
++// Unified timeline for all trip events (status changes, payments, expenses, assignments)
++model TripTimeline {
++  timeline_id    Int       @id @default(autoincrement())
++  trip_id        Int
++  event_type     String    // trip_created, status_changed, client_payment, owner_payment,
++                           // driver_payment, expense_added, assignment_changed, note_added
++  description    String
++  reference_type String?   // expense, payment, trip, etc.
++  reference_id   Int?
++  metadata       String?   // JSON payload for additional context
++  created_by     Int?      // Admin/User ID
++  created_at     DateTime? @default(now())
++
++  // Relations
++  trip Trip @relation(fields: [trip_id], references: [trip_id], onDelete: Cascade)
++
++  @@index([trip_id], name: "idx_trip_timeline_trip")
++  @@index([event_type], name: "idx_trip_timeline_event")
++  @@index([created_at], name: "idx_trip_timeline_date")
++  @@map("trip_timeline")
++}
++

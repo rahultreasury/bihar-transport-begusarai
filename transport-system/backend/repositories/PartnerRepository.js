@@ -267,10 +267,58 @@ class PartnerRepository {
   }
 
 /**
-   * Create a new transport partner
-   */
-  async create(data, tx = null) {
+ * Create a new transport partner
+ * If existingOwner is provided and partner_capability requires a VehicleOwner,
+ * the transaction will create/link the VehicleOwner atomically.
+ */
+  async create(data, tx = null, existingOwner = null) {
     const client = tx || prisma;
+    const needsVehicleOwner = data.partner_capability === 'TRANSPORT_OPERATOR' || data.partner_capability === 'BOTH';
+
+    if (needsVehicleOwner && !tx) {
+      // Wrap in transaction if not already in one
+      return await client.$transaction(async (prismaTx) => {
+        return await this.create(data, prismaTx, existingOwner);
+      });
+    }
+
+    if (needsVehicleOwner && tx) {
+      // We're inside a transaction
+      const partner = await client.partner.create({ data });
+      
+      let linkedVehicleOwnerId = null;
+      if (existingOwner) {
+        // Link existing VehicleOwner
+        await client.vehicleOwner.update({
+          where: { owner_id: existingOwner.owner_id },
+          data: { partner_link: partner.partner_id },
+        });
+        linkedVehicleOwnerId = existingOwner.owner_id;
+      } else {
+        // Create new VehicleOwner
+        const vehicleOwner = await client.vehicleOwner.create({
+          data: {
+            owner_name: data.owner_name,
+            company_name: data.company_name,
+            mobile: data.mobile,
+            city: data.city,
+            state: data.state || 'Bihar',
+            status: 'active',
+            owner_type: 'TRANSPORT_COMPANY',
+            is_active: true,
+            partner_link: partner.partner_id,
+          },
+        });
+        linkedVehicleOwnerId = vehicleOwner.owner_id;
+      }
+
+      return {
+        ...partner,
+        linked_vehicle_owner_id: linkedVehicleOwnerId,
+      };
+    }
+
+    // PARTNER_ONLY - no VehicleOwner needed
     console.log('[REPO] create() called - BEFORE prisma.partner.create');
     try {
       const result = await client.partner.create({ data });
@@ -280,6 +328,47 @@ class PartnerRepository {
       console.error('[REPO] create() ERROR:', err.message, 'code:', err.code);
       throw err;
     }
+  }
+
+  /**
+   * Find VehicleOwner by exact mobile match
+   */
+  async findVehicleOwnerByMobile(mobile, tx = null) {
+    const client = tx || prisma;
+    return await client.vehicleOwner.findFirst({
+      where: { mobile },
+    });
+  }
+
+  /**
+   * Link an existing VehicleOwner to this Partner
+   */
+  async linkVehicleOwner(partnerId, vehicleOwnerId, tx = null) {
+    const client = tx || prisma;
+    return await client.vehicleOwner.update({
+      where: { owner_id: vehicleOwnerId },
+      data: { partner_link: partnerId },
+    });
+  }
+
+  /**
+   * Create a VehicleOwner linked to this Partner
+   */
+  async createLinkedVehicleOwner(partnerData, tx = null) {
+    const client = tx || prisma;
+    return await client.vehicleOwner.create({
+      data: {
+        owner_name: partnerData.owner_name,
+        company_name: partnerData.company_name,
+        mobile: partnerData.mobile,
+        city: partnerData.city,
+        state: partnerData.state || 'Bihar',
+        status: 'active',
+        owner_type: 'TRANSPORT_COMPANY',
+        is_active: true,
+        partner_link: partnerData.partner_link,
+      },
+    });
   }
 
   /**

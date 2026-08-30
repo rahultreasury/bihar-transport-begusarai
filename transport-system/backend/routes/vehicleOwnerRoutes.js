@@ -86,6 +86,10 @@ router.post('/', protect, adminCheck, [
   body('mobile').trim().notEmpty().withMessage('Phone number is required.')
     .matches(/^[6-9]\d{9}$/).withMessage('Please enter a valid 10-digit phone number.'),
   body('city').trim().notEmpty().withMessage('City is required.'),
+  body('owner_type').optional().isIn(['TRANSPORT_COMPANY', 'INDIVIDUAL_OWNER', 'DRIVER_OWNER']).withMessage('Valid owner type is required'),
+  body('driver_id').optional().isInt({ min: 1 }).withMessage('Valid driver ID is required'),
+  body('driver_name').optional().trim().notEmpty().withMessage('Driver name is required'),
+  body('license_number').optional().trim().notEmpty().withMessage('Driving licence number is required'),
 ], handleValidation, async (req, res) => {
   try {
     const owner = await vehicleOwnerService.registerOwner(req.body);
@@ -210,6 +214,7 @@ router.post('/:id/vehicles', protect, adminCheck, [
   body('partner_id').optional().isInt({ min: 1 }).withMessage('Valid partner_id is required when provided'),
   body('owner_id').optional().isInt({ min: 1 }).withMessage('Valid owner_id is required when provided'),
   body('driver_id').optional().isInt({ min: 1 }).withMessage('Valid driver_id is required when provided'),
+  body('assign_owner_driver').optional().isBoolean().withMessage('assign_owner_driver must be a boolean'),
 ], handleValidation, async (req, res) => {
   try {
     const ownerId = parseInt(req.params.id);

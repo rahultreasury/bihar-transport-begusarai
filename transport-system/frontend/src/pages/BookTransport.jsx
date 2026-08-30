@@ -1,7 +1,7 @@
 import { useState, useContext, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { GoogleMap, useJsApiLoader, Marker, DirectionsRenderer, StandaloneSearchBox } from '@react-google-maps/api';
-import { AuthContext } from '../App';
+import { AuthContext } from '../contexts/AuthContext';
 import { bookingAPI } from '../services/api';
 // Shared 18-vehicle fleet catalogue — SINGLE SOURCE OF TRUTH (same data as Home).
 import {

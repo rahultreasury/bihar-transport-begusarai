@@ -53,6 +53,8 @@ export default function VehicleRegisterModal({ isOpen, onClose, onSuccess, owner
   const [ownersLoading, setOwnersLoading] = useState(false);
   const [ownerOpen, setOwnerOpen] = useState(false);
   const [ownerSearch, setOwnerSearch] = useState('');
+  const [ownerType, setOwnerType] = useState('');
+  const [assignOwnerDriver, setAssignOwnerDriver] = useState(false);
   const [drivers, setDrivers] = useState([]);
   const [driversLoading, setDriversLoading] = useState(false);
   const ownerWrapperRef = useRef(null);
@@ -130,6 +132,8 @@ export default function VehicleRegisterModal({ isOpen, onClose, onSuccess, owner
 
   const handleOwnerSelect = useCallback((owner) => {
     setForm(prev => ({ ...prev, owner_id: String(owner.owner_id) }));
+    setOwnerType(owner.owner_type || '');
+    setAssignOwnerDriver(false);
     setOwnerSearch('');
     setOwnerOpen(false);
     if (errors.owner_id) {
@@ -187,6 +191,7 @@ export default function VehicleRegisterModal({ isOpen, onClose, onSuccess, owner
         per_km_rate: form.per_km_rate ? Number(form.per_km_rate) : null,
         driver_id: form.driver_id ? Number(form.driver_id) : null,
         current_status: form.current_status,
+        assign_owner_driver: assignOwnerDriver,
       };
 
       const res = await adminAPI.createVehicleOwnerVehicle(form.owner_id, payload);
@@ -203,7 +208,7 @@ export default function VehicleRegisterModal({ isOpen, onClose, onSuccess, owner
     } finally {
       setSubmitting(false);
     }
-  }, [form, validate, ownerId, onSuccess]);
+  }, [form, validate, ownerId, onSuccess, ownerType]);
 
   const handleClose = useCallback(() => {
     setForm({ ...INITIAL_FORM });
@@ -212,6 +217,8 @@ export default function VehicleRegisterModal({ isOpen, onClose, onSuccess, owner
     setOwners([]);
     setOwnerSearch('');
     setOwnerOpen(false);
+    setOwnerType('');
+    setAssignOwnerDriver(false);
     setDrivers([]);
     onClose();
   }, [onClose]);
@@ -468,6 +475,39 @@ export default function VehicleRegisterModal({ isOpen, onClose, onSuccess, owner
                 ))}
               </select>
             </div>
+
+            {ownerType === 'DRIVER_OWNER' && (
+              <div className="mt-3 space-y-2">
+                <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={assignOwnerDriver}
+                      onChange={(e) => setAssignOwnerDriver(e.target.checked)}
+                      className="w-4 h-4 rounded border-amber-300 text-amber-600 focus:ring-amber-500"
+                    />
+                    <div>
+                      <span className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                        Assign owner as the current driver
+                      </span>
+                      <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
+                        The owner is also registered as a driver. You can optionally assign them to this vehicle.
+                      </p>
+                    </div>
+                  </label>
+                </div>
+                {assignOwnerDriver && (
+                  <div className="p-2.5 rounded-lg bg-amber-100/50 dark:bg-amber-500/10 border border-amber-200/60 dark:border-amber-500/20">
+                    <p className="text-xs text-amber-700 dark:text-amber-300 flex items-center gap-1.5">
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      Assigning the owner to this vehicle will change their current vehicle assignment.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Section 5: Documents */}

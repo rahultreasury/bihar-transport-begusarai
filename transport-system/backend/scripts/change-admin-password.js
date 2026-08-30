@@ -33,11 +33,12 @@ const BCRYPT_ROUNDS = 10; // matches project convention (authRoutes.js, seed scr
 const MIN_PASSWORD_LENGTH = 8;
 
 async function main() {
-  const newPassword = process.env.NEW_ADMIN_PASSWORD;
+  // Accept either NEW_ADMIN_PASSWORD (legacy) or ADMIN_PASSWORD (preferred).
+  const newPassword = process.env.ADMIN_PASSWORD || process.env.NEW_ADMIN_PASSWORD;
 
   if (!newPassword || typeof newPassword !== 'string' || newPassword.length < MIN_PASSWORD_LENGTH) {
     console.error(
-      `ERROR: NEW_ADMIN_PASSWORD must be set and at least ${MIN_PASSWORD_LENGTH} characters. Aborting.`
+      `ERROR: ADMIN_PASSWORD (or NEW_ADMIN_PASSWORD) must be set and at least ${MIN_PASSWORD_LENGTH} characters. Aborting.`
     );
     process.exit(1);
   }

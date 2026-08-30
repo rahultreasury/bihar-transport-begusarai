@@ -15,7 +15,13 @@ class VehicleOwnerService {
    * Register a new vehicle owner
    */
   async registerOwner(data) {
-    const { mobile } = data;
+    const { mobile, owner_type, driver_id } = data;
+
+    // Validate owner_type
+    const allowedOwnerTypes = ['TRANSPORT_COMPANY', 'INDIVIDUAL_OWNER', 'DRIVER_OWNER'];
+    const validatedOwnerType = owner_type && allowedOwnerTypes.includes(owner_type)
+      ? owner_type
+      : 'TRANSPORT_COMPANY';
 
     // Check unique mobile
     const existing = await this.repo.findByMobile(mobile);
@@ -52,10 +58,40 @@ class VehicleOwnerService {
       status: 'active',
       notes: data.notes || null,
       is_active: true,
+      owner_type: validatedOwnerType,
     };
 
-    const result = await this.repo.create(ownerData);
-    return result;
+    // Handle DRIVER_OWNER driver linking/creation
+    let linkDriverId = null;
+    let createDriverData = null;
+
+    if (validatedOwnerType === 'DRIVER_OWNER') {
+      if (driver_id) {
+        linkDriverId = parseInt(driver_id);
+      } else {
+        // Require driver fields for new driver creation
+        if (!data.driver_name || !data.mobile || !data.license_number) {
+          throw new Error('driver_name, mobile, and license_number are required when creating a DRIVER_OWNER without an existing driver_id');
+        }
+        createDriverData = {
+          driver_name: data.driver_name,
+          mobile: data.mobile,
+          alternate_mobile: data.alternate_mobile || null,
+          license_number: data.license_number,
+          city: data.city || null,
+          state: data.state || 'Bihar',
+          address: data.address || null,
+          profile_image: data.profile_image || null,
+        };
+      }
+    }
+
+    const result = await this.repo.createOwnerWithDriver(ownerData, linkDriverId, createDriverData);
+
+    return {
+      ...result.owner,
+      linked_driver_id: result.linkedDriverId,
+    };
   }
 
   async getOwnerProfile(ownerId) {
@@ -133,7 +169,7 @@ class VehicleOwnerService {
     const vehicleNumber = String(data.vehicle_number).trim().toUpperCase();
 
     const partnerId = data.partner_id ? parseInt(data.partner_id) : null;
-    const driverId = data.driver_id ? parseInt(data.driver_id) : null;
+    let driverId = data.driver_id ? parseInt(data.driver_id) : null;
 
     // Validate partner_id if provided
     if (partnerId) {
@@ -143,7 +179,29 @@ class VehicleOwnerService {
       }
     }
 
-    // Validate driver_id if provided
+    // Handle DRIVER_OWNER auto-assignment
+    const assignOwnerDriver = data.assign_owner_driver === true || data.assign_owner_driver === 'true';
+    if (assignOwnerDriver) {
+      // Verify owner exists and is DRIVER_OWNER
+      const owner = await this.repo.findById(ownerId);
+      if (!owner) {
+        throw new Error('Vehicle owner not found');
+      }
+      if (owner.owner_type !== 'DRIVER_OWNER') {
+        throw new Error('assign_owner_driver is only valid for DRIVER_OWNER type owners');
+      }
+
+      // Find the driver linked to this owner
+      const linkedDriver = await this.repo.findDriverByOwnerId(ownerId);
+      if (!linkedDriver || linkedDriver.length === 0) {
+        throw new Error('No driver is linked to this DRIVER_OWNER. Link a driver first or set assign_owner_driver to false.');
+      }
+
+      // Use the linked driver (first one if multiple)
+      driverId = linkedDriver[0].driver_id;
+    }
+
+    // Validate driver_id if provided (either from body or resolved from owner)
     if (driverId) {
       const driver = await this.repo.findDriverById(driverId);
       if (!driver) {
@@ -211,7 +269,31 @@ class VehicleOwnerService {
       if (data[key] !== undefined) updateData[key] = data[key];
     }
 
-    if (Object.keys(updateData).length === 0) {
+    let ownerChanged = false;
+
+    // owner_id changes require dedicated validated flow
+    if (updateData.owner_id !== undefined) {
+      const currentVehicle = await this.repo.findVehicleById(vehicleId);
+      if (!currentVehicle) {
+        throw new Error('Vehicle not found');
+      }
+
+      const newOwnerId = updateData.owner_id ? parseInt(updateData.owner_id) : null;
+
+      if (newOwnerId !== currentVehicle.owner_id) {
+        if (!newOwnerId) {
+          throw new Error('Cannot remove vehicle owner through generic update');
+        }
+        // Perform validated ownership change in a transaction
+        await this.repo.updateVehicleOwnerValidated(vehicleId, newOwnerId);
+        ownerChanged = true;
+      }
+
+      // Remove from generic updateData so it is not blindly passed through
+      delete updateData.owner_id;
+    }
+
+    if (Object.keys(updateData).length === 0 && !ownerChanged) {
       throw new Error('No valid fields provided for update');
     }
 
@@ -252,6 +334,11 @@ class VehicleOwnerService {
       if (!validStatuses.includes(updateData.current_status)) {
         throw new Error(`Invalid status. Must be one of: ${validStatuses.join(', ')}`);
       }
+    }
+
+    // If only owner_id was changed, return the updated vehicle
+    if (Object.keys(updateData).length === 0 && ownerChanged) {
+      return await this.repo.findVehicleById(vehicleId);
     }
 
     try {

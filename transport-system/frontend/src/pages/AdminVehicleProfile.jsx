@@ -92,7 +92,7 @@ export default function AdminVehicleProfile() {
     if (!id) return;
     setTripsLoading(true);
     try {
-      const res = await adminAPI.getVehicleTrips(id, { limit: 50 });
+      const res = await adminAPI.getTripsByVehicleId(id, { limit: 50 });
       if (res.data?.success) {
         setTrips(res.data.data || []);
       }
@@ -390,75 +390,58 @@ export default function AdminVehicleProfile() {
                 <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-amber-500"></div>
               </div>
             ) : trips.length === 0 ? (
-              <EmptyState title="No trip history" subtitle="Trip history will appear here once this vehicle is assigned to bookings." />
+              <EmptyState title="No trip history" subtitle="Trip history will appear here once this vehicle is assigned to trips." />
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border/60">
-                      <th className="text-left py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Booking</th>
+                      <th className="text-left py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Trip #</th>
                       <th className="text-left py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Date</th>
                       <th className="text-left py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Route</th>
+                      <th className="text-left py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Client</th>
                       <th className="text-left py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Driver</th>
-                      <th className="text-left py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Owner</th>
                       <th className="text-left py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Status</th>
-                      <th className="text-left py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Settlement</th>
-                      <th className="text-right py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Customer Fare</th>
-                      <th className="text-right py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Driver Payout</th>
-                      <th className="text-right py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">BT Margin</th>
+                      <th className="text-right py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Freight</th>
+                      <th className="text-right py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Expenses</th>
+                      <th className="text-right py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Profit</th>
                     </tr>
                   </thead>
                   <tbody>
                     {trips.map((trip) => (
-                      <tr key={trip.booking_id} className="border-b border-border/30 hover:bg-hover/30 transition-colors">
+                      <tr key={trip.trip_id} className="border-b border-border/30 hover:bg-hover/30 transition-colors">
                         <td className="py-3 px-2">
-                          <button
-                            onClick={() => navigate(`/admin/bookings/${trip.booking_number}`)}
-                            className="text-amber-600 hover:text-amber-700 font-medium font-mono text-xs"
-                          >
-                            {trip.booking_number}
-                          </button>
+                          <span className="text-amber-600 hover:text-amber-700 font-medium font-mono text-xs">
+                            {trip.trip_number}
+                          </span>
                         </td>
                         <td className="py-3 px-2 text-xs text-slate-500">
-                          {trip.pickup_date ? new Date(trip.pickup_date).toLocaleDateString('en-IN') : '—'}
+                          {trip.trip_date ? new Date(trip.trip_date).toLocaleDateString('en-IN') : '—'}
                         </td>
                         <td className="py-3 px-2 text-xs">
-                          <div className="font-medium">{trip.pickup_location || '—'}</div>
-                          <div className="text-slate-400">→ {trip.drop_location || '—'}</div>
+                          <div className="font-medium">{trip.pickup_city || '—'}</div>
+                          <div className="text-slate-400">→ {trip.drop_city || '—'}</div>
                         </td>
-                        <td className="py-3 px-2 text-xs">{trip.driver?.name || '—'}</td>
-                        <td className="py-3 px-2 text-xs">{trip.transportOwner?.name || '—'}</td>
+                        <td className="py-3 px-2 text-xs">{trip.user ? `${trip.user.first_name} ${trip.user.last_name}` : '—'}</td>
+                        <td className="py-3 px-2 text-xs">{trip.driver?.driver_name || '—'}</td>
                         <td className="py-3 px-2">
                           <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-medium ${
-                            trip.status === 'completed' || trip.status === 'delivered' ? 'bg-emerald-50 text-emerald-700' :
-                            trip.status === 'cancelled' ? 'bg-red-50 text-red-700' :
-                            trip.status === 'in_progress' || trip.status === 'confirmed' ? 'bg-blue-50 text-blue-700' :
+                            trip.status === 'COMPLETED' || trip.status === 'DELIVERED' ? 'bg-emerald-50 text-emerald-700' :
+                            trip.status === 'CANCELLED' ? 'bg-red-50 text-red-700' :
+                            trip.status === 'IN_TRANSIT' ? 'bg-blue-50 text-blue-700' :
                             'bg-slate-100 text-slate-600'
                           }`}>
                             {String(trip.status || '—').replace(/_/g, ' ')}
                           </span>
                         </td>
-                        <td className="py-3 px-2">
-                          {trip.financial ? (
-                            <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-medium ${
-                              trip.financial.financial_status === 'SETTLED' || trip.financial.financial_status === 'CLOSED' ? 'bg-emerald-50 text-emerald-700' :
-                              trip.financial.financial_status === 'SETTLEMENT_PENDING' ? 'bg-amber-50 text-amber-700' :
-                              'bg-slate-100 text-slate-600'
-                            }`}>
-                              {trip.financial.financial_status?.replace(/_/g, ' ') || '—'}
-                            </span>
-                          ) : (
-                            <span className="text-xs text-slate-400">—</span>
-                          )}
-                        </td>
                         <td className="py-3 px-2 text-right text-xs font-medium">
-                          {trip.financial?.customer_fare != null ? `₹${Number(trip.financial.customer_fare).toLocaleString('en-IN')}` : '—'}
+                          {trip.freight_amount != null ? `₹${Number(trip.freight_amount).toLocaleString('en-IN')}` : '—'}
                         </td>
-                        <td className="py-3 px-2 text-right text-xs font-medium">
-                          {trip.financial?.driver_payout != null ? `₹${Number(trip.financial.driver_payout).toLocaleString('en-IN')}` : '—'}
+                        <td className="py-3 px-2 text-right text-xs font-medium text-red-600">
+                          {trip.totalExpenses != null ? `₹${Number(trip.totalExpenses).toLocaleString('en-IN')}` : '—'}
                         </td>
                         <td className="py-3 px-2 text-right text-xs font-medium text-emerald-600">
-                          {trip.financial?.bt_margin != null ? `₹${Number(trip.financial.bt_margin).toLocaleString('en-IN')}` : '—'}
+                          {trip.profit != null ? `₹${Number(trip.profit).toLocaleString('en-IN')}` : '—'}
                         </td>
                       </tr>
                     ))}

@@ -62,6 +62,7 @@ const partnerRoutes = require('./routes/partnerRoutes');
 const partnerApplicationRoutes = require('./routes/partnerApplicationRoutes');
 const partnerSettlementRoutes = require('./routes/partnerSettlementRoutes');
 const tripFinancialRoutes = require('./routes/tripFinancialRoutes');
+const tripRoutes = require('./routes/tripRoutes');
 const emailService = require('./services/emailService');
 
 const app = express();
@@ -151,17 +152,16 @@ const loginLimiter = rateLimit({
 
 const bookingLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 60,
+  limit: 500,
   standardHeaders: true,
   legacyHeaders: false,
 });
 
 const adminLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 500,
+  limit: 1000,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => req.ip === '127.0.0.1' || req.ip === '::1' || req.ip === '::ffff:127.0.0.1',
 });
 
 app.use(globalLimiter);
@@ -194,7 +194,11 @@ app.use('/api/admin/settlements', adminLimiter, partnerSettlementRoutes);
 // Vehicle Owner Management Routes
 app.use('/api/admin/vehicle-owners', adminLimiter, vehicleOwnerRoutes);
 
+// Trip Management Routes (CRUD + expenses + payments)
+app.use('/api/trips', bookingLimiter, tripRoutes);
+
 // Trip Financial Routes (role-based financial data)
+// Mounted after tripRoutes to avoid route conflicts
 app.use('/api/trips', bookingLimiter, tripFinancialRoutes);
 
 // Health check endpoint

@@ -27,6 +27,8 @@ export default function AdminVehicleOwnerProfile() {
   const [driversLoading, setDriversLoading] = useState(false);
   const [vehicles, setVehicles] = useState([]);
   const [vehiclesLoading, setVehiclesLoading] = useState(false);
+  const [trips, setTrips] = useState([]);
+  const [tripsLoading, setTripsLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
@@ -72,6 +74,13 @@ export default function AdminVehicleOwnerProfile() {
       setDriversLoading(false);
     }
   };
+
+  // Fetch drivers for DRIVER_OWNER to show linked driver info
+  useEffect(() => {
+    if (owner?.owner_type === 'DRIVER_OWNER' && drivers.length === 0 && !driversLoading) {
+      fetchDrivers();
+    }
+  }, [owner?.owner_type]);
 
   const fetchVehicles = async () => {
     setVehiclesLoading(true);
@@ -158,6 +167,7 @@ export default function AdminVehicleOwnerProfile() {
     { key: 'overview', label: 'Overview' },
     { key: 'vehicles', label: 'Vehicles' },
     { key: 'drivers', label: 'Drivers' },
+    { key: 'trips', label: 'Trips' },
     { key: 'bookings', label: 'Bookings' },
   ];
 
@@ -174,6 +184,28 @@ export default function AdminVehicleOwnerProfile() {
       fetchVehicles();
     }
   }, [activeTab]);
+
+  // Fetch trips when trips tab is active
+  useEffect(() => {
+    if (activeTab === 'trips' && trips.length === 0 && !tripsLoading) {
+      fetchTrips();
+    }
+  }, [activeTab]);
+
+  const fetchTrips = async () => {
+    if (!id) return;
+    setTripsLoading(true);
+    try {
+      const res = await adminAPI.getTripsByOwnerId(id, { limit: 50 });
+      if (res.data?.success) {
+        setTrips(res.data.data || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch owner trips:', err);
+    } finally {
+      setTripsLoading(false);
+    }
+  };
 
   return (
     <AdminShell navItems={NAV_ITEMS} activeKey="vehicle-owners">
@@ -308,6 +340,61 @@ export default function AdminVehicleOwnerProfile() {
                 )}
               </div>
             </div>
+
+            {/* DRIVER_OWNER Relationship Card */}
+            {owner.owner_type === 'DRIVER_OWNER' && (
+              <div className="bg-card rounded-2xl border border-border p-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400">
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                    Driver + Vehicle Owner
+                  </span>
+                </div>
+                <p className="text-sm text-muted mb-4">This person is both a Driver and a Transport Owner.</p>
+                <div className="space-y-3">
+                  {driversLoading ? (
+                    <div className="flex items-center justify-center py-4">
+                      <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-amber-500"></div>
+                    </div>
+                  ) : drivers.length > 0 ? (
+                    drivers.map((driver) => (
+                      <div key={driver.driver_id} className="flex items-center justify-between p-3 rounded-xl bg-hover/40 border border-border/60">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => navigate(`/admin/drivers/${driver.driver_id}`)}
+                              className="text-sm font-medium text-amber-600 hover:text-amber-700"
+                            >
+                              {driver.driver_name}
+                            </button>
+                            <span className="text-xs text-muted font-mono">{driver.driver_code}</span>
+                          </div>
+                          <p className="text-xs text-muted mt-0.5">{driver.mobile}</p>
+                          {driver.currentVehicle && (
+                            <button
+                              onClick={() => navigate(`/admin/vehicles/${driver.currentVehicle.vehicle_id}`)}
+                              className="text-xs text-amber-600 hover:text-amber-700 mt-1 inline-flex items-center gap-1"
+                            >
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>
+                              {driver.currentVehicle.vehicle_number} — {driver.currentVehicle.vehicle_type}
+                            </button>
+                          )}
+                        </div>
+                        <span className={`px-2 py-1 rounded-lg text-xs font-semibold ${
+                          driver.status === 'available' ? 'bg-green-100 text-green-700' :
+                          driver.status === 'on_trip' ? 'bg-blue-100 text-blue-700' :
+                          'bg-gray-100 text-gray-600'
+                        }`}>
+                          {driver.status}
+                        </span>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-sm text-muted text-center py-3">No driver linked to this owner yet.</p>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -398,6 +485,74 @@ export default function AdminVehicleOwnerProfile() {
               />
             ) : (
               <EmptyMessage message="No drivers assigned to this transport owner" />
+            )}
+          </div>
+        )}
+
+        {activeTab === 'trips' && (
+          <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-6">
+            <h3 className="text-base font-semibold text-text mb-4">Trip History</h3>
+            {tripsLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-amber-500"></div>
+              </div>
+            ) : trips.length === 0 ? (
+              <EmptyState title="No trips found" subtitle="Trip history will appear here once trips are created for this owner." />
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border/60">
+                      <th className="text-left py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Trip #</th>
+                      <th className="text-left py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Date</th>
+                      <th className="text-left py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Route</th>
+                      <th className="text-left py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Client</th>
+                      <th className="text-left py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Driver</th>
+                      <th className="text-left py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Vehicle</th>
+                      <th className="text-left py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Status</th>
+                      <th className="text-right py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Freight</th>
+                      <th className="text-right py-3 px-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Profit</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {trips.map((trip) => (
+                      <tr key={trip.trip_id} className="border-b border-border/30 hover:bg-hover/30 transition-colors">
+                        <td className="py-3 px-2">
+                          <span className="text-amber-600 font-medium font-mono text-xs">
+                            {trip.trip_number}
+                          </span>
+                        </td>
+                        <td className="py-3 px-2 text-xs text-slate-500">
+                          {trip.trip_date ? new Date(trip.trip_date).toLocaleDateString('en-IN') : '—'}
+                        </td>
+                        <td className="py-3 px-2 text-xs">
+                          <div className="font-medium">{trip.pickup_city || '—'}</div>
+                          <div className="text-slate-400">→ {trip.drop_city || '—'}</div>
+                        </td>
+                        <td className="py-3 px-2 text-xs">{trip.user ? `${trip.user.first_name} ${trip.user.last_name}` : '—'}</td>
+                        <td className="py-3 px-2 text-xs">{trip.driver?.driver_name || '—'}</td>
+                        <td className="py-3 px-2 text-xs">{trip.vehicle?.vehicle_number || '—'}</td>
+                        <td className="py-3 px-2">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-medium ${
+                            trip.status === 'COMPLETED' || trip.status === 'DELIVERED' ? 'bg-emerald-50 text-emerald-700' :
+                            trip.status === 'CANCELLED' ? 'bg-red-50 text-red-700' :
+                            trip.status === 'IN_TRANSIT' ? 'bg-blue-50 text-blue-700' :
+                            'bg-slate-100 text-slate-600'
+                          }`}>
+                            {String(trip.status || '—').replace(/_/g, ' ')}
+                          </span>
+                        </td>
+                        <td className="py-3 px-2 text-right text-xs font-medium">
+                          {trip.freight_amount != null ? `₹${Number(trip.freight_amount).toLocaleString('en-IN')}` : '—'}
+                        </td>
+                        <td className="py-3 px-2 text-right text-xs font-medium text-emerald-600">
+                          {trip.profit != null ? `₹${Number(trip.profit).toLocaleString('en-IN')}` : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         )}

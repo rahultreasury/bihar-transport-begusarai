@@ -235,6 +235,40 @@ updateDriver: (id, data) => api.put(`/admin/drivers/${id}`, data),
   applyTripCommission: (bookingId, data) => api.post(`/trips/${bookingId}/commission`, data),
   calculateTripFinancial: (bookingId, data) => api.post(`/trips/${bookingId}/financial/calculate`, data),
 
+  // Trip Management (CRUD + expenses + payments)
+  getTrips: (params) => api.get('/trips', { params }),
+  getTripSummary: () => api.get('/trips/summary'),
+  getTopClients: (limit) => api.get('/trips/top-clients', { params: { limit } }),
+  getTrip: (id) => api.get(`/trips/${id}`),
+  createTrip: (data) => api.post('/trips', data),
+  updateTrip: (id, data) => api.put(`/trips/${id}`, data),
+  deleteTrip: (id) => api.delete(`/trips/${id}`),
+  updateTripStatus: (id, status) => api.patch(`/trips/${id}/status`, { status }),
+
+  // Trip Expenses
+  getTripExpenses: (tripId) => api.get(`/trips/${tripId}/expenses`),
+  addTripExpense: (tripId, data) => api.post(`/trips/${tripId}/expenses`, data),
+  updateTripExpense: (tripId, expenseId, data) => api.put(`/trips/${tripId}/expenses/${expenseId}`, data),
+  deleteTripExpense: (tripId, expenseId) => api.delete(`/trips/${tripId}/expenses/${expenseId}`),
+
+  // Trip Payments
+  getTripPayments: (tripId) => api.get(`/trips/${tripId}/payments`),
+  addTripPayment: (tripId, data) => api.post(`/trips/${tripId}/payments`, data),
+
+  // Lookup data
+  getTripClients: (search) => api.get('/trips/lookup/clients', { params: { search } }),
+  getTripDrivers: (search) => api.get('/trips/lookup/drivers', { params: { search } }),
+  getTripVehicles: (search) => api.get('/trips/lookup/vehicles', { params: { search } }),
+  getTripOwners: (search) => api.get('/trips/lookup/owners', { params: { search } }),
+  getVehiclesByOwner: (ownerId) => api.get(`/trips/lookup/vehicles-by-owner/${ownerId}`),
+  getDriversByOwner: (ownerId, search = '') => api.get(`/trips/lookup/drivers-by-owner/${ownerId}`, { params: { search } }),
+
+  // Trips by entity
+  getTripsByClientId: (clientId, params) => api.get(`/trips/client/${clientId}`, { params }),
+  getTripsByDriverId: (driverId, params) => api.get(`/trips/driver/${driverId}`, { params }),
+  getTripsByVehicleId: (vehicleId, params) => api.get(`/trips/vehicle/${vehicleId}`, { params }),
+  getTripsByOwnerId: (ownerId, params) => api.get(`/trips/owner/${ownerId}`, { params }),
+
   // Partner Applications
   getPartnerApplications: (params) => api.get('/admin/partner-applications', { params }),
   getPartnerApplication: (id) => api.get(`/admin/partner-applications/${id}`),

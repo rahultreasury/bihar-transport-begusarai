@@ -18,11 +18,13 @@ import {
   LogOut,
   Menu,
   X,
+  Route,
 } from 'lucide-react';
 
 const DEFAULT_NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/admin' },
   { key: 'bookings', label: 'Bookings', icon: Package, path: '/admin/bookings' },
+  { key: 'trips', label: 'Trips', icon: Route, path: '/admin/trips' },
   { key: 'owners', label: 'Transport Owners', icon: Truck, path: '/admin/owners' },
   { key: 'vehicles', label: 'Vehicles', icon: Car, path: '/admin/vehicles' },
   { key: 'drivers', label: 'Drivers', icon: Users, path: '/admin/drivers' },
@@ -73,6 +75,8 @@ const handleNav = useCallback(
         navigate('/admin');
       } else if (key === 'bookings') {
         navigate('/admin/bookings');
+      } else if (key === 'trips') {
+        navigate('/admin/trips');
       } else if (key === 'drivers') {
         navigate('/admin/drivers');
       } else if (key === 'vehicles') {
