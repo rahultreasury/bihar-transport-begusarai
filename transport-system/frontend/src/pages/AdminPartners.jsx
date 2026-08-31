@@ -7,7 +7,7 @@ import KpiCard from '../components/admin-premium/ui/KpiCard';
 import PremiumTable from '../components/admin-premium/ui/PremiumTable';
 import EmptyState from '../components/admin-premium/ui/EmptyState';
 import { LoadingSkeleton } from '../components/admin-premium/ui/LoadingSkeleton';
-import OwnerRegisterModal from '../components/admin-premium/owners/OwnerRegisterModal';
+import VehicleOwnerRegisterModal from '../components/admin-premium/owners/VehicleOwnerRegisterModal';
 
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: '▦' },
@@ -94,7 +94,7 @@ function ActionsDropdown({ owner, onViewProfile, onEdit, onDeactivate, onDelete 
 
 export default function AdminPartners() {
   const navigate = useNavigate();
-  const [partners, setPartners] = useState([]);
+  const [owners, setOwners] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -128,7 +128,7 @@ export default function AdminPartners() {
     setTimeout(() => setToast(null), 4000);
   }, []);
 
-  const fetchPartners = useCallback(async (page = 1) => {
+  const fetchOwners = useCallback(async (page = 1) => {
     setLoading(true);
     setError(null);
     try {
@@ -140,9 +140,9 @@ export default function AdminPartners() {
         sort_by: sortField,
         sort_order: sortDirection,
       };
-      const response = await adminAPI.getPartners(params);
+      const response = await adminAPI.getVehicleOwners(params);
       if (response.data?.success) {
-        setPartners(response.data.data || []);
+        setOwners(response.data.data || []);
         if (response.data.pagination) setPagination(response.data.pagination);
       }
     } catch (err) {
@@ -154,13 +154,13 @@ export default function AdminPartners() {
 
   const fetchStats = useCallback(async () => {
     try {
-      const response = await adminAPI.getOwnerStats();
+      const response = await adminAPI.getVehicleOwnerStats();
       if (response.data?.success) setStats(response.data.data);
     } catch (err) { console.error('Error fetching owner stats:', err); }
   }, []);
 
-  useEffect(() => { fetchPartners(1); fetchStats(); }, []);
-  useEffect(() => { fetchPartners(1); }, [debouncedSearch, statusFilter, sortField, sortDirection]);
+  useEffect(() => { fetchOwners(1); fetchStats(); }, []);
+  useEffect(() => { fetchOwners(1); }, [debouncedSearch, statusFilter, sortField, sortDirection]);
 
   // Applications fetch
   const fetchApplications = useCallback(async (page = 1) => {
@@ -220,15 +220,15 @@ export default function AdminPartners() {
 
   const handleDeactivate = useCallback(async (owner) => {
     const newStatus = owner.status === 'active' ? 'inactive' : 'active';
-    if (!window.confirm(`Are you sure you want to ${newStatus === 'active' ? 'activate' : 'deactivate'} ${owner.partner_name}?`)) return;
+    if (!window.confirm(`Are you sure you want to ${newStatus === 'active' ? 'activate' : 'deactivate'} ${owner.owner_name}?`)) return;
     try {
-      await adminAPI.togglePartnerStatus(owner.partner_id, newStatus);
-      fetchPartners(pagination.page);
+      await adminAPI.toggleVehicleOwnerStatus(owner.owner_id, newStatus);
+      fetchOwners(pagination.page);
       fetchStats();
     } catch (err) {
       alert(err.response?.data?.message || 'Failed to update status');
     }
-}, [fetchPartners, fetchStats, pagination.page]);
+  }, [fetchOwners, fetchStats, pagination.page]);
 
   // Delete an owner — only shows success after the backend confirms the DB row is gone.
   const handleDeleteOwner = useCallback(async () => {
@@ -236,11 +236,11 @@ export default function AdminPartners() {
     setDeletingOwner(true);
     setDeleteOwnerError(null);
     try {
-      const response = await adminAPI.deletePartner(deleteTarget.partner_id);
+      const response = await adminAPI.deleteVehicleOwner(deleteTarget.owner_id);
       const data = response.data || {};
       setDeleteTarget(null);
       showToast('✓ ' + (data.message || 'Transport Owner deleted'), 'success');
-      fetchPartners(pagination.page);
+      fetchOwners(pagination.page);
       fetchStats();
     } catch (err) {
       const structured = err?.response?.data?.error;
@@ -250,21 +250,21 @@ export default function AdminPartners() {
     } finally {
       setDeletingOwner(false);
     }
-  }, [deleteTarget, deletingOwner, pagination.page, fetchPartners, fetchStats, showToast]);
+  }, [deleteTarget, deletingOwner, pagination.page, fetchOwners, fetchStats, showToast]);
 
   const handleRegisterSuccess = useCallback(() => {
-    fetchPartners(1);
+    fetchOwners(1);
     fetchStats();
-  }, [fetchPartners, fetchStats]);
+  }, [fetchOwners, fetchStats]);
 
   const kpis = useMemo(() => {
     if (!stats) return [];
     return [
-      { key: 'total', title: 'Total Owners', value: stats.total ?? 0, sub: 'Registered owners', accent: 'amber', loading: false },
-      { key: 'active', title: 'Active Owners', value: stats.active ?? 0, sub: 'Currently active', accent: 'green', loading: false },
-      { key: 'inactive', title: 'Inactive Owners', value: stats.inactive ?? 0, sub: 'Currently inactive', accent: 'purple', loading: false },
-      { key: 'totalOutstanding', title: 'Total Outstanding', value: `₹${(stats.totalOutstanding || 0).toLocaleString('en-IN')}`, sub: 'Across all owners', accent: 'sky', loading: false },
-      { key: 'todayAssignedTrips', title: "Today's Assigned Trips", value: stats.todayAssignedTrips ?? 0, sub: 'Active trips today', accent: 'green', loading: false },
+      { key: 'total', title: 'Total Owners', value: stats.totalOwners ?? 0, sub: 'Registered owners', accent: 'amber', loading: false },
+      { key: 'active', title: 'Active Owners', value: stats.activeOwners ?? 0, sub: 'Currently active', accent: 'green', loading: false },
+      { key: 'inactive', title: 'Inactive Owners', value: stats.inactiveOwners ?? 0, sub: 'Currently inactive', accent: 'purple', loading: false },
+      { key: 'totalVehicles', title: 'Total Vehicles', value: stats.totalVehicles ?? 0, sub: 'Across all owners', accent: 'sky', loading: false },
+      { key: 'totalBookings', title: 'Total Bookings', value: stats.totalBookings ?? 0, sub: 'Total bookings', accent: 'green', loading: false },
     ];
   }, [stats]);
 
@@ -273,13 +273,13 @@ export default function AdminPartners() {
       key: 'owner',
       header: 'Owner Code',
       render: (r) => (
-        <div className="flex items-center gap-3 cursor-pointer" onClick={() => navigate(`/admin/owners/${r.partner_id}`)}>
+        <div className="flex items-center gap-3 cursor-pointer" onClick={() => navigate(`/admin/vehicle-owners/${r.owner_id}`)}>
           <div className="h-9 w-9 rounded-full bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center text-white font-bold text-xs shrink-0">
-            {getInitials(r.partner_name)}
+            {getInitials(r.owner_name)}
           </div>
           <div className="min-w-0">
-            <div className="font-mono text-xs font-bold text-amber-600 dark:text-amber-400">{r.partner_code}</div>
-            <div className="text-sm font-semibold truncate max-w-[180px]">{r.company_name || r.partner_name}</div>
+            <div className="font-mono text-xs font-bold text-amber-600 dark:text-amber-400">{r.owner_code}</div>
+            <div className="text-sm font-semibold truncate max-w-[180px]">{r.company_name || r.owner_name}</div>
           </div>
         </div>
       )
@@ -303,17 +303,17 @@ export default function AdminPartners() {
       key: 'vehicles',
       header: 'Vehicles',
       sortable: true,
-      render: (r) => <div className="text-center font-semibold">{r._count?.trucks || 0}</div>
+      render: (r) => <div className="text-center font-semibold">{r._count?.vehicles || 0}</div>
     },
     {
-      key: 'commission_percentage',
-      header: 'Commission %',
-      render: (r) => <span className="text-sm font-semibold text-purple-500">{r.commission_percentage || 0}%</span>
+      key: 'drivers',
+      header: 'Drivers',
+      render: (r) => <div className="text-center font-semibold">{r._count?.drivers || 0}</div>
     },
     {
-      key: 'outstanding',
-      header: 'Outstanding',
-      render: (r) => <span className="text-sm font-semibold text-red-500">₹{(r.outstandingBalance || 0).toLocaleString('en-IN')}</span>
+      key: 'bookings',
+      header: 'Bookings',
+      render: (r) => <div className="text-center font-semibold">{r._count?.bookings || 0}</div>
     },
     {
       key: 'status',
@@ -324,10 +324,10 @@ export default function AdminPartners() {
       key: 'actions',
       header: 'Actions',
       render: (r) => (
-<ActionsDropdown
+        <ActionsDropdown
           owner={r}
-          onViewProfile={(o) => navigate(`/admin/owners/${o.partner_id}`)}
-          onEdit={(o) => navigate(`/admin/owners/${o.partner_id}?tab=edit`)}
+          onViewProfile={(o) => navigate(`/admin/vehicle-owners/${o.owner_id}`)}
+          onEdit={(o) => navigate(`/admin/vehicle-owners/${o.owner_id}?tab=edit`)}
           onDeactivate={handleDeactivate}
           onDelete={setDeleteTarget}
         />
@@ -337,16 +337,16 @@ export default function AdminPartners() {
 
   // Get outstanding balance for each owner from their dashboard data
   // Since we don't have per-owner balance in list, we show "--" for now (Phase 2 will add)
-  const enhancedPartners = useMemo(() => {
-    return (partners || []).map(p => ({
-      ...p,
+  const enhancedOwners = useMemo(() => {
+    return (owners || []).map(o => ({
+      ...o,
       outstandingBalance: 0, // Phase 2: populate from ledger
     }));
-  }, [partners]);
+  }, [owners]);
 
   return (
 <AdminShell navItems={NAV_ITEMS} activeKey="owners" onNav={(k) => {}}>
-      <OwnerRegisterModal
+      <VehicleOwnerRegisterModal
         isOpen={showRegisterModal}
         onClose={() => setShowRegisterModal(false)}
         onSuccess={handleRegisterSuccess}
@@ -392,11 +392,11 @@ export default function AdminPartners() {
               <div className="mb-4 rounded-xl border border-border/60 bg-card/40 px-4 py-3 text-left space-y-1.5">
                 <div className="flex justify-between text-sm">
                   <span className="text-muted">Owner:</span>
-                  <span className="font-semibold">{deleteTarget.partner_name || deleteTarget.company_name}</span>
+                  <span className="font-semibold">{deleteTarget.owner_name || deleteTarget.company_name}</span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-muted">Code:</span>
-                  <span className="font-mono font-semibold text-amber-600 dark:text-amber-400">{deleteTarget.partner_code}</span>
+                  <span className="font-mono font-semibold text-amber-600 dark:text-amber-400">{deleteTarget.owner_code}</span>
                 </div>
               </div>
               <p className="text-sm text-muted mb-6">
@@ -526,7 +526,7 @@ export default function AdminPartners() {
           <div className="rounded-2xl border border-red-500/30 bg-red-500/5 p-6 text-center">
             <div className="text-red-500 font-semibold mb-2">Failed to load owners</div>
             <div className="text-sm text-muted mb-4">{error}</div>
-            <button onClick={() => fetchPartners(1)} className="px-5 py-2 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition">Retry</button>
+            <button onClick={() => fetchOwners(1)} className="px-5 py-2 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition">Retry</button>
           </div>
         )}
 
@@ -537,12 +537,12 @@ export default function AdminPartners() {
           </div>
         )}
 
-        {!loading && !error && enhancedPartners.length === 0 && (
+        {!loading && !error && enhancedOwners.length === 0 && (
           <EmptyState title="No transport owners found" subtitle="Register your first transport owner to get started." />
         )}
 
-        {!loading && !error && enhancedPartners.length > 0 && (
-          <PremiumTable columns={columns} rows={enhancedPartners.map(p => ({ ...p, id: p.partner_id }))} loading={false} />
+        {!loading && !error && enhancedOwners.length > 0 && (
+          <PremiumTable columns={columns} rows={enhancedOwners.map(o => ({ ...o, id: o.owner_id }))} loading={false} />
         )}
 
         {!loading && !error && pagination.pages > 1 && (
@@ -551,10 +551,10 @@ export default function AdminPartners() {
               Showing {(pagination.page - 1) * pagination.limit + 1}–{Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total}
             </div>
             <div className="flex items-center gap-2">
-              <button onClick={() => fetchPartners(pagination.page - 1)} disabled={pagination.page <= 1}
+              <button onClick={() => fetchOwners(pagination.page - 1)} disabled={pagination.page <= 1}
                 className="px-3 py-2 rounded-xl border border-border/60 bg-card/40 text-sm font-medium hover:bg-hover/60 transition disabled:opacity-40">← Prev</button>
               <span className="text-sm text-muted">Page {pagination.page} of {pagination.pages}</span>
-              <button onClick={() => fetchPartners(pagination.page + 1)} disabled={pagination.page >= pagination.pages}
+              <button onClick={() => fetchOwners(pagination.page + 1)} disabled={pagination.page >= pagination.pages}
                 className="px-3 py-2 rounded-xl border border-border/60 bg-card/40 text-sm font-medium hover:bg-hover/60 transition disabled:opacity-40">Next →</button>
             </div>
           </div>
