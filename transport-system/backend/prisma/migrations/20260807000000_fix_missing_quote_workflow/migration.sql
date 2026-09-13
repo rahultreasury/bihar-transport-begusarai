@@ -2,12 +2,27 @@
 -- This migration adds columns/tables/enums that were missing from the live database
 -- despite being marked as applied in _prisma_migrations.
 
--- Create enums
-CREATE TYPE "QuoteStatus" AS ENUM ('PENDING', 'PREPARING', 'DRIVER_RESERVED', 'VEHICLE_RESERVED', 'QUOTE_SENT', 'WAITING_CUSTOMER_APPROVAL', 'ACCEPTED', 'REJECTED', 'EXPIRED');
+-- Create enums (use IF NOT EXISTS for idempotency in shadow database)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'QuoteStatus') THEN
+        CREATE TYPE "QuoteStatus" AS ENUM ('PENDING', 'PREPARING', 'DRIVER_RESERVED', 'VEHICLE_RESERVED', 'QUOTE_SENT', 'WAITING_CUSTOMER_APPROVAL', 'ACCEPTED', 'REJECTED', 'EXPIRED');
+    END IF;
+END $$;
 
-CREATE TYPE "ReservationStatus" AS ENUM ('ACTIVE', 'CONVERTED', 'RELEASED', 'EXPIRED');
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'ReservationStatus') THEN
+        CREATE TYPE "ReservationStatus" AS ENUM ('ACTIVE', 'CONVERTED', 'RELEASED', 'EXPIRED');
+    END IF;
+END $$;
 
-CREATE TYPE "InvoiceStatus" AS ENUM ('PENDING', 'GENERATED', 'PAID', 'CANCELLED');
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'InvoiceStatus') THEN
+        CREATE TYPE "InvoiceStatus" AS ENUM ('PENDING', 'GENERATED', 'PAID', 'CANCELLED');
+    END IF;
+END $$;
 
 -- Add missing columns to bookings
 ALTER TABLE "bookings" ADD COLUMN IF NOT EXISTS "quote_status" TEXT DEFAULT 'PENDING';

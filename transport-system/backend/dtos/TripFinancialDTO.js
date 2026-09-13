@@ -2,11 +2,70 @@
  * TripFinancialDTO
  * Role-based serialization for trip financial data.
  *
+ * PHASE 3 REDESIGN: All values are derived from FinancialTransaction records.
+ * FinancialTransaction is the SINGLE SOURCE OF TRUTH.
+ *
  * SECURITY RULES:
  * - ADMIN: Sees everything including BT Margin
  * - TRANSPORT_OWNER: Sees only owner-specific financials (NO BT Margin, NO customer fare)
  * - DRIVER: Sees only driver-specific financials (NO BT Margin, NO customer fare, NO commission)
  */
+
+/**
+ * Calculate values from FinancialTransaction records.
+ */
+function calculateFromTransactions(transactions) {
+  const result = {
+    totalDriverAdvance: 0,
+    totalFuelAdvance: 0,
+    totalOwnerAdvance: 0,
+    totalCustomerPayments: 0,
+    totalClientPayments: 0,
+    totalOwnerSettlements: 0,
+    totalDriverSettlements: 0,
+    totalExpenses: 0,
+    expenseBreakdown: {},
+  };
+
+  for (const tx of transactions) {
+    const amount = tx.amount || 0;
+
+    switch (tx.transaction_type) {
+      case 'DRIVER_ADVANCE':
+        result.totalDriverAdvance += amount;
+        break;
+      case 'FUEL_ADVANCE':
+        result.totalFuelAdvance += amount;
+        break;
+      case 'OWNER_ADVANCE':
+        result.totalOwnerAdvance += amount;
+        break;
+      case 'CUSTOMER_PAYMENT':
+        if (tx.direction === 'CREDIT') {
+          result.totalCustomerPayments += amount;
+        }
+        break;
+      case 'CLIENT_PAYMENT':
+        if (tx.direction === 'CREDIT') {
+          result.totalClientPayments += amount;
+        }
+        break;
+      case 'OWNER_SETTLEMENT':
+        result.totalOwnerSettlements += amount;
+        break;
+      case 'DRIVER_SETTLEMENT':
+        result.totalDriverSettlements += amount;
+        break;
+      case 'TRIP_EXPENSE':
+        result.totalExpenses += amount;
+        const expenseType = tx.metadata?.expense_type || 'OTHER';
+        result.expenseBreakdown[expenseType] = (result.expenseBreakdown[expenseType] || 0) + amount;
+        break;
+    }
+  }
+
+  return result;
+}
 
 /**
  * Serialize trip financial for ADMIN role.
@@ -19,18 +78,13 @@ function serializeForAdmin(tripFinancial) {
   if (!tripFinancial) return null;
 
   const booking = tripFinancial.booking;
-  const advances = tripFinancial.advances || [];
+  const transactions = tripFinancial.transactions || [];
   const settlements = tripFinancial.settlements || [];
   const commissions = tripFinancial.commissions || [];
-  const transactions = tripFinancial.transactions || [];
 
-  const driverAdvances = advances.filter(a => a.advance_type === 'DRIVER_ADVANCE');
-  const fuelAdvances = advances.filter(a => a.advance_type === 'FUEL_ADVANCE');
-  const ownerAdvances = advances.filter(a => a.advance_type === 'OWNER_ADVANCE');
-
-  const totalPaid = transactions
-    .filter(t => t.transaction_type === 'CUSTOMER_PAYMENT' && t.status === 'PAID')
-    .reduce((sum, t) => sum + t.amount, 0);
+  // Calculate from transactions - SINGLE SOURCE OF TRUTH
+  const txCalc = calculateFromTransactions(transactions);
+  const totalPaid = txCalc.totalCustomerPayments + txCalc.totalClientPayments;
 
   return {
     // Booking Info
@@ -42,37 +96,27 @@ function serializeForAdmin(tripFinancial) {
     customerFare: tripFinancial.customer_fare,
     amountReceived: totalPaid,
     paymentStatus: totalPaid >= tripFinancial.customer_fare ? 'PAID' : totalPaid > 0 ? 'PARTIAL' : 'PENDING',
-    paymentMethod: transactions.find(t => t.transaction_type === 'CUSTOMER_PAYMENT' && t.status === 'PAID')?.payment_method || null,
+    paymentMethod: transactions.find(t => (t.transaction_type === 'CUSTOMER_PAYMENT' || t.transaction_type === 'CLIENT_PAYMENT') && t.direction === 'CREDIT')?.payment_method || null,
     outstandingAmount: Math.max(0, tripFinancial.customer_fare - totalPaid),
 
     // Driver Financials
     driverPayout: tripFinancial.driver_payout,
-    driverAdvance: tripFinancial.total_advance,
-    fuelAdvance: tripFinancial.total_fuel_advance,
-    remainingDriverSettlement: tripFinancial.remaining_driver_settlement,
+    driverAdvance: txCalc.totalDriverAdvance,
+    fuelAdvance: txCalc.totalFuelAdvance,
+    remainingDriverSettlement: (tripFinancial.driver_payout || 0) - txCalc.totalDriverAdvance - txCalc.totalFuelAdvance,
     driverPaymentStatus: settlements[0]?.driver_settlement_status || 'PENDING',
-    driverAdvances: driverAdvances.map(a => ({
-      id: a.advance_id,
-      amount: a.amount,
-      date: a.given_at,
-      method: a.payment_method,
-      reference: a.reference_number,
-      notes: a.notes,
-    })),
+    driverAdvances: transactions
+      .filter(t => t.transaction_type === 'DRIVER_ADVANCE')
+      .map(t => ({ id: t.transaction_id, amount: t.amount, date: t.transaction_date, method: t.payment_method, reference: t.reference_number, notes: t.notes })),
 
     // Owner Financials
     ownerSettlement: tripFinancial.owner_settlement_amount,
-    ownerAdvance: tripFinancial.total_owner_advance,
-    remainingOwnerSettlement: tripFinancial.remaining_owner_settlement,
+    ownerAdvance: txCalc.totalOwnerAdvance,
+    remainingOwnerSettlement: (tripFinancial.owner_settlement_amount || 0) - txCalc.totalOwnerAdvance,
     ownerPaymentStatus: settlements[0]?.owner_settlement_status || 'PENDING',
-    ownerAdvances: ownerAdvances.map(a => ({
-      id: a.advance_id,
-      amount: a.amount,
-      date: a.given_at,
-      method: a.payment_method,
-      reference: a.reference_number,
-      notes: a.notes,
-    })),
+    ownerAdvances: transactions
+      .filter(t => t.transaction_type === 'OWNER_ADVANCE')
+      .map(t => ({ id: t.transaction_id, amount: t.amount, date: t.transaction_date, method: t.payment_method, reference: t.reference_number, notes: t.notes })),
 
     // Commission
     commissionRate: tripFinancial.commission_rate,
@@ -82,6 +126,10 @@ function serializeForAdmin(tripFinancial) {
     // BT Internal Financials (ADMIN ONLY)
     btMargin: tripFinancial.bt_margin,
     totalOperationalCost: (tripFinancial.driver_payout || 0) + (tripFinancial.commission_amount || 0),
+
+    // Expenses
+    totalExpenses: txCalc.totalExpenses,
+    expenseBreakdown: txCalc.expenseBreakdown,
 
     // Meta
     calculatedAt: tripFinancial.calculated_at,
@@ -103,7 +151,7 @@ function serializeForTransportOwner(tripFinancial, ownerId) {
   if (!tripFinancial) return null;
 
   const booking = tripFinancial.booking;
-  const advances = tripFinancial.advances || [];
+  const transactions = tripFinancial.transactions || [];
   const settlements = tripFinancial.settlements || [];
 
   // Verify ownership
@@ -111,7 +159,8 @@ function serializeForTransportOwner(tripFinancial, ownerId) {
     return { error: 'Access denied. You do not own this trip.' };
   }
 
-  const ownerAdvances = advances.filter(a => a.advance_type === 'OWNER_ADVANCE');
+  // Calculate from transactions
+  const txCalc = calculateFromTransactions(transactions);
 
   return {
     // Booking Info (no customer fare)
@@ -121,17 +170,12 @@ function serializeForTransportOwner(tripFinancial, ownerId) {
 
     // Owner Financials ONLY
     tripAmount: tripFinancial.owner_settlement_amount,
-    advance: tripFinancial.total_owner_advance,
-    remainingSettlement: tripFinancial.remaining_owner_settlement,
+    advance: txCalc.totalOwnerAdvance,
+    remainingSettlement: (tripFinancial.owner_settlement_amount || 0) - txCalc.totalOwnerAdvance,
     paymentStatus: settlements[0]?.owner_settlement_status || 'PENDING',
-    advances: ownerAdvances.map(a => ({
-      id: a.advance_id,
-      amount: a.amount,
-      date: a.given_at,
-      method: a.payment_method,
-      reference: a.reference_number,
-      notes: a.notes,
-    })),
+    advances: transactions
+      .filter(t => t.transaction_type === 'OWNER_ADVANCE')
+      .map(t => ({ id: t.transaction_id, amount: t.amount, date: t.transaction_date, method: t.payment_method, reference: t.reference_number, notes: t.notes })),
 
     // NO btMargin
     // NO customerFare
@@ -153,7 +197,7 @@ function serializeForDriver(tripFinancial, driverId) {
   if (!tripFinancial) return null;
 
   const booking = tripFinancial.booking;
-  const advances = tripFinancial.advances || [];
+  const transactions = tripFinancial.transactions || [];
   const settlements = tripFinancial.settlements || [];
 
   // Verify assignment
@@ -161,8 +205,8 @@ function serializeForDriver(tripFinancial, driverId) {
     return { error: 'Access denied. You are not assigned to this trip.' };
   }
 
-  const driverAdvances = advances.filter(a => a.advance_type === 'DRIVER_ADVANCE');
-  const fuelAdvances = advances.filter(a => a.advance_type === 'FUEL_ADVANCE');
+  // Calculate from transactions
+  const txCalc = calculateFromTransactions(transactions);
 
   return {
     // Booking Info (no customer fare)
@@ -172,19 +216,13 @@ function serializeForDriver(tripFinancial, driverId) {
 
     // Driver Financials ONLY
     tripAmount: tripFinancial.driver_payout,
-    advanceReceived: tripFinancial.total_advance,
-    fuelAdvance: tripFinancial.total_fuel_advance,
-    remainingAmount: tripFinancial.remaining_driver_settlement,
+    advanceReceived: txCalc.totalDriverAdvance + txCalc.totalFuelAdvance,
+    fuelAdvance: txCalc.totalFuelAdvance,
+    remainingAmount: (tripFinancial.driver_payout || 0) - txCalc.totalDriverAdvance - txCalc.totalFuelAdvance,
     paymentStatus: settlements[0]?.driver_settlement_status || 'PENDING',
-    advances: [...driverAdvances, ...fuelAdvances].map(a => ({
-      id: a.advance_id,
-      amount: a.amount,
-      type: a.advance_type,
-      date: a.given_at,
-      method: a.payment_method,
-      reference: a.reference_number,
-      notes: a.notes,
-    })),
+    advances: transactions
+      .filter(t => t.transaction_type === 'DRIVER_ADVANCE' || t.transaction_type === 'FUEL_ADVANCE')
+      .map(t => ({ id: t.transaction_id, amount: t.amount, type: t.transaction_type, date: t.transaction_date, method: t.payment_method, reference: t.reference_number, notes: t.notes })),
 
     // NO customerFare
     // NO btMargin
@@ -220,4 +258,5 @@ module.exports = {
   serializeForAdmin,
   serializeForTransportOwner,
   serializeForDriver,
+  calculateFromTransactions,
 };

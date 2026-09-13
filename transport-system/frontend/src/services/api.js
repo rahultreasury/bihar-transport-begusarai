@@ -109,6 +109,11 @@ export const driverAPI = {
   getTripFinancialTimeline: (bookingId) => api.get(`/trips/${bookingId}/financial/timeline`),
   getTripAdvances: (bookingId) => api.get(`/trips/${bookingId}/advances`),
   getTripSettlement: (bookingId) => api.get(`/trips/${bookingId}/settlements`),
+
+  // Transaction Ledger
+  getTripTransactions: (bookingId) => api.get(`/trips/${bookingId}/transactions`),
+  getTripTransactionLedger: (bookingId) => api.get(`/trips/${bookingId}/transactions/ledger`),
+  getTripPartyBalances: (bookingId) => api.get(`/trips/${bookingId}/transactions/balances`),
 };
 
 // Admin APIs
@@ -225,15 +230,27 @@ updateDriver: (id, data) => api.put(`/admin/drivers/${id}`, data),
   // Trip Financial (Admin view - FULL visibility including BT Margin)
   getTripFinancial: (bookingId) => api.get(`/trips/${bookingId}/financial`),
   getTripFinancialTimeline: (bookingId) => api.get(`/trips/${bookingId}/financial/timeline`),
+  // Booking-linked advances (legacy)
   getTripAdvances: (bookingId) => api.get(`/trips/${bookingId}/advances`),
   getTripAdvanceSummary: (bookingId) => api.get(`/trips/${bookingId}/advances/summary`),
   createTripAdvance: (bookingId, data) => api.post(`/trips/${bookingId}/advances`, data),
+  // Trip-linked advances (Phase 1 - standalone trips)
+  getTripAdvancesByTripId: (tripId) => api.get(`/trips/${tripId}/advances`),
+  getTripAdvanceSummaryByTripId: (tripId) => api.get(`/trips/${tripId}/advances/summary`),
+  createTripAdvanceByTripId: (tripId, data) => api.post(`/trips/${tripId}/advances`, data),
   getTripSettlement: (bookingId) => api.get(`/trips/${bookingId}/settlements`),
   recordDriverSettlement: (bookingId, data) => api.post(`/trips/${bookingId}/settlements/driver`, data),
   recordOwnerSettlement: (bookingId, data) => api.post(`/trips/${bookingId}/settlements/owner`, data),
   getTripCommission: (bookingId) => api.get(`/trips/${bookingId}/commission`),
   applyTripCommission: (bookingId, data) => api.post(`/trips/${bookingId}/commission`, data),
   calculateTripFinancial: (bookingId, data) => api.post(`/trips/${bookingId}/financial/calculate`, data),
+
+  // Transaction Ledger (Admin)
+  getTripTransactions: (bookingId) => api.get(`/trips/${bookingId}/transactions`),
+  getTripTransactionLedger: (bookingId) => api.get(`/trips/${bookingId}/transactions/ledger`),
+  getTripPartyBalances: (bookingId) => api.get(`/trips/${bookingId}/transactions/balances`),
+  createTripTransaction: (bookingId, data) => api.post(`/trips/${bookingId}/transactions`, data),
+  reverseTripTransaction: (bookingId, transactionId, data) => api.post(`/trips/${bookingId}/transactions/${transactionId}/reverse`, data),
 
   // Trip Management (CRUD + expenses + payments)
   getTrips: (params) => api.get('/trips', { params }),
@@ -248,6 +265,9 @@ updateDriver: (id, data) => api.put(`/admin/drivers/${id}`, data),
   // Trip Expenses
   getTripExpenses: (tripId) => api.get(`/trips/${tripId}/expenses`),
   addTripExpense: (tripId, data) => api.post(`/trips/${tripId}/expenses`, data),
+  
+  // Trip Financial Summary (authoritative calculation)
+  getTripFinancialSummary: (tripId) => api.get(`/trips/${tripId}/financial-summary`),
   updateTripExpense: (tripId, expenseId, data) => api.put(`/trips/${tripId}/expenses/${expenseId}`, data),
   deleteTripExpense: (tripId, expenseId) => api.delete(`/trips/${tripId}/expenses/${expenseId}`),
 
@@ -257,6 +277,7 @@ updateDriver: (id, data) => api.put(`/admin/drivers/${id}`, data),
 
   // Lookup data
   getTripClients: (search) => api.get('/trips/lookup/clients', { params: { search } }),
+  getTripOfflineClients: (search) => api.get('/trips/lookup/offline-clients', { params: { search } }),
   getTripDrivers: (search) => api.get('/trips/lookup/drivers', { params: { search } }),
   getTripVehicles: (search) => api.get('/trips/lookup/vehicles', { params: { search } }),
   getTripOwners: (search) => api.get('/trips/lookup/owners', { params: { search } }),
@@ -291,6 +312,14 @@ updateDriver: (id, data) => api.put(`/admin/drivers/${id}`, data),
   getVehicleTrips: (id, params) => api.get(`/admin/vehicles/${id}/trips`, { params }),
   getAuditLogs: (params) => api.get('/admin/audit-logs', { params }),
   getEntityAuditLogs: (entityType, entityId, params) => api.get(`/admin/audit-logs/entity/${entityType}/${entityId}`, { params }),
+
+  // Connection Workflow (Orphan Records)
+  getConnectionStats: () => api.get('/admin/vehicle-owners/connections/stats'),
+  getOrphanVehicles: () => api.get('/admin/vehicle-owners/connections/orphan-vehicles'),
+  getOrphanDrivers: () => api.get('/admin/vehicle-owners/connections/orphan-drivers'),
+  getOrphanOwners: () => api.get('/admin/vehicle-owners/connections/orphan-owners'),
+  connectVehicle: (data) => api.post('/admin/vehicle-owners/connections/connect-vehicle', data),
+  connectDriver: (data) => api.post('/admin/vehicle-owners/connections/connect-driver', data),
 
   // Vehicle-Driver Assignment
   assignDriverToVehicle: (vehicleId, driverId) => api.post(`/admin/vehicles/${vehicleId}/assign-driver`, { driver_id: driverId }),
@@ -337,6 +366,35 @@ export const appointmentAPI = {
   getAll: (params) => api.get('/appointments', { params }),
   getSlots: (params) => api.get('/appointments/slots', { params }),
   cancel: (id) => api.put(`/appointments/${id}/cancel`)
+};
+
+// Financial APIs (canonical financial control center)
+export const financialAPI = {
+  getSummary: () => api.get('/financials/summary'),
+  getReceivables: () => api.get('/financials/receivables'),
+  getPayables: () => api.get('/financials/payables'),
+  getTransactions: (params) => api.get('/financials/transactions', { params }),
+  getLedger: (params) => api.get('/financials/transactions/ledger', { params }),
+  getAdvances: () => api.get('/financials/advances'),
+  getSettlements: () => api.get('/financials/settlements'),
+};
+
+// Client APIs (with financial summary)
+export const clientAPI = {
+  getAll: (params) => api.get('/admin/clients', { params }),
+  getById: (id) => api.get(`/admin/clients/${id}`),
+  create: (data) => api.post('/admin/clients', data),
+  update: (id, data) => api.put(`/admin/clients/${id}`, data),
+  deactivate: (id) => api.patch(`/admin/clients/${id}/deactivate`),
+  reactivate: (id) => api.patch(`/admin/clients/${id}/reactivate`),
+  getStatement: (id) => api.get(`/admin/clients/${id}/statement`),
+  getTrips: (id) => api.get(`/admin/clients/${id}/trips`),
+  search: (query) => api.get('/admin/clients/lookup/search', { params: { search: query } }),
+};
+
+// Standalone Trip Financial APIs (for trips without booking)
+export const tripFinancialAPI = {
+  getTripFinancials: (tripId) => api.get(`/trips/${tripId}/financials`),
 };
 
 export default api;

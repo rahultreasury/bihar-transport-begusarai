@@ -90,6 +90,12 @@ enum InvoiceStatus {
 // TRIP MANAGEMENT ENUMS
 // ============================================================
 
+enum TripSourceType {
+  ONLINE_BOOKING
+  OFFLINE_CLIENT
+  DIRECT
+}
+
 enum TripStatus {
   PENDING
   ASSIGNED
@@ -107,7 +113,22 @@ enum TripExpenseType {
   UNLOADING
   OWNER
   MAINTENANCE
+  LABOUR
+  DOCUMENTATION
+  PARKING
+  LOCAL_TRANSPORT
+  CUSTOMER_RELATED
+  COMMUNICATION
   OTHER
+}
+
+// Who paid for a trip expense.
+// Only expenses paid_by = BIHAR_TRANSPORT reduce BT Net Profit.
+// Owner-paid expenses (diesel, maintenance, toll, driver wages, etc.)
+// are owner-side costs and must NOT appear as BT expenses.
+enum ExpensePaidBy {
+  BIHAR_TRANSPORT
+  TRANSPORT_OWNER
 }
 
 enum TripPaymentType {
@@ -159,14 +180,29 @@ enum PaymentStatus {
 
 enum FinancialTransactionType {
   CUSTOMER_PAYMENT
+  CLIENT_PAYMENT
   DRIVER_ADVANCE
   FUEL_ADVANCE
   OWNER_ADVANCE
   DRIVER_SETTLEMENT
   OWNER_SETTLEMENT
   COMMISSION
+  TRIP_EXPENSE
+  EXPENSE_REIMBURSEMENT
   ADJUSTMENT
   REFUND
+  REVERSAL
+}
+
+// Party types for transaction ledger
+enum TransactionParty {
+  BIHAR_TRANSPORT
+  CUSTOMER
+  CLIENT
+  TRANSPORT_OWNER
+  DRIVER
+  VENDOR
+  OTHER
 }
 
 // ============================================================
@@ -268,7 +304,7 @@ model Driver {
   state             String?   @default("Bihar")
   pincode           String?
   partner_id        Int?                  // Current partner assignment (nullable for unassigned drivers)
-  transport_owner_id Int?                  // Transport owner who owns/employs this driver (nullable)
+  transport_owner_id Int                   // REQUIRED: every Driver must have exactly one Transport Owner (Phase 2)
   license_number    String?
   license_expiry    String?
   license_class     String?   // Vehicle type / license class (e.g. HTV, LMV)
@@ -290,7 +326,7 @@ model Driver {
   // Relations
   user                 User                @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
   currentPartner       Partner?            @relation("current_partner_drivers", fields: [partner_id], references: [partner_id], onDelete: SetNull)
-  transportOwner       VehicleOwner?       @relation("transport_owner_drivers", fields: [transport_owner_id], references: [owner_id], onDelete: SetNull)
+  transportOwner       VehicleOwner        @relation("transport_owner_drivers", fields: [transport_owner_id], references: [owner_id], onDelete: Restrict)
   currentVehicle       TransportVehicle?   @relation("current_driver_vehicle", fields: [current_vehicle_id], references: [vehicle_id], onDelete: SetNull)
   bookings             Booking[]
   deliveries           Delivery[]
@@ -1019,7 +1055,8 @@ model Invoice {
 // for one trip's complete financial picture.
 model TripFinancial {
   trip_financial_id     Int              @id @default(autoincrement())
-  booking_id            Int              @unique
+  booking_id            Int?             @unique    // Nullable: standalone trips have no booking
+  trip_id               Int?             // Direct trip link for standalone trips (Phase 3)
   status                TripFinancialStatus @default(DRAFT)
 
   // Customer revenue
@@ -1051,23 +1088,27 @@ model TripFinancial {
   updated_at            DateTime?        @default(now())
 
   // Relations
-  booking       Booking              @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
+  booking       Booking?             @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
+  trip          Trip?                @relation(fields: [trip_id], references: [trip_id], onDelete: Cascade)
   advances      TripAdvance[]
   settlements   TripSettlement[]
   commissions   CommissionRecord[]
   transactions  FinancialTransaction[]
 
   @@index([booking_id], name: "idx_trip_financial_booking")
+  @@index([trip_id], name: "idx_trip_financial_trip")
   @@index([status], name: "idx_trip_financial_status")
   @@map("trip_financials")
 }
 
 // --- Trip Advance ---
 // Individual advance records for a trip. Never overwrite previous advances.
+// Supports both booking-linked advances (legacy) and direct trip advances (Phase 1).
 model TripAdvance {
   advance_id            Int       @id @default(autoincrement())
-  trip_financial_id     Int
-  booking_id            Int
+  trip_financial_id     Int?
+  booking_id            Int?
+  trip_id               Int?      // Direct trip link for standalone trips (Phase 1)
   driver_id             Int?
   vehicle_id            Int?
   transport_owner_id    Int?
@@ -1083,11 +1124,13 @@ model TripAdvance {
   updated_at            DateTime? @default(now())
 
   // Relations
-  tripFinancial TripFinancial @relation(fields: [trip_financial_id], references: [trip_financial_id], onDelete: Cascade)
-  booking       Booking       @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
+  tripFinancial TripFinancial? @relation(fields: [trip_financial_id], references: [trip_financial_id], onDelete: Cascade)
+  booking       Booking?       @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
+  trip          Trip?          @relation(fields: [trip_id], references: [trip_id], onDelete: Cascade)
 
   @@index([trip_financial_id], name: "idx_trip_advance_financial")
   @@index([booking_id], name: "idx_trip_advance_booking")
+  @@index([trip_id], name: "idx_trip_advance_trip")
   @@index([driver_id], name: "idx_trip_advance_driver")
   @@index([transport_owner_id], name: "idx_trip_advance_owner")
   @@map("trip_advances")
@@ -1098,7 +1141,8 @@ model TripAdvance {
 model TripSettlement {
   settlement_id             Int       @id @default(autoincrement())
   trip_financial_id         Int
-  booking_id                Int
+  booking_id                Int?      // Nullable for standalone trips
+  trip_id                   Int?      // Direct trip link for standalone trips (Phase 1)
 
   // Driver settlement
   driver_settlement_amount  Float?
@@ -1122,10 +1166,12 @@ model TripSettlement {
 
   // Relations
   tripFinancial TripFinancial @relation(fields: [trip_financial_id], references: [trip_financial_id], onDelete: Cascade)
-  booking       Booking       @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
+  booking       Booking?      @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
+  trip          Trip?          @relation(fields: [trip_id], references: [trip_id], onDelete: Cascade)
 
   @@index([trip_financial_id], name: "idx_trip_settlement_financial")
   @@index([booking_id], name: "idx_trip_settlement_booking")
+  @@index([trip_id], name: "idx_trip_settlement_trip")
   @@map("trip_settlements")
 }
 
@@ -1155,33 +1201,46 @@ model CommissionRecord {
 
 // --- Financial Transaction ---
 // Central transaction ledger. Every financial event creates one entry here.
+// This is the SINGLE SOURCE OF TRUTH for all trip financials.
 model FinancialTransaction {
   transaction_id    Int                  @id @default(autoincrement())
   trip_financial_id Int
-  booking_id        Int
+  booking_id        Int?                 // Nullable: standalone trips have no booking
+  trip_id           Int?                 // Direct trip link for standalone trips
   vehicle_id        Int?
   driver_id         Int?
   transport_owner_id Int?
+  client_id         Int?                 // For offline client payments
 
   transaction_type  FinancialTransactionType
   amount            Float
-  direction         TransactionDirection   // DEBIT = money out, CREDIT = money in
-  payment_method    String?                // cash, bank, upi, etc.
+  direction         TransactionDirection   // DEBIT = money out from BT, CREDIT = money in to BT
+  from_party        TransactionParty?     // Who paid / from whom
+  to_party          TransactionParty?     // Who received / to whom
+  purpose           String?               // Human-readable purpose
+  payment_method    String?               // cash, bank, upi, cheque, etc.
   reference_number  String?
-  status            PaymentStatus          @default(PENDING)
-  metadata          String?                // JSON payload for additional context
+  transaction_date  DateTime?             // When the transaction occurred
+  status            PaymentStatus         @default(PAID)
+  metadata          String?               // JSON payload for additional context
+  notes             String?
 
-  created_by        Int?                   // Admin/User ID who created this
-  created_at        DateTime?              @default(now())
-  updated_at        DateTime?              @default(now())
+  created_by        Int?                  // Admin/User ID who created this
+  created_at        DateTime?             @default(now())
+  updated_at        DateTime?             @default(now())
 
   // Relations
   tripFinancial TripFinancial @relation(fields: [trip_financial_id], references: [trip_financial_id], onDelete: Cascade)
-  booking       Booking       @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
+  booking       Booking?      @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
+  trip          Trip?          @relation(fields: [trip_id], references: [trip_id], onDelete: Cascade)
 
   @@index([trip_financial_id], name: "idx_financial_tx_financial")
   @@index([booking_id], name: "idx_financial_tx_booking")
+  @@index([trip_id], name: "idx_financial_tx_trip")
   @@index([transaction_type], name: "idx_financial_tx_type")
+  @@index([from_party], name: "idx_financial_tx_from")
+  @@index([to_party], name: "idx_financial_tx_to")
+  @@index([transaction_date], name: "idx_financial_tx_date")
   @@index([created_at], name: "idx_financial_tx_created")
   @@map("financial_transactions")
 }
@@ -1219,8 +1278,10 @@ model AuditLog {
 model Trip {
   trip_id            Int       @id @default(autoincrement())
   trip_number        String    @unique // BTBT-YYYY-NNNNN
+  source_type        TripSourceType @default(ONLINE_BOOKING)
   booking_id         Int?      // Optional link to existing booking
-  user_id            Int       // Client (User)
+  user_id            Int?      // Online customer (User) — null for offline/direct
+  client_id          Int?      // Offline corporate client — null for online/direct
   transport_owner_id Int       // Transport Owner (VehicleOwner)
   vehicle_id         Int       // Vehicle (TransportVehicle)
   driver_id          Int       // Driver
@@ -1234,15 +1295,10 @@ model Trip {
   expected_delivery_date DateTime?  // Expected delivery date
   trip_delivered_date    DateTime?  // Actual delivery date
 
-  // Financial
+  // Financial (base amounts only - all derived values come from FinancialTransaction)
   freight_amount     Float
-  driver_payment     Float?
-  owner_payment      Float?
-  advance            Float?    @default(0)
-  // Tracking paid amounts for quick calculations
-  client_received    Float?    @default(0)  // Total received from client
-  owner_paid         Float?    @default(0)  // Total paid to owner
-  driver_paid        Float?    @default(0)  // Total paid to driver
+  driver_payment     Float?    // Agreed driver payout
+  owner_payment      Float?    // Agreed owner settlement
   notes              String?
 
   // Status
@@ -1256,7 +1312,8 @@ model Trip {
   cancelled_at       DateTime?
 
   // Relations
-  user               User              @relation(fields: [user_id], references: [user_id])
+  user               User?             @relation(fields: [user_id], references: [user_id])
+  client             Client?           @relation(fields: [client_id], references: [client_id])
   transportOwner     VehicleOwner      @relation(fields: [transport_owner_id], references: [owner_id])
   vehicle            TransportVehicle  @relation(fields: [vehicle_id], references: [vehicle_id])
   driver             Driver            @relation(fields: [driver_id], references: [driver_id])
@@ -1264,6 +1321,10 @@ model Trip {
   expenses           TripExpense[]
   payments           TripPayment[]
   timeline           TripTimeline[]
+  tripAdvances       TripAdvance[]
+  tripFinancials     TripFinancial[]
+  tripSettlements    TripSettlement[]
+  financialTransactions FinancialTransaction[]
 
   @@index([trip_number], name: "idx_trips_number")
   @@index([user_id], name: "idx_trips_user")
@@ -1278,21 +1339,31 @@ model Trip {
 
 // --- Trip Expense ---
 // Individual expense records for a trip.
+// IMPORTANT (Phase 3): `paid_by` distinguishes Bihar Transport expenses
+// from Transport Owner expenses. Only paid_by = BIHAR_TRANSPORT expenses
+// reduce BT Net Profit. Owner-paid expenses (diesel, maintenance, toll,
+// driver wages) are owner-side costs and must NOT appear as BT expenses.
 model TripExpense {
-  expense_id    Int            @id @default(autoincrement())
+  expense_id    Int                  @id @default(autoincrement())
   trip_id       Int
   expense_type  TripExpenseType
   amount        Float
-  expense_date  DateTime?      @default(now())
+  paid_by       ExpensePaidBy        @default(BIHAR_TRANSPORT)
+  paid_to       TransactionParty?    @default(VENDOR)
+  expense_date  DateTime?            @default(now())
   description   String?
-  created_at    DateTime?      @default(now())
-  updated_at    DateTime?      @default(now())
+  receipt       String?              // URL / path to uploaded receipt image
+  payment_method String?
+  reference_number String?
+  created_at    DateTime?            @default(now())
+  updated_at    DateTime?            @default(now())
 
   // Relations
   trip          Trip           @relation(fields: [trip_id], references: [trip_id], onDelete: Cascade)
 
   @@index([trip_id], name: "idx_trip_expenses_trip")
   @@index([expense_type], name: "idx_trip_expenses_type")
+  @@index([paid_by], name: "idx_trip_expenses_paid_by")
   @@map("trip_expenses")
 }
 
@@ -1341,5 +1412,47 @@ model TripTimeline {
   @@index([event_type], name: "idx_trip_timeline_event")
   @@index([created_at], name: "idx_trip_timeline_date")
   @@map("trip_timeline")
+}
+
+// ============================================================
+// CLIENT MODULE (Offline Corporate Clients)
+// ============================================================
+
+// --- Client ---
+// Offline corporate/business accounts with ongoing relationships.
+// Distinct from User (online customers) and Partner (transport network partners).
+model Client {
+  client_id        Int       @id @default(autoincrement())
+  client_code      String?   @unique    // Auto-generated: CLI-00001 (nullable for migration)
+  company_name     String
+  contact_person   String?
+  phone            String
+  email            String?
+  address          String?
+  city             String?
+  state            String?   @default("Bihar")
+  gst_number       String?
+  pan_number       String?
+  bank_account     String?
+  bank_ifsc        String?
+  bank_name        String?
+ upi_id           String?
+  status           String?   @default("active") // active, inactive, suspended
+  notes            String?
+  is_active        Boolean?  @default(true)
+  created_at       DateTime? @default(now())
+  updated_at       DateTime? @default(now())
+  deleted_at       DateTime? // Soft delete
+
+  // Relations
+  trips            Trip[]
+
+  @@index([client_code], name: "idx_client_code")
+  @@index([company_name], name: "idx_client_company")
+  @@index([phone], name: "idx_client_phone")
+  @@index([email], name: "idx_client_email")
+  @@index([status], name: "idx_client_status")
+  @@index([is_active], name: "idx_client_active")
+  @@map("clients")
 }
 

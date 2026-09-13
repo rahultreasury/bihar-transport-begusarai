@@ -1,10 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { adminAPI } from '../../../services/api';
+import TripMoneyFlow from './TripMoneyFlow';
+import TripPartyAccounts from './TripPartyAccounts';
+import TripTransactionHistory from './TripTransactionHistory';
+import TripTransactionModal from './TripTransactionModal';
+import TripAdvancesModal from './TripAdvancesModal';
+import TripSettlementModal from './TripSettlementModal';
 
 function TripDetailsModal({ isOpen, onClose, trip, onStatusChange, onDeleted }) {
   const [details, setDetails] = useState(null);
   const [loading, setLoading] = useState(false);
   const [statusChanging, setStatusChanging] = useState(false);
+  const [activeTab, setActiveTab] = useState('overview');
+  const [showTransactionModal, setShowTransactionModal] = useState(false);
+  const [transactionType, setTransactionType] = useState(null);
+  const [showAdvancesModal, setShowAdvancesModal] = useState(false);
+  const [showSettlementModal, setShowSettlementModal] = useState(false);
 
   useEffect(() => {
     if (isOpen && trip) {
@@ -91,11 +102,16 @@ function TripDetailsModal({ isOpen, onClose, trip, onStatusChange, onDeleted }) 
     }
   };
 
+  const openTransactionModal = (type) => {
+    setTransactionType(type);
+    setShowTransactionModal(true);
+  };
+
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-5xl max-h-[90vh] overflow-y-auto">
         {loading ? (
           <div className="p-6">
             <div className="animate-pulse space-y-4">
@@ -106,6 +122,7 @@ function TripDetailsModal({ isOpen, onClose, trip, onStatusChange, onDeleted }) 
           </div>
         ) : details ? (
           <>
+            {/* Header */}
             <div className="p-6 border-b border-border/60">
               <div className="flex items-center justify-between">
                 <div>
@@ -128,115 +145,219 @@ function TripDetailsModal({ isOpen, onClose, trip, onStatusChange, onDeleted }) 
               </div>
             </div>
 
-            <div className="p-6 space-y-6">
-              {/* Trip Information */}
-              <div>
-                <h3 className="text-sm font-semibold text-muted uppercase tracking-wider mb-3">Trip Information</h3>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                  <div>
-                    <div className="text-xs text-muted">Trip Number</div>
-                    <div className="text-sm font-medium mt-0.5">{details.trip_number}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-muted">Trip Date</div>
-                    <div className="text-sm font-medium mt-0.5">{formatDate(details.trip_date)}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-muted">Status</div>
-                    <div className="text-sm font-medium mt-0.5">{details.status?.replace('_', ' ')}</div>
-                  </div>
-                </div>
+            {/* Tabs */}
+            <div className="px-6 border-b border-border/60">
+              <div className="flex gap-1 overflow-x-auto">
+                {[
+                  { id: 'overview', label: 'Overview' },
+                  { id: 'money-flow', label: 'Money Flow' },
+                  { id: 'accounts', label: 'Party Accounts' },
+                  { id: 'transactions', label: 'Transactions' },
+                  { id: 'settlement', label: 'Settlement' },
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`px-4 py-3 text-sm font-medium whitespace-nowrap transition-colors ${
+                      activeTab === tab.id
+                        ? 'text-blue-600 border-b-2 border-blue-600'
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
               </div>
+            </div>
 
-              {/* Client */}
-              <div>
-                <h3 className="text-sm font-semibold text-muted uppercase tracking-wider mb-3">Client</h3>
-                <div className="grid grid-cols-2 gap-4">
+            <div className="p-6">
+              {/* Overview Tab */}
+              {activeTab === 'overview' && (
+                <div className="space-y-6">
+                  {/* Trip Information */}
                   <div>
-                    <div className="text-xs text-muted">Name</div>
-                    <div className="text-sm font-medium mt-0.5">
-                      {details.user ? `${details.user.first_name} ${details.user.last_name}` : '-'}
+                    <h3 className="text-sm font-semibold text-muted uppercase tracking-wider mb-3">Trip Information</h3>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                      <div>
+                        <div className="text-xs text-muted">Trip Number</div>
+                        <div className="text-sm font-medium mt-0.5">{details.trip_number}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-muted">Trip Date</div>
+                        <div className="text-sm font-medium mt-0.5">{formatDate(details.trip_date)}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-muted">Status</div>
+                        <div className="text-sm font-medium mt-0.5">{details.status?.replace('_', ' ')}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-muted">Source</div>
+                        <div className="text-sm font-medium mt-0.5">{details.source_type?.replace(/_/g, ' ')}</div>
+                      </div>
                     </div>
                   </div>
+
+                  {/* Client */}
                   <div>
-                    <div className="text-xs text-muted">Contact</div>
-                    <div className="text-sm font-medium mt-0.5">{details.user?.phone || '-'}</div>
+                    <h3 className="text-sm font-semibold text-muted uppercase tracking-wider mb-3">
+                      {details.source_type === 'OFFLINE_CLIENT' ? 'Client' : 'Customer'}
+                    </h3>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <div className="text-xs text-muted">Name</div>
+                        <div className="text-sm font-medium mt-0.5">
+                          {details.source_type === 'OFFLINE_CLIENT'
+                            ? details.client?.company_name || '-'
+                            : details.user ? `${details.user.first_name} ${details.user.last_name}` : '-'}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-muted">Contact</div>
+                        <div className="text-sm font-medium mt-0.5">
+                          {details.source_type === 'OFFLINE_CLIENT'
+                            ? details.client?.phone || '-'
+                            : details.user?.phone || '-'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Route */}
+                  <div>
+                    <h3 className="text-sm font-semibold text-muted uppercase tracking-wider mb-3">Route</h3>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                      <div>
+                        <div className="text-xs text-muted">Pickup</div>
+                        <div className="text-sm font-medium mt-0.5">{details.pickup_location}</div>
+                        <div className="text-xs text-muted">{details.pickup_city}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-muted">Drop</div>
+                        <div className="text-sm font-medium mt-0.5">{details.drop_location}</div>
+                        <div className="text-xs text-muted">{details.drop_city}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-muted">Distance</div>
+                        <div className="text-sm font-medium mt-0.5">{details.distance_km ? `${details.distance_km} km` : '-'}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Transport */}
+                  <div>
+                    <h3 className="text-sm font-semibold text-muted uppercase tracking-wider mb-3">Transport</h3>
+                    <div className="grid grid-cols-3 gap-4">
+                      <div>
+                        <div className="text-xs text-muted">Transport Owner</div>
+                        <div className="text-sm font-medium mt-0.5">{details.transportOwner?.owner_name || '-'}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-muted">Vehicle</div>
+                        <div className="text-sm font-medium mt-0.5">{details.vehicle?.vehicle_number || '-'}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-muted">Driver</div>
+                        <div className="text-sm font-medium mt-0.5">{details.driver?.driver_name || '-'}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Financial Summary */}
+                  <div>
+                    <h3 className="text-sm font-semibold text-muted uppercase tracking-wider mb-3">Financial Summary</h3>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                      <div className="bg-blue-50 rounded-lg p-4">
+                        <div className="text-xs text-blue-600">Freight</div>
+                        <div className="text-lg font-bold text-blue-900">{formatCurrency(details.freight_amount)}</div>
+                      </div>
+                      <div className="bg-green-50 rounded-lg p-4">
+                        <div className="text-xs text-green-600">Commission (5%)</div>
+                        <div className="text-lg font-bold text-green-900">{formatCurrency(details.commission_amount)}</div>
+                      </div>
+                      <div className="bg-purple-50 rounded-lg p-4">
+                        <div className="text-xs text-purple-600">Owner Share</div>
+                        <div className="text-lg font-bold text-purple-900">{formatCurrency(details.owner_settlement_amount)}</div>
+                      </div>
+                      <div className="bg-gray-50 rounded-lg p-4">
+                        <div className="text-xs text-gray-600">BT Margin</div>
+                        <div className="text-lg font-bold text-gray-900">{formatCurrency(details.bt_margin)}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Quick Actions */}
+                  <div>
+                    <h3 className="text-sm font-semibold text-muted uppercase tracking-wider mb-3">Quick Actions</h3>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={() => openTransactionModal('CUSTOMER_PAYMENT')}
+                        className="px-4 py-2 bg-green-500 text-white rounded-xl text-sm font-medium hover:bg-green-600 transition-colors"
+                      >
+                        + Record Customer Payment
+                      </button>
+                      <button
+                        onClick={() => openTransactionModal('OWNER_ADVANCE')}
+                        className="px-4 py-2 bg-purple-500 text-white rounded-xl text-sm font-medium hover:bg-purple-600 transition-colors"
+                      >
+                        + Owner Advance
+                      </button>
+                      <button
+                        onClick={() => openTransactionModal('DRIVER_ADVANCE')}
+                        className="px-4 py-2 bg-orange-500 text-white rounded-xl text-sm font-medium hover:bg-orange-600 transition-colors"
+                      >
+                        + Driver Advance
+                      </button>
+                      <button
+                        onClick={() => setShowSettlementModal(true)}
+                        className="px-4 py-2 bg-blue-500 text-white rounded-xl text-sm font-medium hover:bg-blue-600 transition-colors"
+                      >
+                        Pay Settlement
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
 
-              {/* Route */}
-              <div>
-                <h3 className="text-sm font-semibold text-muted uppercase tracking-wider mb-3">Route</h3>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                  <div>
-                    <div className="text-xs text-muted">Pickup</div>
-                    <div className="text-sm font-medium mt-0.5">{details.pickup_location}</div>
-                    <div className="text-xs text-muted">{details.pickup_city}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-muted">Drop</div>
-                    <div className="text-sm font-medium mt-0.5">{details.drop_location}</div>
-                    <div className="text-xs text-muted">{details.drop_city}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-muted">Distance</div>
-                    <div className="text-sm font-medium mt-0.5">{details.distance_km ? `${details.distance_km} km` : '-'}</div>
-                  </div>
-                </div>
-              </div>
+              {/* Money Flow Tab */}
+              {activeTab === 'money-flow' && (
+                <TripMoneyFlow
+                  transactions={details.financialTransactions || details.transactions || []}
+                  freight={details.freight_amount || 0}
+                  commission={details.commission_amount || 0}
+                  ownerShare={details.owner_settlement_amount || 0}
+                />
+              )}
 
-              {/* Transport */}
-              <div>
-                <h3 className="text-sm font-semibold text-muted uppercase tracking-wider mb-3">Transport</h3>
-                <div className="grid grid-cols-3 gap-4">
-                  <div>
-                    <div className="text-xs text-muted">Transport Owner</div>
-                    <div className="text-sm font-medium mt-0.5">{details.transportOwner?.owner_name || '-'}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-muted">Vehicle</div>
-                    <div className="text-sm font-medium mt-0.5">{details.vehicle?.vehicle_number || '-'}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-muted">Driver</div>
-                    <div className="text-sm font-medium mt-0.5">{details.driver?.driver_name || '-'}</div>
-                  </div>
-                </div>
-              </div>
+              {/* Party Accounts Tab */}
+              {activeTab === 'accounts' && (
+                <TripPartyAccounts
+                  balances={details.balances || {}}
+                  freight={details.freight_amount || 0}
+                  commission={details.commission_amount || 0}
+                  ownerShare={details.owner_settlement_amount || 0}
+                />
+              )}
 
-              {/* Financial */}
-              <div>
-                <h3 className="text-sm font-semibold text-muted uppercase tracking-wider mb-3">Financial</h3>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                  <div>
-                    <div className="text-xs text-muted">Freight</div>
-                    <div className="text-sm font-medium mt-0.5">{formatCurrency(details.freight_amount)}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-muted">Total Expenses</div>
-                    <div className="text-sm font-medium mt-0.5 text-red-600">{formatCurrency(details.totalExpenses)}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-muted">Profit</div>
-                    <div className="text-sm font-medium mt-0.5 text-green-600">{formatCurrency(details.profit)}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-muted">Total Received</div>
-                    <div className="text-sm font-medium mt-0.5">{formatCurrency(details.totalPayments)}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-muted">Outstanding</div>
-                    <div className="text-sm font-medium mt-0.5 text-orange-600">{formatCurrency(details.outstanding)}</div>
-                  </div>
-                </div>
-              </div>
+              {/* Transactions Tab */}
+              {activeTab === 'transactions' && (
+                <TripTransactionHistory bookingId={details.booking_id} tripId={details.trip_id} />
+              )}
 
-              {/* Notes */}
-              {details.notes && (
+              {/* Settlement Tab */}
+              {activeTab === 'settlement' && (
                 <div>
-                  <h3 className="text-sm font-semibold text-muted uppercase tracking-wider mb-3">Notes</h3>
-                  <p className="text-sm text-muted">{details.notes}</p>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold text-gray-900">Settlement</h3>
+                    <button
+                      onClick={() => setShowSettlementModal(true)}
+                      className="px-4 py-2 bg-blue-500 text-white rounded-xl text-sm font-medium hover:bg-blue-600 transition-colors"
+                    >
+                      Settle Payment
+                    </button>
+                  </div>
+                  <div className="bg-gray-50 rounded-xl p-4">
+                    <p className="text-sm text-gray-500">Use the Settlement modal to record owner and driver settlements.</p>
+                  </div>
                 </div>
               )}
             </div>
@@ -290,6 +411,44 @@ function TripDetailsModal({ isOpen, onClose, trip, onStatusChange, onDeleted }) 
           <div className="p-6 text-center text-muted">Failed to load trip details</div>
         )}
       </div>
+
+      {/* Modals */}
+      {showTransactionModal && (
+        <TripTransactionModal
+          isOpen={showTransactionModal}
+          onClose={() => setShowTransactionModal(false)}
+          trip={trip}
+          onSaved={() => {
+            fetchTripDetails();
+            setShowTransactionModal(false);
+          }}
+          defaultType={transactionType}
+        />
+      )}
+
+      {showAdvancesModal && (
+        <TripAdvancesModal
+          isOpen={showAdvancesModal}
+          onClose={() => setShowAdvancesModal(false)}
+          trip={trip}
+          onSaved={() => {
+            fetchTripDetails();
+            setShowAdvancesModal(false);
+          }}
+        />
+      )}
+
+      {showSettlementModal && (
+        <TripSettlementModal
+          isOpen={showSettlementModal}
+          onClose={() => setShowSettlementModal(false)}
+          trip={trip}
+          onSaved={() => {
+            fetchTripDetails();
+            setShowSettlementModal(false);
+          }}
+        />
+      )}
     </div>
   );
 }

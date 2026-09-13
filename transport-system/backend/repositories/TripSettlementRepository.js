@@ -89,6 +89,31 @@ class TripSettlementRepository {
       },
     });
   }
+
+  /**
+   * Find or create trip settlement for a trip (standalone trip support).
+   * @param {number} tripId
+   * @param {number} tripFinancialId
+   * @param {Object} tx - Optional Prisma transaction client
+   * @returns {Promise<Object>}
+   */
+  async findOrCreateByTripId(tripId, tripFinancialId, tx = null) {
+    const client = tx || prisma;
+    const existing = await client.tripSettlement.findFirst({
+      where: { trip_id: tripId },
+    });
+
+    if (existing) {
+      return existing;
+    }
+
+    return await client.tripSettlement.create({
+      data: {
+        trip_id: tripId,
+        trip_financial_id: tripFinancialId,
+      },
+    });
+  }
 }
 
 module.exports = TripSettlementRepository;

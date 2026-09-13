@@ -7,11 +7,12 @@
  */
 
 const { prisma } = require('../config/prisma');
-const { AppError, ValidationError, NotFoundError } = require('../utils/AppError');
+const { AppError, ValidationError, NotFoundError, ConflictError } = require('../utils/AppError');
 const TripRepository = require('../repositories/TripRepository');
 const AuditLogRepository = require('../repositories/AuditLogRepository');
 const TripTimelineService = require('./TripTimelineService');
 const TripFinancialCalculationService = require('./TripFinancialCalculationService');
+const CanonicalFinancialService = require('./CanonicalFinancialService');
 
 class TripService {
   constructor() {
@@ -19,6 +20,7 @@ class TripService {
     this.auditRepo = new AuditLogRepository();
     this.timelineService = new TripTimelineService();
     this.financialService = new TripFinancialCalculationService();
+    this.canonicalFinancialService = new CanonicalFinancialService();
   }
 
   /**
@@ -27,31 +29,36 @@ class TripService {
   async getAllTrips(filters = {}, user = null) {
     const trips = await this.tripRepo.findAll(filters);
 
-    // Calculate financial data for each trip
+    // Calculate financial data for each trip using the authoritative financial service
+    // This ensures consistency with the trip detail financial API
     const tripsWithFinancials = await Promise.all(
       trips.trips.map(async (trip) => {
-        const [totalExpenses, totalPayments] = await Promise.all([
-          prisma.tripExpense.aggregate({
-            where: { trip_id: trip.trip_id },
-            _sum: { amount: true },
-          }),
-          prisma.tripPayment.aggregate({
-            where: { trip_id: trip.trip_id },
-            _sum: { amount: true },
-          }),
-        ]);
-
-        const totalExpensesAmount = totalExpenses._sum.amount || 0;
-        const totalPaymentsAmount = totalPayments._sum.amount || 0;
-        const profit = trip.freight_amount - totalExpensesAmount;
-        const outstanding = trip.freight_amount - totalPaymentsAmount;
+        const financials = await this.financialService.calculateTripFinancials(trip.trip_id);
 
         return {
           ...trip,
-          totalExpenses: totalExpensesAmount,
-          totalPayments: totalPaymentsAmount,
-          profit,
-          outstanding,
+          // Legacy fields for backward compatibility
+          totalExpenses: 0, // Expenses removed from trip financial workflow
+          totalPayments: financials.customerCollected,
+          profit: financials.btNetProfit,
+          outstanding: financials.customerDue,
+          // New consistent financial fields
+          financials: {
+            client: {
+              freight: financials.freight,
+              paid: financials.customerCollected,
+              due: financials.customerDue,
+            },
+            provider: {
+              agreedAmount: financials.ownerPayable,
+              paid: financials.ownerPaid,
+              due: financials.ownerPayableRemaining,
+            },
+            commission: {
+              amount: financials.btCommission,
+              rate: financials.commissionRate,
+            },
+          },
         };
       })
     );
@@ -255,6 +262,34 @@ class TripService {
   async deleteTrip(id, user = null) {
     const existingTrip = await this.tripRepo.findById(id);
 
+    // Check for financial records that would block deletion
+    const [expenseCount, paymentCount, advanceCount, financialCount, transactionCount, timelineCount] =
+      await Promise.all([
+        prisma.tripExpense.count({ where: { trip_id: id } }),
+        prisma.tripPayment.count({ where: { trip_id: id } }),
+        prisma.tripAdvance.count({ where: { trip_id: id } }),
+        prisma.tripFinancial.count({ where: { trip_id: id } }),
+        prisma.financialTransaction.count({ where: { trip_id: id } }),
+        prisma.tripTimeline.count({ where: { trip_id: id } }),
+      ]);
+
+    const totalRecords = expenseCount + paymentCount + advanceCount + financialCount + transactionCount + timelineCount;
+
+    if (totalRecords > 0) {
+      const parts = [];
+      if (expenseCount > 0) parts.push(`${expenseCount} expense(s)`);
+      if (paymentCount > 0) parts.push(`${paymentCount} payment(s)`);
+      if (advanceCount > 0) parts.push(`${advanceCount} advance(s)`);
+      if (financialCount > 0) parts.push(`${financialCount} financial record(s)`);
+      if (transactionCount > 0) parts.push(`${transactionCount} transaction(s)`);
+      if (timelineCount > 0) parts.push(`${timelineCount} timeline event(s)`);
+
+      throw new ConflictError({
+        message: `Cannot delete trip with existing financial records: ${parts.join(', ')}. ` +
+                 'Please settle all financial activity before deleting this trip.',
+      });
+    }
+
     const trip = await this.tripRepo.delete(id);
 
     // Create audit log
@@ -283,6 +318,15 @@ class TripService {
     }
 
     const existingTrip = await this.tripRepo.findById(id);
+
+    // COMPLETION RULE: A trip MUST NOT be marked COMPLETED while Customer Due > 0
+    if (status === 'COMPLETED') {
+      const financials = await this.canonicalFinancialService.calculateTripFinancials(id);
+      const customerDue = financials.customerDue || 0;
+      if (customerDue > 0) {
+        throw new ValidationError(`Cannot complete trip. Customer payment pending: ₹${customerDue.toLocaleString('en-IN')}`);
+      }
+    }
 
     const updateData = { status };
 
@@ -425,7 +469,7 @@ class TripService {
    */
   async addPayment(tripId, data, user = null) {
     // Validate trip exists
-    await this.tripRepo.findById(tripId);
+    const trip = await this.tripRepo.findById(tripId);
 
     // Validate payment type
     const validTypes = ['ADVANCE', 'PARTIAL', 'FULL', 'SETTLEMENT', 'OTHER'];
@@ -433,16 +477,88 @@ class TripService {
       throw new ValidationError(`Invalid payment type: ${data.payment_type}`);
     }
 
-    const payment = await prisma.tripPayment.create({
-      data: {
-        trip_id: tripId,
-        amount: parseFloat(data.amount),
-        payment_type: data.payment_type,
-        payment_date: data.payment_date ? new Date(data.payment_date) : new Date(),
-        payment_method: data.payment_method || null,
-        reference: data.reference || null,
-        notes: data.notes || null,
-      },
+    const amount = parseFloat(data.amount);
+    if (!amount || amount <= 0) {
+      throw new ValidationError('Valid payment amount is required');
+    }
+
+    // Calculate current customer due using canonical financial service
+    const tripFinancials = await this.canonicalFinancialService.calculateTripFinancials(tripId);
+    const customerDue = tripFinancials.customerDue || 0;
+
+    // Reject payment that exceeds outstanding customer due
+    if (amount > customerDue) {
+      throw new ValidationError(
+        `Payment cannot exceed the remaining customer due of ₹${customerDue.toLocaleString('en-IN')}`
+      );
+    }
+
+    // Find or create trip financial record for canonical ledger
+    let tripFinancial = await prisma.tripFinancial.findFirst({
+      where: { trip_id: tripId },
+    });
+    if (!tripFinancial) {
+      tripFinancial = await prisma.tripFinancial.create({
+        data: {
+          booking_id: trip.booking_id || null,
+          trip_id: tripId,
+          status: 'CALCULATED',
+          customer_fare: trip.freight_amount || 0,
+          calculated_at: new Date(),
+        },
+      });
+    }
+
+    // Determine transaction type based on trip source
+    const isClientTrip = trip.source_type === 'OFFLINE_CLIENT' && trip.client_id;
+    const transactionType = isClientTrip ? 'CLIENT_PAYMENT' : 'CUSTOMER_PAYMENT';
+    const fromParty = isClientTrip ? 'CLIENT' : 'CUSTOMER';
+
+    // Use a transaction to ensure TripPayment + FinancialTransaction are atomic
+    const result = await prisma.$transaction(async (tx) => {
+      // Create TripPayment record
+      const payment = await tx.tripPayment.create({
+        data: {
+          trip_id: tripId,
+          amount: amount,
+          payment_type: data.payment_type,
+          payment_category: 'CLIENT_PAYMENT',
+          payment_date: data.payment_date ? new Date(data.payment_date) : new Date(),
+          payment_method: data.payment_method || null,
+          reference: data.reference || null,
+          notes: data.notes || null,
+        },
+      });
+
+      // Create FinancialTransaction for canonical financial system
+      // Use tripFinancial relation connect (required by Prisma schema)
+      await tx.financialTransaction.create({
+        data: {
+          tripFinancial: { connect: { trip_financial_id: tripFinancial.trip_financial_id } },
+          trip: { connect: { trip_id: tripId } },
+          booking: trip.booking_id ? { connect: { booking_id: trip.booking_id } } : undefined,
+          client_id: trip.client_id || null,
+          transaction_type: transactionType,
+          amount: amount,
+          direction: 'CREDIT',
+          from_party: fromParty,
+          to_party: 'BIHAR_TRANSPORT',
+          purpose: 'Freight Payment',
+          payment_method: data.payment_method || null,
+          reference_number: data.reference || null,
+          transaction_date: data.payment_date ? new Date(data.payment_date) : new Date(),
+          status: 'PAID',
+          notes: data.notes || null,
+          created_by: user?.user_id || null,
+          metadata: JSON.stringify({
+            source_type: trip.source_type,
+            client_id: trip.client_id || null,
+            payment_id: payment.payment_id,
+          }),
+        },
+      });
+
+      return payment;
     });
 
     // Create audit log
@@ -452,12 +568,12 @@ class TripService {
         user_role: user.role || 'admin',
         action: 'trip_payment_added',
         entity_type: 'TripPayment',
-        entity_id: payment.payment_id,
-        new_value: JSON.stringify(payment),
+        entity_id: result.payment_id,
+        new_value: JSON.stringify(result),
       });
     }
 
-    return payment;
+    return result;
   }
 
   /**
@@ -554,6 +670,44 @@ class TripService {
    */
   async getAvailableOwners(search = '') {
     return this.tripRepo.getAvailableOwners(search);
+  }
+
+  /**
+   * Get offline clients (business accounts) for trip creation lookup.
+   * Includes trip count and outstanding stats.
+   * @param {string} search - Optional search term
+   * @returns {Promise<Array>}
+   */
+  async getOfflineClients(search = '') {
+    const clients = await this.tripRepo.getOfflineClients(search);
+
+    // Enrich with financial stats using the canonical service
+    const enriched = await Promise.all(
+      clients.map(async (client) => {
+        try {
+          const financials = await this.canonicalFinancialService.calculateClientFinancials(client.client_id);
+          return {
+            ...client,
+            totalTrips: financials.totalTrips,
+            totalFreight: financials.totalFreight,
+            totalPaid: financials.totalPaid,
+            outstanding: financials.totalOutstanding,
+            paymentStatus: financials.paymentStatus,
+          };
+        } catch {
+          return {
+            ...client,
+            totalTrips: client._count?.trips || 0,
+            totalFreight: 0,
+            totalPaid: 0,
+            outstanding: 0,
+            paymentStatus: 'PENDING',
+          };
+        }
+      })
+    );
+
+    return enriched;
   }
 
   /**

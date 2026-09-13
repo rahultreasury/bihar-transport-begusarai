@@ -4,8 +4,10 @@ const { prisma } = require('../config/prisma');
 const { protect } = require('../middleware/auth');
 const { validateTransition } = require('../utils/BookingStateMachine');
 const BookingTimelineRepository = require('../repositories/BookingTimelineRepository');
+const ResourceAvailabilityService = require('../services/ResourceAvailabilityService');
 
 const timelineRepo = new BookingTimelineRepository();
+const resourceAvailabilityService = new ResourceAvailabilityService();
 
 // @route   POST /api/delivery/update-location
 // @desc    Update driver location for live tracking
@@ -279,23 +281,25 @@ select: {
         tx
       );
 
-      // Make driver available again
-      await tx.driver.update({
-        where: { driver_id: driver.driver_id },
-        data: {
-          is_available: true,
-          total_deliveries: { increment: 1 },
-        },
+      // Release driver and vehicle only if no other active trip exists
+      const linkedTrip = await tx.trip.findFirst({
+        where: { booking_id: parseInt(booking_id) },
+        select: { trip_id: true },
       });
 
-      // Make vehicle available again
-      if (booking.vehicle_id) {
-        await tx.transportVehicle.update({
-          where: { vehicle_id: booking.vehicle_id },
-          data: {
-            is_available: true,
-            current_status: 'available',
-          },
+      const { driverReleased, vehicleReleased } =
+        await resourceAvailabilityService.releaseResourcesIfNoActiveTrip(
+          driver.driver_id,
+          booking.vehicle_id,
+          linkedTrip ? linkedTrip.trip_id : null,
+          tx
+        );
+
+      // Increment total_deliveries only when the driver is actually released
+      if (driverReleased) {
+        await tx.driver.update({
+          where: { driver_id: driver.driver_id },
+          data: { total_deliveries: { increment: 1 } },
         });
       }
     });

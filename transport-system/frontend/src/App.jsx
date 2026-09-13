@@ -50,6 +50,10 @@ const AdminPartnerProfile = lazy(() => import('./pages/AdminPartnerProfile'));
 const AdminSettlements = lazy(() => import('./pages/AdminSettlements'));
 const AdminTrips = lazy(() => import('./pages/AdminTrips'));
 const AdminCreateTrip = lazy(() => import('./pages/AdminCreateTrip'));
+const AdminTripWorkspace = lazy(() => import('./pages/AdminTripWorkspace'));
+const AdminFinancials = lazy(() => import('./pages/AdminFinancials'));
+const AdminClients = lazy(() => import('./pages/AdminClients'));
+const AdminClientDetail = lazy(() => import('./pages/AdminClientDetail'));
 const AdminOwners = lazy(() => import('./pages/AdminPartners'));
 const AdminOwnerProfile = lazy(() => import('./pages/AdminPartnerProfile'));
 const VehicleSearch = lazy(() => import('./pages/VehicleSearch'));
@@ -197,6 +201,38 @@ function AppContent() {
           element={
             <ProtectedRoute>
               <Suspense fallback={<PageLoader label="Loading Create Trip..." />}><AdminCreateTrip /></Suspense>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/trips/:tripId"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading Trip Workspace..." />}><AdminTripWorkspace /></Suspense>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/financials"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading Financials..." />}><AdminFinancials /></Suspense>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/clients"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading Clients..." />}><AdminClients /></Suspense>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/clients/:id"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading Client Detail..." />}><AdminClientDetail /></Suspense>
             </ProtectedRoute>
           }
         />

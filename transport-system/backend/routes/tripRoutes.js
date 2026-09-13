@@ -12,7 +12,7 @@ const { protect, adminOnly } = require('../middleware/auth');
 const TripService = require('../services/TripService');
 const TripTimelineService = require('../services/TripTimelineService');
 const TripFinancialCalculationService = require('../services/TripFinancialCalculationService');
-const { ValidationError, NotFoundError } = require('../utils/AppError');
+const { ValidationError, NotFoundError, ConflictError } = require('../utils/AppError');
 
 const tripService = new TripService();
 const timelineService = new TripTimelineService();
@@ -172,6 +172,9 @@ router.delete('/:id', protect, adminOnly, async (req, res) => {
     console.error('Delete trip error:', error);
     if (error instanceof NotFoundError) {
       return res.status(404).json({ success: false, message: error.message });
+    }
+    if (error instanceof ConflictError) {
+      return res.status(409).json({ success: false, message: error.message });
     }
     res.status(500).json({ success: false, message: error.message || 'Server error' });
   }
@@ -627,6 +630,25 @@ router.get('/lookup/clients-with-stats', protect, async (req, res) => {
     });
   } catch (error) {
     console.error('Get clients with stats error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Server error' });
+  }
+});
+
+/**
+ * GET /api/trips/lookup/offline-clients
+ * Get offline clients (business accounts) for trip creation.
+ * Searchable lookup with trip count and outstanding stats.
+ */
+router.get('/lookup/offline-clients', protect, async (req, res) => {
+  try {
+    const search = req.query.search || '';
+    const clients = await tripService.getOfflineClients(search);
+    res.json({
+      success: true,
+      data: clients,
+    });
+  } catch (error) {
+    console.error('Get offline clients error:', error);
     res.status(500).json({ success: false, message: error.message || 'Server error' });
   }
 });

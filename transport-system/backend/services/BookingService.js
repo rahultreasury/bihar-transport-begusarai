@@ -14,6 +14,7 @@ const BookingTimelineRepository = require('../repositories/BookingTimelineReposi
 const ReservationRepository = require('../repositories/ReservationRepository');
 const InvoiceRepository = require('../repositories/InvoiceRepository');
 const TripFinancialService = require('./TripFinancialService');
+const ResourceAvailabilityService = require('./ResourceAvailabilityService');
 const { prisma } = require('../config/prisma');
 const { AppError, ValidationError, NotFoundError } = require('../utils/AppError');
 const { buildBookingNumber } = require('./BookingNumberService');
@@ -33,6 +34,7 @@ class BookingService {
     this.reservationRepo = deps.reservationRepo || new ReservationRepository();
     this.invoiceRepo = deps.invoiceRepo || new InvoiceRepository();
     this.tripFinancialService = deps.tripFinancialService || new TripFinancialService();
+    this.resourceAvailabilityService = deps.resourceAvailabilityService || new ResourceAvailabilityService();
   }
 
 /**
@@ -496,16 +498,10 @@ const bookingResult = await prisma.$transaction(async (tx) => {
         }
 
         if (reservedDriverId) {
-          await tx.driver.update({
-            where: { driver_id: reservedDriverId },
-            data: { is_available: false },
-          });
+          await this.resourceAvailabilityService.markDriverBusy(reservedDriverId, tx);
         }
         if (reservedVehicleId) {
-          await tx.transportVehicle.update({
-            where: { vehicle_id: reservedVehicleId },
-            data: { is_available: false, current_status: 'on_trip' },
-          });
+          await this.resourceAvailabilityService.markVehicleBusy(reservedVehicleId, tx);
         }
       }
 

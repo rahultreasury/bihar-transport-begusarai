@@ -28,7 +28,7 @@ const SORT_ARROW_DOWN = '↓';
  */
 function PremiumTable({
   columns = [],
-  rows = [],
+  rows,
   loading = false,
   sortField,
   sortDirection,
@@ -39,9 +39,11 @@ function PremiumTable({
   isAllSelected,
   isIndeterminate,
   onKeyDown,
-  focusedIndex
+  focusedIndex,
+  onRowClick
 }) {
   const resolvedColumns = useMemo(() => columns || [], [columns]);
+  const resolvedRows = Array.isArray(rows) ? rows : [];
   const tableRef = useRef(null);
 
   const hasSelection = !!onSelect;
@@ -130,17 +132,18 @@ function PremiumTable({
                   </div>
                 </td>
               </tr>
-            ) : rows.length === 0 ? (
+            ) : resolvedRows.length === 0 ? (
               <tr>
                 <td colSpan={resolvedColumns.length + (hasSelection ? 1 : 0)} className="px-4 py-8">
                   <EmptyState title="No data" subtitle="No records match your current criteria." />
                 </td>
               </tr>
             ) : (
-              rows.map((r, idx) => {
+              resolvedRows.map((r, idx) => {
                 const rowId = r.id || r.booking_id || idx;
                 const isSelected = selectedIds?.has(rowId);
                 const isFocused = focusedIndex === idx;
+                const isClickable = !!onRowClick;
 
                 return (
                   <tr
@@ -149,11 +152,11 @@ function PremiumTable({
                       isSelected
                         ? 'bg-amber-500/5 hover:bg-amber-500/10'
                         : 'hover:bg-hover/40'
-                    } ${isFocused ? 'ring-2 ring-inset ring-amber-500/30' : ''}`}
-                    onClick={() => onSelect?.(rowId, idx)}
+                    } ${isFocused ? 'ring-2 ring-inset ring-amber-500/30' : ''} ${isClickable ? 'cursor-pointer' : ''}`}
+                    onClick={() => onRowClick?.(r, idx) ?? onSelect?.(rowId, idx)}
                     role="row"
                     aria-selected={isSelected}
-                    tabIndex={-1}
+                    tabIndex={isClickable ? 0 : -1}
                   >
                     {hasSelection && (
                       <td className="w-10 px-2 py-3">

@@ -50,6 +50,7 @@ const adminRoutes = require('./routes/adminRoutes');
 const deliveryRoutes = require('./routes/deliveryRoutes');
 const vehicleRoutes = require('./routes/vehicleRoutes');
 const vehicleOwnerRoutes = require('./routes/vehicleOwnerRoutes');
+const clientRoutes = require('./routes/clientRoutes');
 const licenseRoutes = require('./routes/licenseRoutes');
 const challanRoutes = require('./routes/challanRoutes');
 const appointmentRoutes = require('./routes/appointmentRoutes');
@@ -63,6 +64,7 @@ const partnerApplicationRoutes = require('./routes/partnerApplicationRoutes');
 const partnerSettlementRoutes = require('./routes/partnerSettlementRoutes');
 const tripFinancialRoutes = require('./routes/tripFinancialRoutes');
 const tripRoutes = require('./routes/tripRoutes');
+const financialRoutes = require('./routes/financialRoutes');
 const emailService = require('./services/emailService');
 
 const app = express();
@@ -194,12 +196,18 @@ app.use('/api/admin/settlements', adminLimiter, partnerSettlementRoutes);
 // Vehicle Owner Management Routes
 app.use('/api/admin/vehicle-owners', adminLimiter, vehicleOwnerRoutes);
 
+// Client Management Routes (Offline Corporate Clients)
+app.use('/api/admin/clients', adminLimiter, clientRoutes);
+
 // Trip Management Routes (CRUD + expenses + payments)
 app.use('/api/trips', bookingLimiter, tripRoutes);
 
 // Trip Financial Routes (role-based financial data)
 // Mounted after tripRoutes to avoid route conflicts
 app.use('/api/trips', bookingLimiter, tripFinancialRoutes);
+
+// Financial Management Routes (global financial control center)
+app.use('/api/financials', adminLimiter, financialRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

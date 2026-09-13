@@ -396,14 +396,38 @@ const searchInputRef = useRef(null);
       render: (r) => {
         const owner = r.transportOwner;
         if (!owner) {
-          return <span className="text-xs text-muted">—</span>;
+          // After Phase 2 backfill this branch should NEVER render. It is
+          // kept as a defensive fallback only. The text is deliberately
+          // loud so any remaining orphan is visible immediately.
+          return (
+            <span
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-red-500/10 text-red-600 border border-red-500/20"
+              title="This driver has no Transport Owner. Run scripts/backfill-orphan-drivers.js"
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              NO OWNER
+            </span>
+          );
         }
+        const isSelfOwner = String(owner.owner_type || '').toUpperCase() === 'DRIVER_OWNER';
         return (
           <button
             onClick={() => navigate(`/admin/vehicle-owners/${owner.owner_id}`)}
             className="text-left text-sm hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
           >
-            <div className="font-medium text-text">{owner.owner_name}</div>
+            <div className="flex items-center gap-1.5">
+              <span className="font-medium text-text">{owner.owner_name}</span>
+              {isSelfOwner && (
+                <span
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider bg-violet-500/10 text-violet-600 dark:text-violet-400 border border-violet-500/20"
+                  title="This Transport Owner is also a Driver (Self Owner)"
+                >
+                  Self Owner
+                </span>
+              )}
+            </div>
             {owner.company_name && <div className="text-[10px] text-muted">{owner.company_name}</div>}
           </button>
         );
@@ -515,6 +539,20 @@ const searchInputRef = useRef(null);
                 label="Assign Vehicle"
                 onClick={() => { setSelectedDriver(r); setShowVehicleAssignModal(true); setOpenMenuId(null); }}
               />
+
+              {/* Phase 2.1 — orphan-driver recovery action.
+                  Only shown when the driver has no transport_owner_id.
+                  Opens the existing Edit modal which surfaces the owner
+                  picker. The picker still has the "+ Add Transport
+                  Owner" button for cases where no owner exists yet. */}
+              {!r.transportOwner && (
+                <ActionMenuItem
+                  icon={<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>}
+                  label="Assign Owner"
+                  color="text-red-500"
+                  onClick={() => { setSelectedDriver(r); setShowEditModal(true); setOpenMenuId(null); }}
+                />
+              )}
 
               <div className="border-t border-border/40 my-1" />
               <div className="px-3 py-1 text-[10px] font-semibold text-muted uppercase tracking-wider">Contact</div>

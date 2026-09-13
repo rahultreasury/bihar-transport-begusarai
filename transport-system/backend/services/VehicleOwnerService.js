@@ -201,12 +201,18 @@ class VehicleOwnerService {
       driverId = linkedDriver[0].driver_id;
     }
 
-    // Validate driver_id if provided (either from body or resolved from owner)
-    if (driverId) {
-      const driver = await this.repo.findDriverById(driverId);
-      if (!driver) {
-        throw new Error('Driver not found');
-      }
+    // Driver is REQUIRED for all vehicle types unless DRIVER_OWNER with auto-assignment
+    if (!driverId) {
+      throw new Error('Driver is required. Please select a driver or enable "Assign owner as the current driver" for DRIVER_OWNER type.');
+    }
+
+    // Validate driver exists and belongs to the same owner
+    const driver = await this.repo.findDriverById(driverId);
+    if (!driver) {
+      throw new Error('Driver not found');
+    }
+    if (driver.transport_owner_id !== ownerId) {
+      throw new Error(`Driver belongs to a different transport owner. Vehicle and driver must belong to the same owner.`);
     }
 
     const vehicleData = {
@@ -261,7 +267,7 @@ class VehicleOwnerService {
       'registration_date', 'insurance_number', 'insurance_expiry',
       'permit_number', 'permit_expiry', 'pollution_certificate',
       'pollution_expiry', 'base_location', 'hourly_rate', 'per_km_rate',
-      'current_status', 'is_available', 'is_verified', 'owner_id',
+      'current_status', 'is_available', 'is_verified', 'owner_id', 'driver_id',
     ];
 
     const updateData = {};
@@ -291,6 +297,35 @@ class VehicleOwnerService {
 
       // Remove from generic updateData so it is not blindly passed through
       delete updateData.owner_id;
+    }
+
+    // driver_id changes require owner consistency validation
+    if (updateData.driver_id !== undefined) {
+      const currentVehicle = await this.repo.findVehicleById(vehicleId);
+      if (!currentVehicle) {
+        throw new Error('Vehicle not found');
+      }
+
+      const newDriverId = updateData.driver_id ? parseInt(updateData.driver_id) : null;
+
+      // If removing driver, that's allowed (vehicle becomes unassigned)
+      if (!newDriverId) {
+        // Clear driver assignment
+        await this.repo.assignDriverToVehicle(vehicleId, null);
+        delete updateData.driver_id;
+      } else {
+        // Validate new driver exists and belongs to the same owner
+        const driver = await this.repo.findDriverById(newDriverId);
+        if (!driver) {
+          throw new Error('Driver not found');
+        }
+        if (currentVehicle.owner_id && driver.transport_owner_id !== currentVehicle.owner_id) {
+          throw new Error(`Driver belongs to a different transport owner. Vehicle and driver must belong to the same owner.`);
+        }
+        // Use atomic assignment
+        await this.repo.assignDriverToVehicle(vehicleId, newDriverId);
+        delete updateData.driver_id;
+      }
     }
 
     if (Object.keys(updateData).length === 0 && !ownerChanged) {

@@ -1078,3 +1078,77 @@ html.admin-dark body {
   }
 }
 
+/* ============================================
+   TRIPS KPI STRIP (AdminTrips Page)
+   ============================================ */
+.kpi-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: flex-start;
+}
+
+.kpi-strip-item {
+  flex: 1 1 150px;
+  min-width: 140px;
+  max-width: 200px;
+  background: rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: 0.75rem;
+  border: 1px solid rgba(229, 231, 235, 0.6);
+  padding: 1rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.kpi-strip-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #9ca3af;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+}
+
+.kpi-strip-value {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #1f2937;
+  line-height: 1.2;
+  margin-top: 0.25rem;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .kpi-strip {
+    gap: 0.5rem;
+  }
+  
+  .kpi-strip-item {
+    flex: 1 1 45%;
+    min-width: 120px;
+    padding: 0.75rem;
+  }
+  
+  .kpi-strip-value {
+    font-size: 1.25rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .kpi-strip {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x mandatory;
+    padding-bottom: 0.5rem;
+  }
+  
+  .kpi-strip-item {
+    flex: 0 0 140px;
+    scroll-snap-align: start;
+  }
+}
+

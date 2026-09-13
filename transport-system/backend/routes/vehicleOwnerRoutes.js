@@ -8,8 +8,10 @@ const router = express.Router();
 const { body, param, validationResult } = require('express-validator');
 const { protect } = require('../middleware/auth');
 const VehicleOwnerService = require('../services/VehicleOwnerService');
+const ConnectionService = require('../services/ConnectionService');
 
 const vehicleOwnerService = new VehicleOwnerService();
+const connectionService = new ConnectionService();
 
 // Admin access middleware
 const adminCheck = (req, res, next) => {
@@ -230,6 +232,88 @@ router.post('/:id/vehicles', protect, adminCheck, [
     if (error.code === 'VEHICLE_ALREADY_EXISTS') {
       return res.status(409).json({ success: false, message: error.message, data: error.data });
     }
+    handleError(res, error);
+  }
+});
+
+// ============================
+// CONNECTION WORKFLOW (Orphan Records)
+// ============================
+
+// Get connection statistics
+router.get('/connections/stats', protect, adminCheck, async (req, res) => {
+  try {
+    const stats = await connectionService.getConnectionStats();
+    res.json({ success: true, data: stats });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+// Get orphan vehicles (without owner or driver)
+router.get('/connections/orphan-vehicles', protect, adminCheck, async (req, res) => {
+  try {
+    const vehicles = await connectionService.getOrphanVehicles();
+    res.json({ success: true, data: vehicles });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+// Get orphan drivers (without owner)
+router.get('/connections/orphan-drivers', protect, adminCheck, async (req, res) => {
+  try {
+    const drivers = await connectionService.getOrphanDrivers();
+    res.json({ success: true, data: drivers });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+// Get orphan owners (without vehicles or drivers)
+router.get('/connections/orphan-owners', protect, adminCheck, async (req, res) => {
+  try {
+    const owners = await connectionService.getOrphanOwners();
+    res.json({ success: true, data: owners });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+// Connect a vehicle to owner and driver
+router.post('/connections/connect-vehicle', protect, adminCheck, [
+  body('vehicle_id').isInt({ min: 1 }).withMessage('Valid vehicle ID is required'),
+  body('owner_id').isInt({ min: 1 }).withMessage('Valid owner ID is required'),
+  body('driver_id').isInt({ min: 1 }).withMessage('Valid driver ID is required'),
+], handleValidation, async (req, res) => {
+  try {
+    const { vehicle_id, owner_id, driver_id } = req.body;
+    const vehicle = await connectionService.connectVehicle(vehicle_id, owner_id, driver_id);
+    res.json({
+      success: true,
+      message: 'Vehicle connected successfully',
+      data: vehicle,
+    });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+// Connect a driver to an owner
+router.post('/connections/connect-driver', protect, adminCheck, [
+  body('driver_id').isInt({ min: 1 }).withMessage('Valid driver ID is required'),
+  body('owner_id').isInt({ min: 1 }).withMessage('Valid owner ID is required'),
+  body('is_driver_owner').optional().isBoolean().withMessage('is_driver_owner must be a boolean'),
+], handleValidation, async (req, res) => {
+  try {
+    const { driver_id, owner_id, is_driver_owner } = req.body;
+    const driver = await connectionService.connectDriver(driver_id, owner_id, is_driver_owner);
+    res.json({
+      success: true,
+      message: 'Driver connected successfully',
+      data: driver,
+    });
+  } catch (error) {
     handleError(res, error);
   }
 });

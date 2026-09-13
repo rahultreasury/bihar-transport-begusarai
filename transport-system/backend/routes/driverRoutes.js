@@ -6,9 +6,11 @@ const { body, validationResult } = require('express-validator');
 const { validateTransition } = require('../utils/BookingStateMachine');
 const BookingTimelineRepository = require('../repositories/BookingTimelineRepository');
 const TripFinancialService = require('../services/TripFinancialService');
+const ResourceAvailabilityService = require('../services/ResourceAvailabilityService');
 
 const timelineRepo = new BookingTimelineRepository();
 const tripFinancialService = new TripFinancialService();
+const resourceAvailabilityService = new ResourceAvailabilityService();
 
 // @route   GET /api/drivers/available-jobs
 // @desc    Get available transport jobs
@@ -287,17 +289,9 @@ if (booking.status !== 'pending' && booking.status !== 'quote_sent') {
         });
       }
 
-      // Make driver unavailable
-      await tx.driver.update({
-        where: { driver_id: driver.driver_id },
-        data: { is_available: false },
-      });
-
-      // Make vehicle unavailable
-      await tx.transportVehicle.update({
-        where: { vehicle_id: parseInt(vehicle_id) },
-        data: { is_available: false, current_status: 'on_trip' },
-      });
+      // Mark driver and vehicle as busy through centralized service
+      await resourceAvailabilityService.markDriverBusy(driver.driver_id, tx);
+      await resourceAvailabilityService.markVehicleBusy(parseInt(vehicle_id), tx);
 
       // Initialize trip financial record
       await tripFinancialService.initializeTripFinancial(bookingId, {
@@ -604,23 +598,27 @@ await tx.booking.update({
         data: deliveryUpdateData,
       });
 
-      // If delivered, make driver and vehicle available again
+      // If delivered, release driver and vehicle only if no other active trip exists
       if (status === 'delivered') {
-        await tx.driver.update({
-          where: { driver_id: driver.driver_id },
-          data: {
-            is_available: true,
-            total_deliveries: { increment: 1 },
-          },
+        // Find the trip linked to this booking (if any) to exclude from the active-trip check
+        const linkedTrip = await tx.trip.findFirst({
+          where: { booking_id: bookingId },
+          select: { trip_id: true },
         });
 
-        if (booking.vehicle_id) {
-          await tx.transportVehicle.update({
-            where: { vehicle_id: booking.vehicle_id },
-            data: {
-              is_available: true,
-              current_status: 'available',
-            },
+        const { driverReleased, vehicleReleased } =
+          await resourceAvailabilityService.releaseResourcesIfNoActiveTrip(
+            driver.driver_id,
+            booking.vehicle_id,
+            linkedTrip ? linkedTrip.trip_id : null,
+            tx
+          );
+
+        // Increment total_deliveries only when the driver is actually released
+        if (driverReleased) {
+          await tx.driver.update({
+            where: { driver_id: driver.driver_id },
+            data: { total_deliveries: { increment: 1 } },
           });
         }
       }

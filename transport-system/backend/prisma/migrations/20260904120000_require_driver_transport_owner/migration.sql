@@ -1,0 +1,45 @@
+-- =====================================================================
+-- Migration: require_driver_transport_owner
+-- Phase 2 — Driver <-> Transport Owner relationship is mandatory.
+--
+-- STAGE 1 (this migration):
+--   - Drop the existing FK that allowed ON DELETE SET NULL (which silently
+--     broke the relationship whenever an owner was deleted).
+--   - The column REMAINS NULLABLE for now so the next-stage operator step
+--     can backfill orphan drivers.
+--
+-- STAGE 2 (operator step, NOT a migration):
+--   - Run `node scripts/backfill-orphan-drivers.js` against the database.
+--   - This script assigns an existing VehicleOwner to every Driver whose
+--     transport_owner_id IS NULL. It will NOT create synthetic owners.
+--
+-- STAGE 3 (separate migration, deployed only after Stage 2 reports
+-- `Orphans after : 0`):
+--   - ALTER COLUMN transport_owner_id SET NOT NULL.
+--   - Re-add the FK with ON DELETE RESTRICT so deleting an owner with
+--     attached drivers is rejected at the DB layer.
+--
+-- DO NOT combine Stages 1 and 3 in the same migration. Postgres will
+-- refuse SET NOT NULL if any NULL row remains, and the operator needs
+-- a window between stages to inspect / correct the data.
+-- =====================================================================
+
+-- 1) Drop the old FK constraint (it used ON DELETE SET NULL, which the
+--    business no longer wants).
+ALTER TABLE "drivers"
+  DROP CONSTRAINT IF EXISTS "drivers_transport_owner_id_fkey";
+
+-- 2) Leave the column nullable for now. Backfill runs as a separate
+--    operator step before the follow-up migration enforces NOT NULL.
+--
+-- 3) The existing index on transport_owner_id remains valid; we keep it
+--    so query performance on owner-scoped driver listings is preserved.
+--
+-- NOTE: a follow-up migration (to be created only after
+-- scripts/backfill-orphan-drivers.js reports "Orphans after : 0") will:
+--   ALTER TABLE "drivers"
+--     ALTER COLUMN "transport_owner_id" SET NOT NULL,
+--     ADD CONSTRAINT "drivers_transport_owner_id_fkey"
+--       FOREIGN KEY ("transport_owner_id")
+--       REFERENCES "vehicle_owners"("owner_id")
+--       ON DELETE RESTRICT ON UPDATE CASCADE;

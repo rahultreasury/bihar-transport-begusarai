@@ -126,7 +126,36 @@ router.post('/', protect, adminCheck, [
   body('vehicle_number').trim().notEmpty().withMessage('Vehicle number is required')
     .matches(/^[A-Z]{2}\d{2}[A-Z]{1,2}\d{4}$/i).withMessage('Enter a valid vehicle number (e.g. BR09AB1234)'),
   body('license_number').trim().notEmpty().withMessage('Driving licence number is required'),
-  body('transport_owner_id').optional({ values: 'falsy' }).isInt({ min: 1 }).withMessage('Valid transport owner ID is required'),
+  // Phase 2: transport_owner_id is REQUIRED unless is_self_owner is true.
+  // Phase 2.1: the Self-Owner path resolves/creates a DRIVER_OWNER from
+  // the driver's mobile, so transport_owner_id can be omitted in that case.
+  body('transport_owner_id').custom((value, { req }) => {
+    const isSelf = req.body.is_self_owner === true ||
+      req.body.is_self_owner === 'true' ||
+      req.body.is_self_owner === 1 ||
+      req.body.is_self_owner === '1';
+    if (isSelf) {
+      // Self-Owner: transport_owner_id must NOT be supplied (the backend
+      // will resolve it). An explicit id is ignored but rejected so we
+      // don't accidentally link to a wrong owner.
+      if (value !== undefined && value !== null && value !== '') {
+        throw new Error('transport_owner_id must not be supplied when is_self_owner is true.');
+      }
+      return true;
+    }
+    if (value === undefined || value === null || value === '') {
+      throw new Error('Transport Owner is required. Every driver must belong to exactly one Transport Owner.');
+    }
+    const n = Number(value);
+    if (!Number.isInteger(n) || n <= 0) {
+      throw new Error('Transport Owner id must be a positive integer.');
+    }
+    return true;
+  }),
+  body('is_self_owner').optional({ values: 'falsy' }).custom((value) => {
+    if (value === undefined || value === null || value === '') return true;
+    return value === true || value === 'true' || value === 1 || value === '1' || value === false || value === 'false' || value === 0 || value === '0';
+  }).withMessage('is_self_owner must be a boolean.'),
 ], handleValidation, async (req, res) => {
   try {
     const driver = await driverService.registerDriver(req.body);
@@ -154,6 +183,16 @@ router.post('/', protect, adminCheck, [
     if (error.code === 'P2002') {
       return res.status(400).json({ success: false, message: 'A driver with this mobile number already exists' });
     }
+    if (error.code === 'OWNER_REQUIRED' ||
+        error.code === 'OWNER_INVALID'  ||
+        error.code === 'OWNER_NOT_FOUND' ||
+        error.code === 'OWNER_INACTIVE') {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+        errorCode: error.code,
+      });
+    }
     res.status(500).json({ success: false, message: error.message || 'Server error' });
   }
 });
@@ -164,6 +203,20 @@ router.put('/:id', protect, adminCheck, [
     .matches(/^[A-Z]{2}\d{2}[A-Z]{1,2}\d{4}$/i).withMessage('Enter a valid vehicle number (e.g. BR09AB1234)'),
   body('license_number').optional({ values: 'falsy' }).trim()
     .notEmpty().withMessage('Driving licence number cannot be empty'),
+  // transport_owner_id: optional in updates BUT if supplied must be a
+  // positive int. Setting it to null / '' is rejected at the validator
+  // level so the rule "drivers always have an owner" holds.
+  body('transport_owner_id')
+    .optional({ values: 'falsy' })
+    .custom((value) => {
+      if (value === null || value === '' || value === undefined) {
+        throw new Error('Cannot remove the Transport Owner from an existing Driver. Every driver must always have exactly one Transport Owner.');
+      }
+      if (!Number.isInteger(Number(value)) || Number(value) <= 0) {
+        throw new Error('Transport Owner id must be a positive integer.');
+      }
+      return true;
+    }),
 ], handleValidation, async (req, res) => {
   try {
     const driverId = parseInt(req.params.id);
@@ -184,6 +237,16 @@ router.put('/:id', protect, adminCheck, [
       return res.status(409).json({
         success: false,
         message: 'Vehicle number already registered.',
+      });
+    }
+    if (error.code === 'OWNER_REQUIRED' ||
+        error.code === 'OWNER_INVALID'  ||
+        error.code === 'OWNER_NOT_FOUND' ||
+        error.code === 'OWNER_INACTIVE') {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+        errorCode: error.code,
       });
     }
     res.status(500).json({ success: false, message: error.message || 'Server error' });
@@ -341,7 +404,7 @@ router.post('/:id/assign-vehicle', protect, adminCheck, [
     const driverId = parseInt(req.params.id);
     if (isNaN(driverId)) return res.status(400).json({ success: false, message: 'Invalid driver ID' });
 
-    const result = await driverService.assignVehicle(driverId, req.body.vehicle_id);
+    const result = await driverService.assignVehicle(driverId, req.body.vehicle_id, req.user?.user_id || null);
     res.json({ success: true, message: 'Vehicle assigned successfully', data: result });
   } catch (error) {
     console.error('Assign vehicle error:', error);

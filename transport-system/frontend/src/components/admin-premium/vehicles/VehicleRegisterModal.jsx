@@ -54,6 +54,7 @@ export default function VehicleRegisterModal({ isOpen, onClose, onSuccess, owner
   const [ownerOpen, setOwnerOpen] = useState(false);
   const [ownerSearch, setOwnerSearch] = useState('');
   const [ownerType, setOwnerType] = useState('');
+  const [selectedOwner, setSelectedOwner] = useState(null);
   const [assignOwnerDriver, setAssignOwnerDriver] = useState(false);
   const [drivers, setDrivers] = useState([]);
   const [driversLoading, setDriversLoading] = useState(false);
@@ -82,16 +83,28 @@ export default function VehicleRegisterModal({ isOpen, onClose, onSuccess, owner
     return () => { active = false; };
   }, [isOpen, ownerSearch, ownerOpen]);
 
-  // Fetch drivers for dropdown
+  // Fetch drivers for dropdown - filtered by selected owner
   useEffect(() => {
     if (!isOpen) return;
     let active = true;
     const fetchDrivers = async () => {
       setDriversLoading(true);
       try {
-        const res = await adminAPI.getDrivers({ limit: 100 });
-        if (active && res.data?.success) {
-          setDrivers(res.data.data || []);
+        if (selectedOwner) {
+          // Fetch drivers belonging to the selected owner
+          const res = await adminAPI.getDrivers({
+            transport_owner_id: selectedOwner.owner_id,
+            limit: 100
+          });
+          if (active && res.data?.success) {
+            setDrivers(res.data.data || []);
+          }
+        } else {
+          // No owner selected, fetch all active drivers
+          const res = await adminAPI.getDrivers({ limit: 100 });
+          if (active && res.data?.success) {
+            setDrivers(res.data.data || []);
+          }
         }
       } catch (err) {
         console.error('Failed to fetch drivers:', err);
@@ -101,7 +114,7 @@ export default function VehicleRegisterModal({ isOpen, onClose, onSuccess, owner
     };
     fetchDrivers();
     return () => { active = false; };
-  }, [isOpen]);
+  }, [isOpen, selectedOwner]);
 
   // Close owner dropdown on outside click
   useEffect(() => {
@@ -131,13 +144,17 @@ export default function VehicleRegisterModal({ isOpen, onClose, onSuccess, owner
   }, [errors]);
 
   const handleOwnerSelect = useCallback((owner) => {
-    setForm(prev => ({ ...prev, owner_id: String(owner.owner_id) }));
+    setForm(prev => ({ ...prev, owner_id: String(owner.owner_id), driver_id: '' }));
     setOwnerType(owner.owner_type || '');
     setAssignOwnerDriver(false);
+    setSelectedOwner(owner);
     setOwnerSearch('');
     setOwnerOpen(false);
     if (errors.owner_id) {
       setErrors(prev => ({ ...prev, owner_id: '' }));
+    }
+    if (errors.driver_id) {
+      setErrors(prev => ({ ...prev, driver_id: '' }));
     }
   }, [errors]);
 
@@ -153,7 +170,10 @@ export default function VehicleRegisterModal({ isOpen, onClose, onSuccess, owner
       newErrors.vehicle_name = 'Vehicle name is required';
     }
     if (!form.owner_id) {
-      newErrors.owner_id = 'Transport owner is required';
+      newErrors.owner_id = 'Please select a Transport Owner from the list.';
+    }
+    if (!form.driver_id) {
+      newErrors.driver_id = 'Please select a Driver. A vehicle must have an assigned driver.';
     }
     if (!form.current_status) {
       newErrors.current_status = 'Status is required';
@@ -218,6 +238,7 @@ export default function VehicleRegisterModal({ isOpen, onClose, onSuccess, owner
     setOwnerSearch('');
     setOwnerOpen(false);
     setOwnerType('');
+    setSelectedOwner(null);
     setAssignOwnerDriver(false);
     setDrivers([]);
     onClose();
@@ -413,19 +434,54 @@ export default function VehicleRegisterModal({ isOpen, onClose, onSuccess, owner
               <div className="relative">
                 <input
                   type="text"
-                  value={ownerSearch}
-                  onChange={(e) => { setOwnerSearch(e.target.value); setOwnerOpen(true); }}
+                  value={selectedOwner ? selectedOwner.owner_name : ownerSearch}
+                  onChange={(e) => { setOwnerSearch(e.target.value); setOwnerOpen(true); setSelectedOwner(null); }}
                   onFocus={() => setOwnerOpen(true)}
+                  onBlur={() => {
+                    // Auto-select on exact match when blur
+                    if (ownerSearch && owners.length > 0) {
+                      const exactMatch = owners.find(o =>
+                        o.owner_name.toLowerCase() === ownerSearch.toLowerCase()
+                      );
+                      if (exactMatch) {
+                        handleOwnerSelect(exactMatch);
+                      }
+                    }
+                    setTimeout(() => setOwnerOpen(false), 200);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && ownerSearch && owners.length > 0) {
+                      const exactMatch = owners.find(o =>
+                        o.owner_name.toLowerCase() === ownerSearch.toLowerCase()
+                      );
+                      if (exactMatch) {
+                        e.preventDefault();
+                        handleOwnerSelect(exactMatch);
+                      }
+                    }
+                  }}
                   placeholder="Search and select owner..."
                   autoComplete="off"
                   className={`w-full px-3 py-2.5 rounded-xl border text-sm bg-card/40 focus:outline-none focus:ring-2 focus:ring-amber-500/30 transition ${
-                    errors.owner_id ? 'border-red-500/50' : 'border-border/60'
+                    errors.owner_id ? 'border-red-500/50' : selectedOwner ? 'border-green-500/50' : 'border-border/60'
                   }`}
                 />
-                <svg className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
+                {selectedOwner ? (
+                  <svg className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-green-500 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                ) : (
+                  <svg className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                )}
               </div>
+              {selectedOwner && (
+                <p className="text-xs text-green-600 mt-1">✓ {selectedOwner.owner_name} ({selectedOwner.owner_code})</p>
+              )}
+              {!selectedOwner && (
+                <p className="text-xs text-muted mt-1">Search and select a Transport Owner</p>
+              )}
               {ownerOpen && (
                 <div className="absolute z-30 w-full mt-1.5 bg-white dark:bg-gray-800 border border-border/60 rounded-xl shadow-2xl max-h-48 overflow-y-auto">
                   {ownersLoading ? (
@@ -438,7 +494,9 @@ export default function VehicleRegisterModal({ isOpen, onClose, onSuccess, owner
                         key={owner.owner_id}
                         type="button"
                         onClick={() => handleOwnerSelect(owner)}
-                        className="w-full text-left px-4 py-2.5 hover:bg-amber-50 dark:hover:bg-amber-500/10 transition"
+                        className={`w-full text-left px-4 py-2.5 hover:bg-amber-50 dark:hover:bg-amber-500/10 transition ${
+                          selectedOwner?.owner_id === owner.owner_id ? 'bg-amber-50 dark:bg-amber-500/10' : ''
+                        }`}
                       >
                         <div className="text-sm font-medium">{owner.owner_name}</div>
                         <div className="text-xs text-muted">{owner.owner_code} • {owner.city || 'N/A'} • {owner.mobile}</div>
@@ -459,21 +517,27 @@ export default function VehicleRegisterModal({ isOpen, onClose, onSuccess, owner
             </div>
             <div>
               <label className="block text-sm font-medium mb-1.5">
-                Assign Driver <span className="text-muted text-[10px]">(Optional)</span>
+                Assign Driver <span className="text-red-500">*</span>
               </label>
               <select
                 name="driver_id"
                 value={form.driver_id}
                 onChange={handleChange}
-                className="w-full px-3 py-2.5 rounded-xl border border-border/60 text-sm bg-card/40 focus:outline-none focus:ring-2 focus:ring-amber-500/30 transition"
+                className={`w-full px-3 py-2.5 rounded-xl border text-sm bg-card/40 focus:outline-none focus:ring-2 focus:ring-amber-500/30 transition ${
+                  errors.driver_id ? 'border-red-500/50' : 'border-border/60'
+                }`}
               >
-                <option value="">Unassigned</option>
+                <option value="">Select driver</option>
                 {drivers.map(d => (
                   <option key={d.driver_id} value={d.driver_id}>
                     {d.driver_name} {d.driver_code ? `(${d.driver_code})` : ''}
                   </option>
                 ))}
               </select>
+              {errors.driver_id && <p className="text-xs text-red-500 mt-1">{errors.driver_id}</p>}
+              {selectedOwner && drivers.length === 0 && !driversLoading && (
+                <p className="text-xs text-amber-600 mt-1">No drivers found for this owner. Create a driver first.</p>
+              )}
             </div>
 
             {ownerType === 'DRIVER_OWNER' && (

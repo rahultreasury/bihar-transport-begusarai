@@ -23,8 +23,10 @@ import {
 
 const DEFAULT_NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/admin' },
+  { key: 'financials', label: 'Financials', icon: BarChart3, path: '/admin/financials' },
   { key: 'bookings', label: 'Bookings', icon: Package, path: '/admin/bookings' },
   { key: 'trips', label: 'Trips', icon: Route, path: '/admin/trips' },
+  { key: 'clients', label: 'Clients', icon: Users, path: '/admin/clients' },
   { key: 'owners', label: 'Transport Owners', icon: Truck, path: '/admin/owners' },
   { key: 'vehicles', label: 'Vehicles', icon: Car, path: '/admin/vehicles' },
   { key: 'drivers', label: 'Drivers', icon: Users, path: '/admin/drivers' },
@@ -73,10 +75,14 @@ const handleNav = useCallback(
         navigate(path);
       } else if (key === 'dashboard') {
         navigate('/admin');
+      } else if (key === 'financials') {
+        navigate('/admin/financials');
       } else if (key === 'bookings') {
         navigate('/admin/bookings');
       } else if (key === 'trips') {
         navigate('/admin/trips');
+      } else if (key === 'clients') {
+        navigate('/admin/clients');
       } else if (key === 'drivers') {
         navigate('/admin/drivers');
       } else if (key === 'vehicles') {

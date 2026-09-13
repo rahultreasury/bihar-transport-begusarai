@@ -6,6 +6,8 @@
  * - ADMIN: Sees everything including BT Margin
  * - TRANSPORT_OWNER: Sees only owner-specific financials
  * - DRIVER: Sees only driver-specific financials
+ *
+ * PHASE 3 REDESIGN: All values derived from FinancialTransaction ledger.
  */
 
 import { useState, useEffect } from 'react';
@@ -71,78 +73,38 @@ export default function TripFinancialSummary({ bookingId, userRole = 'ADMIN' }) 
     );
   }
 
+  const formatCurrency = (amount) => {
+    if (amount === null || amount === undefined) return '₹0';
+    return new Intl.NumberFormat('en-IN', {
+      style: 'currency',
+      currency: 'INR',
+      maximumFractionDigits: 0,
+    }).format(amount);
+  };
+
   // ADMIN VIEW - Complete financial picture
   if (userRole === 'ADMIN') {
     return (
       <div className="space-y-6">
-        {/* Customer Financials */}
+        {/* Revenue Summary */}
         <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Customer Financials</h3>
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Trip Revenue</h3>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="bg-blue-50 rounded-lg p-4">
-              <p className="text-sm text-blue-600">Customer Fare</p>
+              <p className="text-sm text-blue-600">Freight</p>
               <p className="text-xl font-bold text-blue-900">₹{financial.customerFare?.toLocaleString() || 0}</p>
             </div>
             <div className="bg-green-50 rounded-lg p-4">
-              <p className="text-sm text-green-600">Amount Received</p>
+              <p className="text-sm text-green-600">Received</p>
               <p className="text-xl font-bold text-green-900">₹{financial.amountReceived?.toLocaleString() || 0}</p>
             </div>
             <div className="bg-yellow-50 rounded-lg p-4">
-              <p className="text-sm text-yellow-600">Payment Status</p>
-              <p className="text-xl font-bold text-yellow-900">{financial.paymentStatus || 'PENDING'}</p>
-            </div>
-            <div className="bg-red-50 rounded-lg p-4">
-              <p className="text-sm text-red-600">Outstanding Amount</p>
-              <p className="text-xl font-bold text-red-900">₹{financial.outstandingAmount?.toLocaleString() || 0}</p>
-            </div>
-          </div>
-        </div>
-
-        {/* Driver Financials */}
-        <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Driver Financials</h3>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="bg-purple-50 rounded-lg p-4">
-              <p className="text-sm text-purple-600">Driver Payout</p>
-              <p className="text-xl font-bold text-purple-900">₹{financial.driverPayout?.toLocaleString() || 0}</p>
-            </div>
-            <div className="bg-orange-50 rounded-lg p-4">
-              <p className="text-sm text-orange-600">Driver Advance</p>
-              <p className="text-xl font-bold text-orange-900">₹{financial.driverAdvance?.toLocaleString() || 0}</p>
-            </div>
-            <div className="bg-indigo-50 rounded-lg p-4">
-              <p className="text-sm text-indigo-600">Fuel Advance</p>
-              <p className="text-xl font-bold text-indigo-900">₹{financial.fuelAdvance?.toLocaleString() || 0}</p>
-            </div>
-            <div className="bg-teal-50 rounded-lg p-4">
-              <p className="text-sm text-teal-600">Remaining Settlement</p>
-              <p className="text-xl font-bold text-teal-900">₹{financial.remainingDriverSettlement?.toLocaleString() || 0}</p>
-            </div>
-          </div>
-          <div className="mt-4">
-            <p className="text-sm text-gray-600">Driver Payment Status: <span className="font-semibold">{financial.driverPaymentStatus || 'PENDING'}</span></p>
-          </div>
-        </div>
-
-        {/* Owner Financials */}
-        <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Owner Financials</h3>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="bg-pink-50 rounded-lg p-4">
-              <p className="text-sm text-pink-600">Owner Settlement</p>
-              <p className="text-xl font-bold text-pink-900">₹{financial.ownerSettlement?.toLocaleString() || 0}</p>
-            </div>
-            <div className="bg-rose-50 rounded-lg p-4">
-              <p className="text-sm text-rose-600">Owner Advance</p>
-              <p className="text-xl font-bold text-rose-900">₹{financial.ownerAdvance?.toLocaleString() || 0}</p>
-            </div>
-            <div className="bg-fuchsia-50 rounded-lg p-4">
-              <p className="text-sm text-fuchsia-600">Remaining Settlement</p>
-              <p className="text-xl font-bold text-fuchsia-900">₹{financial.remainingOwnerSettlement?.toLocaleString() || 0}</p>
+              <p className="text-sm text-yellow-600">Receivable</p>
+              <p className="text-xl font-bold text-yellow-900">₹{financial.outstandingAmount?.toLocaleString() || 0}</p>
             </div>
             <div className="bg-gray-50 rounded-lg p-4">
-              <p className="text-sm text-gray-600">Owner Payment Status</p>
-              <p className="text-xl font-bold text-gray-900">{financial.ownerPaymentStatus || 'PENDING'}</p>
+              <p className="text-sm text-gray-600">Payment Status</p>
+              <p className="text-xl font-bold text-gray-900">{financial.paymentStatus || 'PENDING'}</p>
             </div>
           </div>
         </div>
@@ -166,6 +128,81 @@ export default function TripFinancialSummary({ bookingId, userRole = 'ADMIN' }) 
           </div>
         </div>
 
+        {/* Owner Financials */}
+        <div className="bg-white rounded-lg shadow p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Owner Account</h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="bg-pink-50 rounded-lg p-4">
+              <p className="text-sm text-pink-600">Owner Share</p>
+              <p className="text-xl font-bold text-pink-900">₹{financial.ownerSettlement?.toLocaleString() || 0}</p>
+            </div>
+            <div className="bg-rose-50 rounded-lg p-4">
+              <p className="text-sm text-rose-600">Advance Paid</p>
+              <p className="text-xl font-bold text-rose-900">₹{financial.ownerAdvance?.toLocaleString() || 0}</p>
+            </div>
+            <div className="bg-fuchsia-50 rounded-lg p-4">
+              <p className="text-sm text-fuchsia-600">Settlement Paid</p>
+              <p className="text-xl font-bold text-fuchsia-900">₹{(financial.ownerAdvances?.filter(a => a.type === 'OWNER_SETTLEMENT')?.reduce((sum, a) => sum + a.amount, 0) || 0).toLocaleString()}</p>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-4">
+              <p className="text-sm text-gray-600">Owner Due</p>
+              <p className="text-xl font-bold text-gray-900">₹{financial.remainingOwnerSettlement?.toLocaleString() || 0}</p>
+            </div>
+          </div>
+          <div className="mt-4">
+            <p className="text-sm text-gray-600">Payment Status: <span className="font-semibold">{financial.ownerPaymentStatus || 'PENDING'}</span></p>
+          </div>
+        </div>
+
+        {/* Driver Financials */}
+        <div className="bg-white rounded-lg shadow p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Driver Account</h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="bg-purple-50 rounded-lg p-4">
+              <p className="text-sm text-purple-600">Driver Payout</p>
+              <p className="text-xl font-bold text-purple-900">₹{financial.driverPayout?.toLocaleString() || 0}</p>
+            </div>
+            <div className="bg-orange-50 rounded-lg p-4">
+              <p className="text-sm text-orange-600">Driver Advance</p>
+              <p className="text-xl font-bold text-orange-900">₹{financial.driverAdvance?.toLocaleString() || 0}</p>
+            </div>
+            <div className="bg-indigo-50 rounded-lg p-4">
+              <p className="text-sm text-indigo-600">Fuel Advance</p>
+              <p className="text-xl font-bold text-indigo-900">₹{financial.fuelAdvance?.toLocaleString() || 0}</p>
+            </div>
+            <div className="bg-teal-50 rounded-lg p-4">
+              <p className="text-sm text-teal-600">Remaining Settlement</p>
+              <p className="text-xl font-bold text-teal-900">₹{financial.remainingDriverSettlement?.toLocaleString() || 0}</p>
+            </div>
+          </div>
+          <div className="mt-4">
+            <p className="text-sm text-gray-600">Driver Payment Status: <span className="font-semibold">{financial.driverPaymentStatus || 'PENDING'}</span></p>
+          </div>
+        </div>
+
+        {/* Expenses */}
+        {financial.totalExpenses > 0 && (
+          <div className="bg-white rounded-lg shadow p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Trip Expenses</h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="bg-red-50 rounded-lg p-4">
+                <p className="text-sm text-red-600">Total Expenses</p>
+                <p className="text-xl font-bold text-red-900">₹{financial.totalExpenses?.toLocaleString() || 0}</p>
+              </div>
+            </div>
+            {financial.expenseBreakdown && Object.keys(financial.expenseBreakdown).length > 0 && (
+              <div className="mt-4 space-y-2">
+                {Object.entries(financial.expenseBreakdown).map(([type, amount]) => (
+                  <div key={type} className="flex items-center justify-between py-1">
+                    <span className="text-sm text-gray-600">{type}</span>
+                    <span className="text-sm font-medium text-red-600">₹{amount.toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Financial Timeline */}
         <div className="bg-white rounded-lg shadow p-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Financial Timeline</h3>
@@ -180,6 +217,11 @@ export default function TripFinancialSummary({ bookingId, userRole = 'ADMIN' }) 
                   {event.amount && (
                     <p className="text-sm text-gray-600">₹{event.amount.toLocaleString()}</p>
                   )}
+                  {event.from_party && event.to_party && (
+                    <p className="text-xs text-gray-400">
+                      {event.from_party.replace(/_/g, ' ')} → {event.to_party.replace(/_/g, ' ')}
+                    </p>
+                  )}
                 </div>
               </div>
             ))}
@@ -192,7 +234,7 @@ export default function TripFinancialSummary({ bookingId, userRole = 'ADMIN' }) 
     );
   }
 
-  // TRANSPORT OWNER VIEW - Owner-specific financials only
+  // TRANSPORT_OWNER VIEW - Owner-specific financials only
   if (userRole === 'TRANSPORT_OWNER') {
     return (
       <div className="space-y-6">

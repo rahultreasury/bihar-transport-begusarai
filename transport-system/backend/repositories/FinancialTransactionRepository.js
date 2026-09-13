@@ -7,13 +7,20 @@ const { prisma } = require('../config/prisma');
 
 class FinancialTransactionRepository {
   /**
+   * @param {Object} [tx] - Optional Prisma transaction client
+   */
+  _client(tx = null) {
+    return tx || prisma;
+  }
+
+  /**
    * Create a financial transaction.
    * @param {Object} data
    * @param {Object} tx - Optional Prisma transaction client
    * @returns {Promise<Object>}
    */
   async create(data, tx = null) {
-    const client = tx || prisma;
+    const client = this._client(tx);
     return await client.financialTransaction.create({
       data,
       include: {
@@ -49,6 +56,19 @@ class FinancialTransactionRepository {
     return await prisma.financialTransaction.findMany({
       where: { booking_id: bookingId },
       orderBy: { created_at: 'desc' },
+    });
+  }
+
+  /**
+   * Find transaction by ID.
+   * @param {number} transactionId
+   * @param {Object} tx - Optional Prisma transaction client
+   * @returns {Promise<Object|null>}
+   */
+  async findById(transactionId, tx = null) {
+    const client = tx || prisma;
+    return await client.financialTransaction.findUnique({
+      where: { transaction_id: transactionId },
     });
   }
 

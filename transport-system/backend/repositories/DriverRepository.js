@@ -5,7 +5,14 @@
  * Simplified for market driver model (brokerage - no employee finance tracking).
  */
 
-const { prisma } = require('../config/prisma');
+const prismaModule = require('../config/prisma');
+const driverOwnerGuard = require('../services/driverOwnerGuard');
+
+// Lazy prisma accessor — keeps the binding fresh so tests can swap
+// `config/prisma.prisma` for a stub without reloading this module.
+// In production this is just an indirection over the singleton
+// PrismaClient (no measurable overhead).
+function db() { return prismaModule.prisma; }
 
   /**
  * Retry wrapper for transient Prisma connection errors (e.g., pool exhausted, Closed connection).
@@ -47,7 +54,7 @@ class DriverRepository {
    * Generate next driver code (DRV000001, DRV000002, etc.)
    */
   async generateDriverCode(tx = null) {
-    const client = tx || prisma;
+    const client = tx || db();
     const lastDriver = await client.driver.findFirst({
       orderBy: { driver_code: 'desc' },
       select: { driver_code: true },
@@ -65,9 +72,13 @@ class DriverRepository {
 
   /**
    * Create a new driver.
+   * Phase 2 guard: requires transport_owner_id to be set. Throws
+   * OWNER_REQUIRED if missing. Other layers may have already verified
+   * the existence owner, but we re-check at the repo layer for defence.
    */
   async create(data, tx = null) {
-    const client = tx || prisma;
+    driverOwnerGuard.assertCreateHasOwner(data);
+    const client = tx || db();
     return await client.driver.create({ data });
   }
 
@@ -75,7 +86,7 @@ class DriverRepository {
    * Find driver by ID with relations.
    */
   async findById(driverId, tx = null) {
-    const client = tx || prisma;
+    const client = tx || db();
     return await client.driver.findUnique({
       where: { driver_id: driverId },
       include: {
@@ -94,6 +105,7 @@ class DriverRepository {
             company_name: true,
             mobile: true,
             city: true,
+            owner_type: true,
           },
         },
         currentVehicle: {
@@ -134,7 +146,7 @@ class DriverRepository {
    * Find driver by driver_code.
    */
   async findByCode(code, tx = null) {
-    const client = tx || prisma;
+    const client = tx || db();
     return await client.driver.findUnique({
       where: { driver_code: code },
     });
@@ -144,7 +156,7 @@ class DriverRepository {
    * Find driver by mobile number.
    */
   async findByMobile(mobile, tx = null) {
-    const client = tx || prisma;
+    const client = tx || db();
     return await client.driver.findFirst({
       where: { mobile: mobile },
     });
@@ -259,7 +271,7 @@ class DriverRepository {
 
     const result = await withRetry(async () => {
       const [drivers, total] = await Promise.all([
-prisma.driver.findMany({
+db().driver.findMany({
           where,
           include: {
             user: {
@@ -274,6 +286,7 @@ prisma.driver.findMany({
                 owner_id: true,
                 owner_name: true,
                 company_name: true,
+                owner_type: true,
               },
             },
             bookings: {
@@ -303,7 +316,7 @@ prisma.driver.findMany({
           skip,
           take,
         }),
-        prisma.driver.count({ where }),
+        db().driver.count({ where }),
       ]);
       return { drivers, total };
     }, 'findAll drivers');
@@ -360,7 +373,7 @@ return {
 
     const result = await withRetry(async () => {
       const [drivers, total] = await Promise.all([
-        prisma.driver.findMany({
+        db().driver.findMany({
           where,
           include: {
             user: {
@@ -375,6 +388,7 @@ return {
                 owner_id: true,
                 owner_name: true,
                 company_name: true,
+                owner_type: true,
               },
             },
             // Driver's currently assigned vehicle (first-class entity)
@@ -395,7 +409,7 @@ return {
           skip,
           take,
         }),
-        prisma.driver.count({ where }),
+        db().driver.count({ where }),
       ]);
       return { drivers, total };
     }, 'findAllWithVehicles drivers');
@@ -493,7 +507,7 @@ return {
 
     const result = await withRetry(async () => {
       const [drivers, total] = await Promise.all([
-prisma.driver.findMany({
+db().driver.findMany({
           where,
           include: {
             user: {
@@ -508,6 +522,7 @@ prisma.driver.findMany({
                 owner_id: true,
                 owner_name: true,
                 company_name: true,
+                owner_type: true,
               },
             },
             // Today's trips: bookings created today for this driver.
@@ -538,7 +553,7 @@ prisma.driver.findMany({
           skip,
           take,
         }),
-        prisma.driver.count({ where }),
+        db().driver.count({ where }),
       ]);
       return { drivers, total };
     }, 'findAssignable drivers');
@@ -622,7 +637,7 @@ prisma.driver.findMany({
    * Get a driver's current status (available / on_trip / inactive).
    */
   async findStatus(driverId, tx = null) {
-    const client = tx || prisma;
+    const client = tx || db();
     return await client.driver.findUnique({
       where: { driver_id: driverId },
       select: { status: true },
@@ -633,7 +648,7 @@ prisma.driver.findMany({
    * Update driver by ID.
    */
   async update(driverId, data, tx = null) {
-    const client = tx || prisma;
+    const client = tx || db();
     return await client.driver.update({
       where: { driver_id: driverId },
       data,
@@ -644,7 +659,7 @@ prisma.driver.findMany({
    * Delete driver by ID.
    */
   async delete(driverId, tx = null) {
-    const client = tx || prisma;
+    const client = tx || db();
     return await client.driver.delete({
       where: { driver_id: driverId },
     });
@@ -670,7 +685,7 @@ prisma.driver.findMany({
    * @param {object} [tx] optional transaction client
    */
   async findDependencySummary(driverId, tx = null) {
-    const client = tx || prisma;
+    const client = tx || db();
 
     const ACTIVE_BOOKING_STATUSES = ['confirmed', 'driver_assigned', 'pickup_completed', 'in_transit'];
     const ACTIVE_DELIVERY_STATUSES = ['booking_confirmed', 'driver_assigned', 'pickup_in_progress', 'pickup_completed', 'in_transit', 'out_for_delivery'];
@@ -739,7 +754,7 @@ prisma.driver.findMany({
     }
 
     const [trips, total] = await Promise.all([
-      prisma.booking.findMany({
+      db().booking.findMany({
         where,
         include: {
           delivery: {
@@ -753,11 +768,11 @@ prisma.driver.findMany({
         skip,
         take: parseInt(limit),
       }),
-      prisma.booking.count({ where }),
+      db().booking.count({ where }),
     ]);
 
     // Calculate totals
-    const revenueAgg = await prisma.booking.aggregate({
+    const revenueAgg = await db().booking.aggregate({
       where: {
         driver_id: driverId,
         status: { in: ['delivered', 'completed'] },
@@ -765,7 +780,7 @@ prisma.driver.findMany({
       _sum: { final_price: true },
     });
 
-    const distanceAgg = await prisma.booking.aggregate({
+    const distanceAgg = await db().booking.aggregate({
       where: {
         driver_id: driverId,
         status: { in: ['delivered', 'completed'] },
@@ -790,7 +805,7 @@ prisma.driver.findMany({
    * Get timeline events for a driver.
    */
   async getTimeline(driverId) {
-    return await prisma.driverTimeline.findMany({
+    return await db().driverTimeline.findMany({
       where: { driver_id: driverId },
       orderBy: { created_at: 'desc' },
       take: 50,
@@ -801,7 +816,7 @@ prisma.driver.findMany({
    * Create a timeline event.
    */
   async createTimelineEvent(data, tx = null) {
-    const client = tx || prisma;
+    const client = tx || db();
     return await client.driverTimeline.create({ data });
   }
 
@@ -841,7 +856,7 @@ prisma.driver.findMany({
    * Record a transaction for a driver (advance, trip_payment, fuel, toll, recovery, other_expense).
    */
   async createTransaction(data) {
-    const driver = await prisma.driver.findUnique({
+    const driver = await db().driver.findUnique({
       where: { driver_id: data.driver_id },
       select: { current_balance: true },
     });
@@ -858,7 +873,7 @@ prisma.driver.findMany({
       balanceAfter = balanceBefore - parseFloat(data.amount);
     }
 
-    const transaction = await prisma.driverTransaction.create({
+    const transaction = await db().driverTransaction.create({
       data: {
         driver_id: data.driver_id,
         transaction_type: data.transaction_type,
@@ -875,7 +890,7 @@ prisma.driver.findMany({
     });
 
     // Update driver balance
-    await prisma.driver.update({
+    await db().driver.update({
       where: { driver_id: data.driver_id },
       data: { current_balance: balanceAfter },
     });
@@ -891,27 +906,27 @@ prisma.driver.findMany({
     const skip = (page - 1) * limit;
 
     const [transactions, total] = await Promise.all([
-      prisma.driverTransaction.findMany({
+      db().driverTransaction.findMany({
         where: { driver_id: driverId },
         orderBy: { transaction_date: 'desc' },
         skip,
         take: parseInt(limit),
       }),
-      prisma.driverTransaction.count({ where: { driver_id: driverId } }),
+      db().driverTransaction.count({ where: { driver_id: driverId } }),
     ]);
 
-    const debitAgg = await prisma.driverTransaction.aggregate({
+    const debitAgg = await db().driverTransaction.aggregate({
       where: { driver_id: driverId, transaction_type: { in: ['advance', 'fuel_expense', 'toll_expense', 'other_expense'] } },
       _sum: { amount: true },
     });
 
-    const creditAgg = await prisma.driverTransaction.aggregate({
+    const creditAgg = await db().driverTransaction.aggregate({
       where: { driver_id: driverId, transaction_type: { in: ['trip_payment', 'recovery'] } },
       _sum: { amount: true },
     });
 
     // Get current balance
-    const driver = await prisma.driver.findUnique({
+    const driver = await db().driver.findUnique({
       where: { driver_id: driverId },
       select: { current_balance: true },
     });
@@ -936,7 +951,7 @@ prisma.driver.findMany({
    * Soft delete a driver (set as inactive).
    */
   async softDelete(driverId, tx = null) {
-    const client = tx || prisma;
+    const client = tx || db();
     return await client.driver.update({
       where: { driver_id: driverId },
       data: { status: 'inactive', is_available: false },
@@ -948,7 +963,7 @@ prisma.driver.findMany({
    * Used by the bulk-delete endpoint so the frontend sends ONE request.
    */
   async bulkSoftDelete(driverIds, tx = null) {
-    const client = tx || prisma;
+    const client = tx || db();
     return await client.driver.updateMany({
       where: { driver_id: { in: driverIds } },
       data: { status: 'inactive', is_available: false },

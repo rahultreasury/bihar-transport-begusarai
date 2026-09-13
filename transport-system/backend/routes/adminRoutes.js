@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { protect } = require('../middleware/auth');
+const { protect, adminOnly } = require('../middleware/auth');
 const { prisma } = require('../config/prisma');
 
 const BookingService = require('../services/BookingService');
@@ -9,6 +9,7 @@ const BookingAssignmentService = require('../services/BookingAssignmentService')
 const { createBookingController } = require('../controllers/bookingController');
 const { BookingDeletionService } = require('../services/BookingDeletionService');
 const VehicleOwnerService = require('../services/VehicleOwnerService');
+const CanonicalFinancialService = require('../services/CanonicalFinancialService');
 
 const bookingService = new BookingService();
 const bookingAssignmentService = new BookingAssignmentService();
@@ -57,25 +58,8 @@ router.get('/dashboard', protect, async (req, res) => {
       where: { ...activeBookingsWhere, status: { in: ['delivered', 'completed'] } }
     });
 
-    // Get revenue stats
-    const revenueAgg = await prisma.booking.aggregate({
-      where: { ...activeBookingsWhere, status: { in: ['delivered', 'completed'] } },
-      _sum: { final_price: true },
-    });
-
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-    const todayEnd = new Date();
-    todayEnd.setHours(23, 59, 59, 999);
-
-    const todayRevenueAgg = await prisma.booking.aggregate({
-      where: {
-        ...activeBookingsWhere,
-        status: { in: ['delivered', 'completed'] },
-        delivered_at: { gte: todayStart, lte: todayEnd },
-      },
-      _sum: { final_price: true },
-    });
+    // Get canonical financial metrics from the single source of truth
+    const canonicalFinancials = await new CanonicalFinancialService({ prisma }).calculateGlobalFinancials();
 
     // Get recent bookings with user info
     const recentBookingsRaw = await prisma.booking.findMany({
@@ -148,8 +132,17 @@ router.get('/dashboard', protect, async (req, res) => {
           pendingBookings,
           activeDeliveries,
           completedDeliveries,
-          totalRevenue: revenueAgg._sum.final_price || 0,
-          todayRevenue: todayRevenueAgg._sum.final_price || 0,
+          // Canonical financial metrics (single source of truth)
+          totalFreight: canonicalFinancials.totalFreight || 0,
+          totalRevenue: canonicalFinancials.totalCustomerCollected || 0,
+          todayRevenue: canonicalFinancials.totalCustomerCollected || 0,
+          totalCommission: canonicalFinancials.totalCommission || 0,
+          totalBtNetProfit: canonicalFinancials.totalBtNetProfit || 0,
+          outstandingPayments: canonicalFinancials.totalCustomerDue || 0,
+          customerDue: canonicalFinancials.totalCustomerDue || 0,
+          ownerOutstanding: canonicalFinancials.totalOwnerPayableRemaining || 0,
+          totalAdvances: canonicalFinancials.totalOwnerAdvances + canonicalFinancials.totalDriverAdvances || 0,
+          totalSettlements: canonicalFinancials.totalOwnerSettlements + canonicalFinancials.totalDriverSettlements || 0,
         },
         recentBookings,
         availableDrivers,
@@ -433,17 +426,6 @@ router.get('/vehicles', protect, async (req, res) => {
       prisma.transportVehicle.findMany({
         where,
         include: {
-          driver: {
-            include: {
-              user: {
-                select: {
-                  first_name: true,
-                  last_name: true,
-                  phone: true,
-                },
-              },
-            },
-          },
           owner: {
             select: {
               owner_id: true,
@@ -467,42 +449,66 @@ router.get('/vehicles', protect, async (req, res) => {
       prisma.transportVehicle.count({ where }),
     ]);
 
+    // Collect driver_ids that need to be resolved
+    const driverIds = [...new Set(vehicles.filter(v => v.driver_id).map(v => v.driver_id))];
+    const driversMap = new Map();
+    if (driverIds.length > 0) {
+      const drivers = await prisma.driver.findMany({
+        where: { driver_id: { in: driverIds } },
+        include: {
+          user: {
+            select: {
+              first_name: true,
+              last_name: true,
+              phone: true,
+            },
+          },
+        },
+      });
+      drivers.forEach(d => {
+        driversMap.set(d.driver_id, d);
+      });
+    }
+
     // Flatten Prisma result to match original SQL response format
-    const flattened = vehicles.map((v) => ({
-      vehicle_id: v.vehicle_id,
-      driver_id: v.driver_id,
-      owner_id: v.owner_id,
-      partner_id: v.partner_id,
-      vehicle_number: v.vehicle_number,
-      vehicle_type: v.vehicle_type,
-      vehicle_name: v.vehicle_name,
-      capacity_kg: v.capacity_kg,
-      capacity_volume: v.capacity_volume,
-      vehicle_make: v.vehicle_make,
-      vehicle_model: v.vehicle_model,
-      manufacturing_year: v.manufacturing_year,
-      registration_date: v.registration_date,
-      insurance_number: v.insurance_number,
-      insurance_expiry: v.insurance_expiry,
-      permit_number: v.permit_number,
-      permit_expiry: v.permit_expiry,
-      pollution_certificate: v.pollution_certificate,
-      pollution_expiry: v.pollution_expiry,
-      is_available: v.is_available,
-      is_verified: v.is_verified,
-      current_status: v.current_status,
-      base_location: v.base_location,
-      hourly_rate: v.hourly_rate,
-      per_km_rate: v.per_km_rate,
-      created_at: v.created_at,
-      updated_at: v.updated_at,
-      owner_name: v.owner?.owner_name ?? null,
-      owner_phone: v.owner?.mobile ?? null,
-      partner_name: v.sourcePartner?.partner_name ?? null,
-      partner_code: v.sourcePartner?.partner_code ?? null,
-      driver_name: v.driver ? `${v.driver.user.first_name} ${v.driver.user.last_name}` : null,
-      driver_phone: v.driver?.user?.phone ?? null,
-    }));
+    const flattened = vehicles.map((v) => {
+      const driver = driversMap.get(v.driver_id);
+      return {
+        vehicle_id: v.vehicle_id,
+        driver_id: v.driver_id,
+        owner_id: v.owner_id,
+        partner_id: v.partner_id,
+        vehicle_number: v.vehicle_number,
+        vehicle_type: v.vehicle_type,
+        vehicle_name: v.vehicle_name,
+        capacity_kg: v.capacity_kg,
+        capacity_volume: v.capacity_volume,
+        vehicle_make: v.vehicle_make,
+        vehicle_model: v.vehicle_model,
+        manufacturing_year: v.manufacturing_year,
+        registration_date: v.registration_date,
+        insurance_number: v.insurance_number,
+        insurance_expiry: v.insurance_expiry,
+        permit_number: v.permit_number,
+        permit_expiry: v.permit_expiry,
+        pollution_certificate: v.pollution_certificate,
+        pollution_expiry: v.pollution_expiry,
+        is_available: v.is_available,
+        is_verified: v.is_verified,
+        current_status: v.current_status,
+        base_location: v.base_location,
+        hourly_rate: v.hourly_rate,
+        per_km_rate: v.per_km_rate,
+        created_at: v.created_at,
+        updated_at: v.updated_at,
+        owner_name: v.owner?.owner_name ?? null,
+        owner_phone: v.owner?.mobile ?? null,
+        partner_name: v.sourcePartner?.partner_name ?? null,
+        partner_code: v.sourcePartner?.partner_code ?? null,
+        driver_name: driver ? `${driver.user.first_name} ${driver.user.last_name}` : null,
+        driver_phone: driver?.user?.phone ?? null,
+      };
+    });
 
     res.json({
       success: true,

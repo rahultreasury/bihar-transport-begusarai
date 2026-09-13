@@ -1,18 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { adminAPI } from '../../../services/api';
 
-const PAYMENT_TYPES = [
-  { value: 'ADVANCE', label: 'Advance' },
-  { value: 'PARTIAL', label: 'Partial' },
-  { value: 'FULL', label: 'Full' },
-  { value: 'SETTLEMENT', label: 'Settlement' },
-  { value: 'OTHER', label: 'Other' },
-];
-
 const PAYMENT_METHODS = [
   { value: 'cash', label: 'Cash' },
-  { value: 'bank', label: 'Bank Transfer' },
   { value: 'upi', label: 'UPI' },
+  { value: 'bank_transfer', label: 'Bank Transfer' },
   { value: 'cheque', label: 'Cheque' },
 ];
 
@@ -23,7 +15,6 @@ function TripPaymentsModal({ isOpen, onClose, trip, onSaved }) {
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState({
     amount: '',
-    payment_type: 'ADVANCE',
     payment_date: new Date().toISOString().split('T')[0],
     payment_method: 'cash',
     reference: '',
@@ -67,6 +58,8 @@ function TripPaymentsModal({ isOpen, onClose, trip, onSaved }) {
       const data = {
         ...formData,
         amount: parseFloat(formData.amount),
+        payment_category: 'CLIENT_PAYMENT',
+        payment_type: 'PARTIAL',
       };
 
       await adminAPI.addTripPayment(trip.trip_id, data);
@@ -74,7 +67,6 @@ function TripPaymentsModal({ isOpen, onClose, trip, onSaved }) {
       setShowForm(false);
       setFormData({
         amount: '',
-        payment_type: 'ADVANCE',
         payment_date: new Date().toISOString().split('T')[0],
         payment_method: 'cash',
         reference: '',
@@ -108,7 +100,7 @@ function TripPaymentsModal({ isOpen, onClose, trip, onSaved }) {
         <div className="p-6 border-b border-border/60">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-xl font-semibold">Trip Payments</h2>
+              <h2 className="text-xl font-semibold">Record Customer Payment</h2>
               <p className="text-sm text-muted mt-1">{trip?.trip_number} - {trip?.pickup_city} → {trip?.drop_city}</p>
             </div>
             <button
@@ -125,14 +117,14 @@ function TripPaymentsModal({ isOpen, onClose, trip, onSaved }) {
         <div className="p-6">
           {/* Total */}
           <div className="flex items-center justify-between mb-4 p-4 bg-green-50 rounded-xl">
-            <span className="text-sm font-medium text-green-700">Total Received</span>
+            <span className="text-sm font-medium text-green-700">Total Customer Paid</span>
             <span className="text-lg font-semibold text-green-700">{formatCurrency(totalPayments)}</span>
           </div>
 
           {/* Add Form */}
           {showForm && (
             <form onSubmit={handleSubmit} className="mb-6 p-4 bg-surface rounded-xl space-y-4">
-              <h3 className="text-sm font-semibold">Add Payment</h3>
+              <h3 className="text-sm font-semibold">Record Customer Payment</h3>
               {error && (
                 <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-600">
                   {error}
@@ -140,7 +132,7 @@ function TripPaymentsModal({ isOpen, onClose, trip, onSaved }) {
               )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-muted mb-1.5">Amount (₹)</label>
+                  <label className="block text-sm font-medium text-muted mb-1.5">Amount (₹) *</label>
                   <input
                     type="number"
                     name="amount"
@@ -148,21 +140,9 @@ function TripPaymentsModal({ isOpen, onClose, trip, onSaved }) {
                     onChange={handleChange}
                     required
                     step="0.01"
+                    min="0"
                     className="w-full px-3 py-2.5 bg-white border border-border/60 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors"
                   />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-muted mb-1.5">Payment Type</label>
-                  <select
-                    name="payment_type"
-                    value={formData.payment_type}
-                    onChange={handleChange}
-                    className="w-full px-3 py-2.5 bg-white border border-border/60 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors"
-                  >
-                    {PAYMENT_TYPES.map((type) => (
-                      <option key={type.value} value={type.value}>{type.label}</option>
-                    ))}
-                  </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-muted mb-1.5">Payment Date</label>
@@ -197,7 +177,7 @@ function TripPaymentsModal({ isOpen, onClose, trip, onSaved }) {
                     className="w-full px-3 py-2.5 bg-white border border-border/60 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors"
                   />
                 </div>
-                <div>
+                <div className="sm:col-span-2">
                   <label className="block text-sm font-medium text-muted mb-1.5">Notes</label>
                   <input
                     type="text"
@@ -219,9 +199,9 @@ function TripPaymentsModal({ isOpen, onClose, trip, onSaved }) {
                 <button
                   type="submit"
                   disabled={saving}
-                  className="px-4 py-2.5 bg-amber-500 text-white rounded-xl text-sm font-medium hover:bg-amber-600 disabled:opacity-50 transition-colors"
+                  className="px-4 py-2.5 bg-green-500 text-white rounded-xl text-sm font-medium hover:bg-green-600 disabled:opacity-50 transition-colors"
                 >
-                  {saving ? 'Saving...' : 'Add Payment'}
+                  {saving ? 'Saving...' : 'Record Payment'}
                 </button>
               </div>
             </form>
@@ -231,9 +211,9 @@ function TripPaymentsModal({ isOpen, onClose, trip, onSaved }) {
           {!showForm && (
             <button
               onClick={() => setShowForm(true)}
-              className="w-full mb-4 px-4 py-2.5 border-2 border-dashed border-border/60 rounded-xl text-sm font-medium text-muted hover:border-amber-500 hover:text-amber-600 transition-colors"
+              className="w-full mb-4 px-4 py-2.5 border-2 border-dashed border-border/60 rounded-xl text-sm font-medium text-muted hover:border-green-500 hover:text-green-600 transition-colors"
             >
-              + Add Payment
+              + Record Customer Payment
             </button>
           )}
 
@@ -241,7 +221,7 @@ function TripPaymentsModal({ isOpen, onClose, trip, onSaved }) {
           {loading ? (
             <div className="text-center py-8 text-muted">Loading payments...</div>
           ) : payments.length === 0 ? (
-            <div className="text-center py-8 text-muted">No payments recorded yet</div>
+            <div className="text-center py-8 text-muted">No customer payments recorded yet</div>
           ) : (
             <div className="space-y-2">
               {payments.map((payment) => (

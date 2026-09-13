@@ -226,6 +226,25 @@ export default function AdminVehicleOwners() {
       ),
     },
     {
+      key: 'owner_type',
+      label: 'Owner Type',
+      render: (owner) => {
+        const isSelfOwner = String(owner.owner_type || '').toUpperCase() === 'DRIVER_OWNER';
+        if (isSelfOwner) {
+          return (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider bg-violet-500/10 text-violet-600 dark:text-violet-400 border border-violet-500/20">
+              Self Owner / Driver Owner
+            </span>
+          );
+        }
+        return (
+          <span className="text-xs text-muted capitalize">
+            {owner.owner_type?.replace(/_/g, ' ') || 'Transport Company'}
+          </span>
+        );
+      },
+    },
+    {
       key: 'mobile',
       label: 'Mobile',
       render: (owner) => <span className="text-sm">{owner.mobile}</span>,

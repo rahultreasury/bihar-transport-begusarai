@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { adminAPI } from '../../../services/api';
+import VehicleOwnerRegisterModal from '../owners/VehicleOwnerRegisterModal';
 
 const INITIAL_FORM = {
   driver_name: '',
@@ -17,6 +18,10 @@ const INITIAL_FORM = {
   alternate_mobile: '',
   city: '',
   state: 'Bihar',
+  // Phase 2.1 — Self-Owner: when true, transport_owner_id is omitted
+  // and the backend resolves/creates a DRIVER_OWNER from the driver's
+  // mobile (never duplicates an existing owner).
+  is_self_owner: false,
 };
 
 // Normalize for case-insensitive search filtering
@@ -121,6 +126,8 @@ export default function DriverRegisterModal({ isOpen, onClose, onSuccess, driver
   const [selectedOwner, setSelectedOwner] = useState(null);
   const [vehicles, setVehicles] = useState([]);
   const [vehicleLoading, setVehicleLoading] = useState(false);
+  // Phase 2.1 — inline "+ Add Transport Owner" sub-modal.
+  const [showOwnerModal, setShowOwnerModal] = useState(false);
   const ownerWrapperRef = useRef(null);
 
   const isEdit = mode === 'edit' && driver;
@@ -144,7 +151,25 @@ export default function DriverRegisterModal({ isOpen, onClose, onSuccess, driver
           alternate_mobile: driver.alternate_mobile || '',
           city: driver.city || '',
           state: driver.state || 'Bihar',
+          // Phase 2.1 — edit mode never enables Self-Owner via the UI
+          // because the driver already has a transport_owner_id.
+          // Self-Owner registration only makes sense at creation.
+          is_self_owner: false,
         });
+        // Phase 2: pre-select the current owner in the picker so the edit
+        // form shows the right value before the owners list loads.
+        if (driver.transportOwner) {
+          setSelectedOwner(driver.transportOwner);
+        } else if (driver.transport_owner_id) {
+          // Fallback: at minimum populate the form with the id; the
+          // owner will be resolved when the owners list arrives.
+          setSelectedOwner({
+            owner_id: driver.transport_owner_id,
+            owner_name: '(loading…)',
+            owner_code: '',
+            city: '',
+          });
+        }
       } else {
         setForm({ ...INITIAL_FORM });
       }
@@ -152,14 +177,17 @@ export default function DriverRegisterModal({ isOpen, onClose, onSuccess, driver
       setServerError('');
       setExistingDriver(null);
       setOwners([]);
-      setSelectedOwner(null);
+      if (!isEdit) setSelectedOwner(null);
       setVehicles([]);
     }
   }, [isOpen, isEdit, driver]);
 
-  // Fetch transport owners for searchable dropdown
+  // Fetch transport owners for searchable dropdown.
+  // Phase 2: we now ALWAYS load owners (both create and edit). The
+  // backend requires transport_owner_id on every Driver, so the edit
+  // form must also surface the owner picker.
   useEffect(() => {
-    if (!isOpen || isEdit) return;
+    if (!isOpen) return;
     let active = true;
     const fetchOwners = async () => {
       setOwnerLoading(true);
@@ -176,7 +204,7 @@ export default function DriverRegisterModal({ isOpen, onClose, onSuccess, driver
     };
     fetchOwners();
     return () => { active = false; };
-  }, [isOpen, isEdit]);
+  }, [isOpen]);
 
   // Fetch vehicles when owner changes
   useEffect(() => {
@@ -233,8 +261,64 @@ export default function DriverRegisterModal({ isOpen, onClose, onSuccess, driver
       vehicle_type: '',
       vehicle_number: '',
       no_vehicle_assigned: false,
+      // Selecting an explicit owner clears Self-Owner mode.
+      is_self_owner: false,
     }));
     setSelectedOwner(owner);
+    if (errors.transport_owner_id) {
+      setErrors(prev => ({ ...prev, transport_owner_id: '' }));
+    }
+  }, [errors]);
+
+  /**
+   * Phase 2.1 — invoked by the inline VehicleOwnerRegisterModal when
+   * the admin finishes creating a NEW Transport Owner. Auto-selects
+   * the freshly created owner in this Driver form so the user can
+   * continue without re-searching. Refreshes the owners list so the
+   * picker stays in sync.
+   */
+  const handleOwnerCreated = useCallback(async (newOwner) => {
+    setShowOwnerModal(false);
+    if (!newOwner || !newOwner.owner_id) return;
+    // Optimistic update — append to the owners list (and let the
+    // server list also refresh in the background).
+    setOwners(prev => {
+      const filtered = (prev || []).filter(o => String(o.owner_id) !== String(newOwner.owner_id));
+      return [{ ...newOwner }, ...filtered];
+    });
+    handleOwnerSelect(newOwner);
+    // Refresh in the background so server-side filters apply too.
+    try {
+      const res = await adminAPI.getVehicleOwners({ search: '', limit: 50, status: 'active' });
+      if (res.data?.success) {
+        setOwners(res.data.data || []);
+      }
+    } catch (err) {
+      // Non-fatal: the optimistic entry is already there.
+      console.error('Failed to refresh owners list:', err);
+    }
+  }, [handleOwnerSelect]);
+
+  /**
+   * Phase 2.1 — Self-Owner toggle. When enabled the picker is
+   * visually hidden and transport_owner_id is cleared from the
+   * payload. The backend will resolve/create a DRIVER_OWNER from
+   * the driver's mobile number.
+   */
+  const handleSelfOwnerToggle = useCallback((e) => {
+    const checked = e.target.checked;
+    setForm(prev => ({
+      ...prev,
+      is_self_owner: checked,
+      // When Self-Owner is enabled we MUST NOT send an explicit
+      // transport_owner_id; the backend resolves it internally.
+      transport_owner_id: checked ? '' : prev.transport_owner_id,
+      vehicle_id: checked ? '' : prev.vehicle_id,
+      vehicle_type: checked ? '' : prev.vehicle_type,
+      vehicle_number: checked ? '' : prev.vehicle_number,
+      no_vehicle_assigned: checked ? false : prev.no_vehicle_assigned,
+    }));
+    if (checked) setSelectedOwner(null);
     if (errors.transport_owner_id) {
       setErrors(prev => ({ ...prev, transport_owner_id: '' }));
     }
@@ -279,8 +363,12 @@ export default function DriverRegisterModal({ isOpen, onClose, onSuccess, driver
     if (!form.license_number.trim()) {
       newErrors.license_number = 'Driving licence number is required';
     }
-    if (!isEdit && !form.transport_owner_id) {
-      newErrors.transport_owner_id = 'Transport owner is required';
+    // Phase 2: transport_owner_id is required in BOTH create and edit
+    // modes unless is_self_owner is enabled.
+    // Phase 2.1: the Self-Owner path lets the backend resolve/create
+    // the owner from the driver's mobile.
+    if (!form.is_self_owner && !form.transport_owner_id) {
+      newErrors.transport_owner_id = 'Transport Owner is required (or enable "Driver is the vehicle owner"). Every driver must belong to exactly one Transport Owner.';
     }
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -306,7 +394,12 @@ export default function DriverRegisterModal({ isOpen, onClose, onSuccess, driver
         state: form.state || 'Bihar',
         address: form.address.trim() || undefined,
         emergency_contact: form.emergency_contact.trim() || undefined,
-        transport_owner_id: form.transport_owner_id ? parseInt(form.transport_owner_id) : undefined,
+        // Phase 2.1 — Self-Owner: the backend resolves/creates the
+        // owner from the mobile, so we MUST NOT send transport_owner_id
+        // in that case (the route validator rejects it).
+        ...(form.is_self_owner
+          ? { is_self_owner: true }
+          : { transport_owner_id: form.transport_owner_id ? parseInt(form.transport_owner_id) : undefined }),
       };
 
       let response;
@@ -550,18 +643,75 @@ export default function DriverRegisterModal({ isOpen, onClose, onSuccess, driver
           </div>
 
           {/* ==================== SECTION 2: Transport Partner ==================== */}
-          {!isEdit && (
-            <div>
-              <div className="flex items-center gap-2 mb-3">
-                <div className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-                <span className="text-xs font-semibold text-muted uppercase tracking-wider">Transport Partner</span>
-              </div>
-              <div ref={ownerWrapperRef}>
-                <label className="block text-sm font-medium mb-1.5">
-                  Select Transport Owner <span className="text-red-500">*</span>
-                </label>
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <div className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+              <span className="text-xs font-semibold text-muted uppercase tracking-wider">Transport Partner</span>
+            </div>
+            <div ref={ownerWrapperRef}>
+              <label className="block text-sm font-medium mb-1.5">
+                Transport Owner <span className="text-red-500">*</span>
+              </label>
+
+              {/* Phase 2.2 — Self-Owner active state.
+                  When enabled the picker is replaced by a Self Owner details
+                  block that shows exactly what the system will do:
+                    - DRIVER_OWNER will be created OR reused automatically.
+                    - Driver mobile is used to find an existing VehicleOwner.
+                    - Existing owner_type is NEVER silently changed.
+                  The Cancel button lets the user switch back to selecting an
+                  explicit owner. */}
+              {form.is_self_owner ? (
+                <div className="rounded-xl border border-violet-500/30 bg-violet-500/5 p-3.5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-2.5 min-w-0">
+                      <div className="w-8 h-8 rounded-lg bg-violet-500/15 flex items-center justify-center shrink-0">
+                        <svg className="w-4 h-4 text-violet-600 dark:text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                        </svg>
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-bold text-violet-700 dark:text-violet-300">
+                            Driver is also the Transport Owner
+                          </span>
+                          <span className="text-[10px] uppercase tracking-wider font-bold text-violet-600 dark:text-violet-400 bg-violet-500/15 px-1.5 py-0.5 rounded">
+                            DRIVER_OWNER
+                          </span>
+                        </div>
+                        <ul className="mt-1.5 text-[11px] text-violet-700/80 dark:text-violet-300/80 space-y-0.5 list-disc list-inside">
+                          <li>A DRIVER_OWNER record will be linked to this driver automatically.</li>
+                          <li>If a Transport Owner already exists for the driver's mobile, it will be reused.</li>
+                          <li>Existing owner's classification will NOT be silently changed.</li>
+                        </ul>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleSelfOwnerToggle({ target: { checked: false } })}
+                      className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold border border-violet-500/30 text-violet-700 dark:text-violet-300 hover:bg-violet-500/15 transition"
+                      title="Cancel Self-Owner and pick an explicit Transport Owner instead."
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
                 <SearchableSelect
-                  value={selectedOwner ? `${selectedOwner.owner_name} (${selectedOwner.owner_code}) — ${selectedOwner.city || 'N/A'}` : ''}
+                  value={
+                    // In edit mode the controlled value must come from the
+                    // pre-filled `driver.transport_owner_id`, not from a
+                    // selectedOwner object that may not have been resolved
+                    // by the time the modal opens.
+                    selectedOwner
+                      ? `${selectedOwner.owner_name} (${selectedOwner.owner_code}) — ${selectedOwner.city || 'N/A'}`
+                      : (isEdit && driver && driver.transportOwner)
+                        ? `${driver.transportOwner.owner_name} (${driver.transportOwner.owner_code || ''}) — ${driver.transportOwner.city || 'N/A'}`
+                        : ''
+                  }
                   onChange={(selected) => handleOwnerSelect(selected)}
                   options={owners}
                   placeholder="Search and select owner..."
@@ -569,11 +719,73 @@ export default function DriverRegisterModal({ isOpen, onClose, onSuccess, driver
                   error={errors.transport_owner_id}
                   displayRenderer={(owner) => `${owner.owner_name} (${owner.owner_code}) — ${owner.city || 'N/A'}`}
                 />
-                {ownerLoading && <p className="text-xs text-muted mt-1">Loading owners...</p>}
-                {errors.transport_owner_id && <p className="text-xs text-red-500 mt-1">{errors.transport_owner_id}</p>}
-              </div>
+              )}
+
+              {ownerLoading && <p className="text-xs text-muted mt-1">Loading owners...</p>}
+              {errors.transport_owner_id && <p className="text-xs text-red-500 mt-1">{errors.transport_owner_id}</p>}
+
+              {/* Phase 2.2 — Two add affordances for the Transport Owner:
+                  1. "+ Add Transport Owner" — opens the existing
+                     VehicleOwnerRegisterModal in a sub-modal. On success,
+                     the new owner is auto-selected.
+                  2. "+ Driver is also the Transport Owner" toggle —
+                     switches the form to the Self-Owner creation path.
+                     Shows a Self Owner details block with a Cancel button.
+                  Both options reuse the EXISTING VehicleOwner registration
+                  system; no duplicate flow is introduced. */}
+              {!isEdit && (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={form.is_self_owner}
+                    onClick={() => setShowOwnerModal(true)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-dashed border-amber-500/50 text-amber-600 hover:bg-amber-500/10 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                    title="Open the Transport Owner registration form. The new owner will be auto-selected when you return."
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                    </svg>
+                    + Add Transport Owner
+                  </button>
+
+                  {!form.is_self_owner && (
+                    <button
+                      type="button"
+                      onClick={() => handleSelfOwnerToggle({ target: { checked: true } })}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-dashed border-violet-500/50 text-violet-600 hover:bg-violet-500/10 transition"
+                      title="This driver IS the Transport Owner — the system will create or reuse a DRIVER_OWNER record automatically."
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                      </svg>
+                      + Driver is also the Transport Owner
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Phase 2.2 — In edit mode, if the linked owner is a DRIVER_OWNER,
+                  show a SELF OWNER badge with the owner name so admins know
+                  this driver IS the owner (no separate picker required). */}
+              {isEdit && driver && driver.transportOwner && driver.transportOwner.owner_type === 'DRIVER_OWNER' && !form.is_self_owner && (
+                <div className="mt-2 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border border-violet-500/30 bg-violet-500/5 text-violet-700 dark:text-violet-300">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                  </svg>
+                  <span className="font-bold">SELF OWNER</span>
+                  <span className="text-violet-600/80 dark:text-violet-300/80">—</span>
+                  <span>{driver.transportOwner.owner_name}</span>
+                  <span className="text-[10px] uppercase tracking-wider font-bold text-violet-600 dark:text-violet-400 bg-violet-500/15 px-1.5 py-0.5 rounded">
+                    DRIVER_OWNER
+                  </span>
+                </div>
+              )}
+
+              <p className="text-[11px] text-muted mt-1.5">
+                Every Driver must belong to exactly one Transport Owner. If a matching owner already exists (by mobile), the system reuses it instead of creating a duplicate. Existing owner classifications are never silently changed.
+              </p>
             </div>
-          )}
+          </div>
 
           {/* ==================== SECTION 3: Vehicle ==================== */}
           {!isEdit && form.transport_owner_id && (
@@ -712,6 +924,17 @@ export default function DriverRegisterModal({ isOpen, onClose, onSuccess, driver
           </div>
         </form>
       </div>
+
+      {/* Phase 2.1 — Inline Transport Owner registration sub-modal.
+          Mounted as a sibling so it overlays without nesting state. */}
+      <VehicleOwnerRegisterModal
+        isOpen={showOwnerModal}
+        onClose={() => setShowOwnerModal(false)}
+        onSuccess={(createdOwner) => {
+          // Auto-select the freshly created owner in this Driver form.
+          handleOwnerCreated(createdOwner);
+        }}
+      />
     </div>
   );
 }

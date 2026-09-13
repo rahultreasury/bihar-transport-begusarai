@@ -26,6 +26,11 @@ export class ErrorBoundary extends Component {
   componentDidCatch(error, errorInfo) {
     this.setState({ errorInfo });
 
+    // Always log the actual error for debugging.
+    console.error('ACTUAL PAGE ERROR:', error.message);
+    console.error('Error stack:', error.stack);
+    console.error('Component stack:', errorInfo.componentStack);
+
     // Log in development only. Never log secrets/tokens/API keys.
     if (import.meta.env.DEV) {
       console.error('[ErrorBoundary] Caught rendering error:', error.message);

@@ -8,6 +8,7 @@
 
 const { prisma } = require('../config/prisma');
 const { NotFoundError } = require('../utils/AppError');
+const TripFinancialCalculationService = require('../services/TripFinancialCalculationService');
 
 /**
  * Shared Prisma `include` shape for fetching a trip with its relations.
@@ -252,34 +253,46 @@ class TripRepository {
    * Get trip summary statistics.
    */
   async getSummary() {
+    // Use the authoritative financial calculator for all financial aggregates.
+    // This ensures the dashboard uses the same source of truth as the Trip Workspace.
+    const financialService = new TripFinancialCalculationService({ prisma: this.tx });
+
     const [
       totalTrips,
       inTransitTrips,
       completedTrips,
       cancelledTrips,
       pendingTrips,
-      totalFreight,
-      totalExpenses,
-      totalPayments,
+      needsAttentionPending,
+      completedUnpaidTrips,
     ] = await Promise.all([
       this.tx.trip.count(),
       this.tx.trip.count({ where: { status: 'IN_TRANSIT' } }),
       this.tx.trip.count({ where: { status: 'COMPLETED' } }),
       this.tx.trip.count({ where: { status: 'CANCELLED' } }),
       this.tx.trip.count({ where: { status: 'PENDING' } }),
-      this.tx.trip.aggregate({
-        _sum: { freight_amount: true },
+      // Trips needing attention: PENDING with past trip_date.
+      this.tx.trip.count({
+        where: {
+          status: 'PENDING',
+          trip_date: { lt: new Date() },
+        },
       }),
-      this.tx.tripExpense.aggregate({
-        _sum: { amount: true },
-      }),
-      this.tx.tripPayment.aggregate({
-        _sum: { amount: true },
+      // COMPLETED trips whose customer balance is unpaid.
+      // Query the FinancialTransaction ledger directly for consistency.
+      this.tx.trip.findMany({
+        where: { status: 'COMPLETED' },
+        include: { financialTransactions: true },
       }),
     ]);
 
-    const totalProfit = (totalFreight._sum.freight_amount || 0) - (totalExpenses._sum.amount || 0);
-    const outstanding = (totalFreight._sum.freight_amount || 0) - (totalPayments._sum.amount || 0);
+    // Completed trips whose customer is still owed money.
+    const needsAttentionCompleted = completedUnpaidTrips.filter((t) => {
+      const f = financialService._computeFinancials(t);
+      return f.customerDue > 0;
+    }).length;
+
+    const financials = await financialService.calculateEntityFinancials();
 
     return {
       totalTrips,
@@ -287,11 +300,19 @@ class TripRepository {
       completed: completedTrips,
       cancelled: cancelledTrips,
       pending: pendingTrips,
-      totalFreight: totalFreight._sum.freight_amount || 0,
-      totalExpenses: totalExpenses._sum.amount || 0,
-      totalProfit,
-      totalPayments: totalPayments._sum.amount || 0,
-      outstanding,
+      totalFreight: financials.totalFreight,
+      // Broker-aligned fields (from canonical calculator):
+      totalCommission: financials.totalCommission,       // BT revenue
+      totalBtRevenue: financials.totalBtRevenue,         // alias for clarity
+      totalProfit: financials.totalBtNetProfit,          // BT Net Profit
+      totalPayments: financials.totalCustomerCollected + financials.totalOwnerPaid,
+      outstanding: financials.totalCustomerDue,          // customer outstanding
+      customerDue: financials.totalCustomerDue,
+      customerOutstanding: financials.totalCustomerDue,
+      ownerOutstanding: financials.totalOwnerPayableRemaining,
+      // Phase 1 dashboard fields:
+      advanceOut: financials.totalOwnerPaid + financials.totalCustomerCollected,
+      needsAttention: needsAttentionPending + needsAttentionCompleted,
     };
   }
 
@@ -509,6 +530,50 @@ class TripRepository {
   }
 
   /**
+   * Get offline clients (business accounts) for trip creation lookup.
+   * Returns Client records with trip count stats.
+   * @param {string} search - Optional search term
+   * @returns {Promise<Array>}
+   */
+  async getOfflineClients(search = '') {
+    const where = { deleted_at: null };
+
+    if (search) {
+      const searchTerm = String(search).trim();
+      where.OR = [
+        { company_name: { contains: searchTerm, mode: 'insensitive' } },
+        { client_code: { contains: searchTerm, mode: 'insensitive' } },
+        { contact_person: { contains: searchTerm, mode: 'insensitive' } },
+        { phone: { contains: searchTerm } },
+        { email: { contains: searchTerm, mode: 'insensitive' } },
+      ];
+    }
+
+    return this.tx.client.findMany({
+      where,
+      select: {
+        client_id: true,
+        client_code: true,
+        company_name: true,
+        contact_person: true,
+        phone: true,
+        email: true,
+        city: true,
+        state: true,
+        status: true,
+        is_active: true,
+        _count: {
+          select: {
+            trips: true,
+          },
+        },
+      },
+      orderBy: { company_name: 'asc' },
+      take: 50,
+    });
+  }
+
+  /**
    * Get available drivers with owner and vehicle details.
    * Used for trip creation wizard — ensures owner-vehicle-driver consistency.
    */
@@ -579,6 +644,7 @@ class TripRepository {
         vehicle_name: true,
         vehicle_type: true,
         current_status: true,
+        owner_id: true,
       },
       take: 50,
     });

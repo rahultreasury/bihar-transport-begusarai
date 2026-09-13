@@ -22,6 +22,7 @@
 const { prisma } = require('../config/prisma');
 const { AppError, NotFoundError } = require('../utils/AppError');
 const { logger } = require('../utils/logger');
+const ResourceAvailabilityService = require('./ResourceAvailabilityService');
 
 // Statuses that are eligible for archive/delete cleanup.
 const CLEANUP_ELIGIBLE_STATUSES = ['cancelled', 'rejected'];
@@ -38,6 +39,9 @@ const PROTECTED_STATUSES = [
 ];
 
 class BookingDeletionService {
+  constructor(deps = {}) {
+    this.resourceAvailabilityService = deps.resourceAvailabilityService || new ResourceAvailabilityService();
+  }
   /**
    * Perform the requested action on a booking.
    *
@@ -242,26 +246,34 @@ class BookingDeletionService {
         });
       }
 
-      // Step 4: Restore driver availability (if driver was assigned to this booking).
+      // Step 4: Restore driver availability ONLY if no active trip exists for this driver.
       if (booking.driver && activeAssignments.some((a) => a.assigned_driver_id === booking.driver.driver_id)) {
-        await tx.driver.update({
-          where: { driver_id: booking.driver.driver_id },
-          data: {
-            is_available: true,
-            status: 'available',
-          },
-        });
+        const driverReleased = await this.resourceAvailabilityService.releaseDriverIfNoActiveTrip(
+          booking.driver.driver_id,
+          null,
+          tx
+        );
+        if (!driverReleased) {
+          logger.info(
+            { bookingId, driverId: booking.driver.driver_id },
+            'booking_deletion.driver_not_released_active_trip'
+          );
+        }
       }
 
-      // Step 5: Restore vehicle availability (if vehicle was assigned to this booking).
+      // Step 5: Restore vehicle availability ONLY if no active trip exists for this vehicle.
       if (booking.vehicle && activeAssignments.some((a) => a.assigned_vehicle_id === booking.vehicle.vehicle_id)) {
-        await tx.transportVehicle.update({
-          where: { vehicle_id: booking.vehicle.vehicle_id },
-          data: {
-            is_available: true,
-            current_status: 'available',
-          },
-        });
+        const vehicleReleased = await this.resourceAvailabilityService.releaseVehicleIfNoActiveTrip(
+          booking.vehicle.vehicle_id,
+          null,
+          tx
+        );
+        if (!vehicleReleased) {
+          logger.info(
+            { bookingId, vehicleId: booking.vehicle.vehicle_id },
+            'booking_deletion.vehicle_not_released_active_trip'
+          );
+        }
       }
 
       // Step 6: Delete the booking.

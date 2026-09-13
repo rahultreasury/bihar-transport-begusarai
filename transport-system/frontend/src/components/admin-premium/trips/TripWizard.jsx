@@ -1,47 +1,52 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import TripSummary from './TripSummary';
 import { adminAPI, authAPI } from '../../../services/api';
+import TripAdvanceStep from './TripAdvanceStep';
 
 const WIZARD_STEPS = [
-  { key: 'client', label: 'Client', icon: '👤' },
-  { key: 'route', label: 'Route', icon: '📍' },
-  { key: 'transport', label: 'Transport Assignment', icon: '🚛' },
-  { key: 'finance', label: 'Finance', icon: '💰' },
-  { key: 'review', label: 'Review', icon: '✓' },
+  { key: 'trip', label: 'Trip', description: 'Trip Details', icon: '📋' },
+  { key: 'resources', label: 'Resources', description: 'Vehicle & Driver', icon: '🚛' },
+  { key: 'advance', label: 'Advance', description: 'Money Paid', icon: '💰' },
+  { key: 'review', label: 'Review', description: 'Confirm Trip', icon: '✓' },
 ];
 
-function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep }) {
-  const [currentStep, setCurrentStep] = useState(0);
+function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep, currentStep: externalCurrentStep, onStepChange }) {
+  const [internalCurrentStep, setInternalCurrentStep] = useState(0);
+  const currentStep = externalCurrentStep !== undefined ? externalCurrentStep : internalCurrentStep;
+  const setCurrentStep = onStepChange || setInternalCurrentStep;
   const [completedSteps, setCompletedSteps] = useState(new Set());
   const [validationErrors, setValidationErrors] = useState({});
   const [formData, setFormData] = useState({
+    source_type: 'ONLINE_BOOKING',
     user_id: '',
-    transport_owner_id: '',
-    vehicle_id: '',
-    driver_id: '',
-    pickup_location: '',
+    client_id: '',
     pickup_city: '',
-    drop_location: '',
     drop_city: '',
+    pickup_location: '',
+    drop_location: '',
     distance_km: '',
-    trip_date: '',
+    trip_date: new Date().toISOString().split('T')[0],
     expected_delivery_date: '',
     freight_amount: '',
-    driver_payment: '',
-    owner_payment: '',
-    advance: '',
+    vehicle_id: '',
+    driver_id: '',
+    transport_owner_id: '',
     notes: '',
+    advances: [],
+    trip_id: null,
   });
 
   const [clients, setClients] = useState([]);
+  const [offlineClients, setOfflineClients] = useState([]);
   const [owners, setOwners] = useState([]);
-  const [ownerVehicles, setOwnerVehicles] = useState([]);
+  const [allVehicles, setAllVehicles] = useState([]);
   const [allDrivers, setAllDrivers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [clientSearch, setClientSearch] = useState('');
+  const [offlineClientSearch, setOfflineClientSearch] = useState('');
   const [showAddClient, setShowAddClient] = useState(false);
+  const [showAddOfflineClient, setShowAddOfflineClient] = useState(false);
   const [newClient, setNewClient] = useState({
     first_name: '',
     last_name: '',
@@ -52,53 +57,52 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep }) {
     state: '',
     pincode: '',
   });
+  const [newOfflineClient, setNewOfflineClient] = useState({
+    company_name: '',
+    contact_person: '',
+    phone: '',
+    email: '',
+    address: '',
+    city: '',
+    state: 'Bihar',
+    gst_number: '',
+    pan_number: '',
+    bank_account: '',
+    bank_ifsc: '',
+    bank_name: '',
+    upi_id: '',
+    notes: '',
+  });
   const [creatingClient, setCreatingClient] = useState(false);
-  const [ownerSearch, setOwnerSearch] = useState('');
+  const [creatingOfflineClient, setCreatingOfflineClient] = useState(false);
+  const [vehicleSearch, setVehicleSearch] = useState('');
   const [driverSearch, setDriverSearch] = useState('');
-  const [loadingOwnerData, setLoadingOwnerData] = useState(false);
-  const [showOwnerDropdown, setShowOwnerDropdown] = useState(false);
+  const [showVehicleDropdown, setShowVehicleDropdown] = useState(false);
   const [showDriverDropdown, setShowDriverDropdown] = useState(false);
-  const ownerDropdownRef = useRef(null);
+  const vehicleDropdownRef = useRef(null);
   const driverDropdownRef = useRef(null);
 
   // Fetch base lookup data
   const fetchLookupData = useCallback(async () => {
     setLoading(true);
     try {
-      const [clientsRes, ownersRes, driversRes] = await Promise.all([
+      const [clientsRes, offlineClientsRes, vehiclesRes, driversRes, ownersRes] = await Promise.all([
         adminAPI.getTripClients(''),
-        adminAPI.getTripOwners(''),
+        adminAPI.getTripOfflineClients(''),
+        adminAPI.getTripVehicles(''),
         adminAPI.getTripDrivers(''),
+        adminAPI.getTripOwners(''),
       ]);
 
       if (clientsRes.data?.success) setClients(clientsRes.data.data || []);
-      if (ownersRes.data?.success) setOwners(ownersRes.data.data || []);
+      if (offlineClientsRes.data?.success) setOfflineClients(offlineClientsRes.data.data || []);
+      if (vehiclesRes.data?.success) setAllVehicles(vehiclesRes.data.data || []);
       if (driversRes.data?.success) setAllDrivers(driversRes.data.data || []);
+      if (ownersRes.data?.success) setOwners(ownersRes.data.data || []);
     } catch (err) {
       console.error('Failed to fetch lookup data:', err);
     } finally {
       setLoading(false);
-    }
-  }, []);
-
-  // Load vehicles and drivers for selected owner
-  const loadOwnerDependents = useCallback(async (ownerId) => {
-    if (!ownerId) {
-      setOwnerVehicles([]);
-      return;
-    }
-
-    setLoadingOwnerData(true);
-    try {
-      const vehiclesRes = await adminAPI.getVehiclesByOwner(ownerId);
-
-      if (vehiclesRes.data?.success) {
-        setOwnerVehicles(vehiclesRes.data.data || []);
-      }
-    } catch (err) {
-      console.error('Failed to fetch owner vehicles:', err);
-    } finally {
-      setLoadingOwnerData(false);
     }
   }, []);
 
@@ -108,26 +112,12 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep }) {
     setCurrentStep(0);
   }, [fetchLookupData]);
 
-  // Load vehicles when owner changes
-  useEffect(() => {
-    if (formData.transport_owner_id) {
-      setDriverSearch('');
-      loadOwnerDependents(formData.transport_owner_id);
-      // Reset vehicle and driver if owner changes
-      setFormData(prev => ({
-        ...prev,
-        vehicle_id: '',
-        driver_id: '',
-      }));
-    } else {
-      setOwnerVehicles([]);
-      setDriverSearch('');
-    }
-  }, [formData.transport_owner_id, loadOwnerDependents]);
-
-  // Close the driver dropdown when clicking outside of it
+  // Close dropdowns when clicking outside
   useEffect(() => {
     function handleClickOutside(event) {
+      if (vehicleDropdownRef.current && !vehicleDropdownRef.current.contains(event.target)) {
+        setShowVehicleDropdown(false);
+      }
       if (driverDropdownRef.current && !driverDropdownRef.current.contains(event.target)) {
         setShowDriverDropdown(false);
       }
@@ -140,30 +130,37 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep }) {
   useEffect(() => {
     if (editingTrip) {
       setFormData({
+        source_type: editingTrip.source_type || 'ONLINE_BOOKING',
         user_id: editingTrip.user_id || '',
-        transport_owner_id: editingTrip.transport_owner_id || '',
-        vehicle_id: editingTrip.vehicle_id || '',
-        driver_id: editingTrip.driver_id || '',
-        pickup_location: editingTrip.pickup_location || '',
+        client_id: editingTrip.client_id || '',
         pickup_city: editingTrip.pickup_city || '',
-        drop_location: editingTrip.drop_location || '',
         drop_city: editingTrip.drop_city || '',
+        pickup_location: editingTrip.pickup_location || '',
+        drop_location: editingTrip.drop_location || '',
         distance_km: editingTrip.distance_km || '',
         trip_date: editingTrip.trip_date ? new Date(editingTrip.trip_date).toISOString().split('T')[0] : '',
         expected_delivery_date: editingTrip.expected_delivery_date ? new Date(editingTrip.expected_delivery_date).toISOString().split('T')[0] : '',
         freight_amount: editingTrip.freight_amount || '',
-        driver_payment: editingTrip.driver_payment || '',
-        owner_payment: editingTrip.owner_payment || '',
-        advance: editingTrip.advance || '',
+        vehicle_id: editingTrip.vehicle_id || '',
+        driver_id: editingTrip.driver_id || '',
+        transport_owner_id: editingTrip.transport_owner_id || '',
         notes: editingTrip.notes || '',
+        advances: [],
+        trip_id: editingTrip.trip_id,
       });
-      setClientSearch(`${editingTrip.user?.first_name || ''} ${editingTrip.user?.last_name || ''}`);
-      // Load owner dependents if editing
-      if (editingTrip.transport_owner_id) {
-        loadOwnerDependents(editingTrip.transport_owner_id);
+      if (editingTrip.source_type === 'ONLINE_BOOKING' && editingTrip.user_id) {
+        setClientSearch(`${editingTrip.user?.first_name || ''} ${editingTrip.user?.last_name || ''}`);
+      } else if (editingTrip.source_type === 'OFFLINE_CLIENT' && editingTrip.client_id) {
+        setOfflineClientSearch(editingTrip.client?.company_name || '');
+      }
+      if (editingTrip.vehicle_id) {
+        setVehicleSearch(editingTrip.vehicle?.vehicle_number || '');
+      }
+      if (editingTrip.driver_id) {
+        setDriverSearch(editingTrip.driver?.driver_name || '');
       }
     }
-  }, [editingTrip, loadOwnerDependents]);
+  }, [editingTrip]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -171,8 +168,9 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep }) {
   };
 
   const handleClientSelect = (client) => {
-    setFormData((prev) => ({ ...prev, user_id: client.user_id }));
+    setFormData((prev) => ({ ...prev, user_id: client.user_id, client_id: '' }));
     setClientSearch(`${client.first_name} ${client.last_name}`);
+    setOfflineClientSearch('');
     setShowAddClient(false);
   };
 
@@ -182,17 +180,35 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep }) {
     setError(null);
 
     try {
+      // Normalize phone: keep only digits, then take the last 10.
+      // The backend /api/auth/signup validates phone with /^[0-9]{10}$/
+      // and the `users.phone` unique column expects exactly 10 digits.
+      const digitsOnly = String(newClient.phone || '').replace(/\D/g, '');
+      const normalizedPhone = digitsOnly.slice(-10);
+
+      if (normalizedPhone.length !== 10) {
+        throw new Error('Phone must be exactly 10 digits');
+      }
+
+      const normalizedEmail = String(newClient.email || '').trim();
+
       const defaultPassword = 'client@123';
       const response = await authAPI.signup({
         ...newClient,
+        phone: normalizedPhone,
+        email: normalizedEmail,
         password: defaultPassword,
       });
 
       if (response.data?.success) {
         const createdClient = response.data.data;
-        setFormData((prev) => ({ ...prev, user_id: createdClient.user_id }));
+        setFormData((prev) => ({ ...prev, user_id: createdClient.user_id, client_id: '' }));
         setClientSearch(`${createdClient.first_name} ${createdClient.last_name}`);
+        setOfflineClientSearch('');
         setShowAddClient(false);
+        // Reflect the normalized phone in the form state so subsequent
+        // submits stay consistent.
+        setNewClient((prev) => ({ ...prev, phone: normalizedPhone, email: normalizedEmail }));
         await fetchLookupData();
       } else {
         throw new Error(response.data?.message || 'Failed to create client');
@@ -204,45 +220,84 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep }) {
     }
   };
 
-  const handleOwnerSelect = (owner) => {
-    setFormData((prev) => ({
-      ...prev,
-      transport_owner_id: owner.owner_id,
-      vehicle_id: '',
-      driver_id: '',
-    }));
-    setOwnerSearch('');
-    setShowOwnerDropdown(false);
+  const handleOfflineClientSelect = (client) => {
+    setFormData((prev) => ({ ...prev, client_id: client.client_id, user_id: '' }));
+    setOfflineClientSearch(client.company_name);
+    setClientSearch('');
+    setShowAddOfflineClient(false);
+  };
+
+  const handleCreateOfflineClient = async (e) => {
+    e.preventDefault();
+    setCreatingOfflineClient(true);
+    setError(null);
+
+    try {
+      const response = await adminAPI.createClient(newOfflineClient);
+
+      if (response.data?.success) {
+        const createdClient = response.data.data;
+        setFormData((prev) => ({ ...prev, client_id: createdClient.client_id, user_id: '' }));
+        setOfflineClientSearch(createdClient.company_name);
+        setClientSearch('');
+        setShowAddOfflineClient(false);
+        await fetchLookupData();
+      } else {
+        throw new Error(response.data?.message || 'Failed to create client');
+      }
+    } catch (err) {
+      setError(err.response?.data?.message || err.message || 'Failed to create client');
+    } finally {
+      setCreatingOfflineClient(false);
+    }
   };
 
   const handleVehicleSelect = (vehicle) => {
-    setFormData((prev) => ({ ...prev, vehicle_id: vehicle.vehicle_id }));
+    setFormData((prev) => ({
+      ...prev,
+      vehicle_id: vehicle.vehicle_id,
+      transport_owner_id: vehicle.owner_id || prev.transport_owner_id,
+    }));
+    setVehicleSearch(`${vehicle.vehicle_number} ${vehicle.vehicle_name || ''}`);
+    setShowVehicleDropdown(false);
+
+    // Auto-select driver if vehicle has an assigned driver
+    if (vehicle.driver_id) {
+      setFormData((prev) => ({ ...prev, driver_id: vehicle.driver_id }));
+      const assignedDriver = allDrivers.find(d => d.driver_id === vehicle.driver_id);
+      if (assignedDriver) {
+        setDriverSearch(`${assignedDriver.driver_name}`);
+      }
+    }
   };
 
   const handleDriverSelect = (driver) => {
     setFormData((prev) => ({ ...prev, driver_id: driver.driver_id }));
-    setDriverSearch('');
+    setDriverSearch(`${driver.driver_name}`);
     setShowDriverDropdown(false);
   };
 
   const validateStep = (step) => {
     const errors = {};
     switch (step) {
-      case 0: // Client
-        if (!formData.user_id) errors.client = 'Please select a client';
-        break;
-      case 1: // Route
+      case 0: // Trip
+        if (formData.source_type === 'ONLINE_BOOKING' && !formData.user_id) {
+          errors.client = 'Please select a customer';
+        }
+        if (formData.source_type === 'OFFLINE_CLIENT' && !formData.client_id) {
+          errors.client = 'Please select a client';
+        }
         if (!formData.pickup_city) errors.pickup_city = 'Pickup city is required';
         if (!formData.drop_city) errors.drop_city = 'Drop city is required';
         if (!formData.trip_date) errors.trip_date = 'Trip date is required';
+        if (!formData.freight_amount || parseFloat(formData.freight_amount) < 0) errors.freight = 'Freight amount is required';
         break;
-      case 2: // Transport Assignment
-        if (!formData.transport_owner_id) errors.owner = 'Please select a transport owner';
+      case 1: // Resources
         if (!formData.vehicle_id) errors.vehicle = 'Please select a vehicle';
         if (!formData.driver_id) errors.driver = 'Please select a driver';
         break;
-      case 3: // Finance
-        if (!formData.freight_amount) errors.freight = 'Freight amount is required';
+      case 2: // Advance
+        // Advance is optional, no validation required
         break;
       default:
         break;
@@ -283,10 +338,9 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep }) {
 
     try {
       const data = {
-        user_id: parseInt(formData.user_id),
-        transport_owner_id: parseInt(formData.transport_owner_id),
-        vehicle_id: parseInt(formData.vehicle_id),
-        driver_id: parseInt(formData.driver_id),
+        source_type: formData.source_type,
+        user_id: formData.source_type === 'ONLINE_BOOKING' ? parseInt(formData.user_id) : null,
+        client_id: formData.source_type === 'OFFLINE_CLIENT' ? parseInt(formData.client_id) : null,
         pickup_location: formData.pickup_location,
         pickup_city: formData.pickup_city,
         drop_location: formData.drop_location,
@@ -295,16 +349,40 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep }) {
         trip_date: formData.trip_date ? new Date(formData.trip_date) : null,
         expected_delivery_date: formData.expected_delivery_date ? new Date(formData.expected_delivery_date) : null,
         freight_amount: parseFloat(formData.freight_amount),
-        driver_payment: formData.driver_payment ? parseFloat(formData.driver_payment) : null,
-        owner_payment: formData.owner_payment ? parseFloat(formData.owner_payment) : null,
-        advance: formData.advance ? parseFloat(formData.advance) : 0,
+        vehicle_id: parseInt(formData.vehicle_id),
+        driver_id: parseInt(formData.driver_id),
+        transport_owner_id: parseInt(formData.transport_owner_id),
         notes: formData.notes || null,
+        advance: 0, // Will be updated by advance records
       };
 
+      let tripId;
       if (editingTrip) {
         await adminAPI.updateTrip(editingTrip.trip_id, data);
+        tripId = editingTrip.trip_id;
       } else {
-        await adminAPI.createTrip(data);
+        const response = await adminAPI.createTrip(data);
+        tripId = response.data?.data?.trip_id;
+        if (tripId) {
+          setFormData((prev) => ({ ...prev, trip_id: tripId }));
+        }
+      }
+
+      // Save advances if any
+      if (tripId && formData.advances && formData.advances.length > 0) {
+        const validAdvances = formData.advances.filter((a) => parseFloat(a.amount) > 0);
+        for (const advance of validAdvances) {
+          await adminAPI.createTripAdvanceByTripId(tripId, {
+            advance_type: advance.type,
+            amount: parseFloat(advance.amount),
+            payment_method: advance.payment_method,
+            given_at: advance.date ? new Date(advance.date).toISOString() : new Date().toISOString(),
+            notes: advance.note || null,
+            driver_id: formData.driver_id || null,
+            vehicle_id: formData.vehicle_id || null,
+            transport_owner_id: formData.transport_owner_id || null,
+          });
+        }
       }
 
       onComplete?.();
@@ -323,45 +401,29 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep }) {
   });
 
   const selectedClient = clients.find(c => c.user_id === parseInt(formData.user_id));
+  const selectedVehicle = allVehicles.find(v => v.vehicle_id === parseInt(formData.vehicle_id));
+  const selectedDriver = allDrivers.find(d => d.driver_id === parseInt(formData.driver_id));
   const selectedOwner = owners.find(o => o.owner_id === parseInt(formData.transport_owner_id));
 
-  // Close the owner dropdown when clicking outside of it
-  useEffect(() => {
-    function handleClickOutside(event) {
-      if (ownerDropdownRef.current && !ownerDropdownRef.current.contains(event.target)) {
-        setShowOwnerDropdown(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-  const selectedVehicle = ownerVehicles.find(v => v.vehicle_id === parseInt(formData.vehicle_id));
-  const selectedDriver = allDrivers.find(d => d.driver_id === parseInt(formData.driver_id));
-
-  // Transport Owner options: filter the already-loaded `owners` list in real
-  // time (case-insensitive, partial match). This avoids an extra API round-trip
-  // and guarantees the dropdown reflects the real database records fetched on
-  // page load.
-  const filteredOwners = useMemo(() => {
-    const term = ownerSearch.trim().toLowerCase();
-    if (!term) return owners;
-    return owners.filter((o) =>
-      (o.owner_name || '').toLowerCase().includes(term) ||
-      (o.company_name || '').toLowerCase().includes(term) ||
-      (o.mobile || '').includes(ownerSearch.trim()) ||
-      (o.owner_code || '').toLowerCase().includes(term) ||
-      (o.city || '').toLowerCase().includes(term)
+  // Vehicle options: filter the already-loaded `allVehicles` list in real time
+  const filteredVehicles = useMemo(() => {
+    const term = vehicleSearch.trim().toLowerCase();
+    if (!term) return allVehicles;
+    return allVehicles.filter((v) =>
+      (v.vehicle_number || '').toLowerCase().includes(term) ||
+      (v.vehicle_name || '').toLowerCase().includes(term) ||
+      (v.vehicle_type || '').toLowerCase().includes(term)
     );
-  }, [owners, ownerSearch]);
+  }, [allVehicles, vehicleSearch]);
 
   // Driver options: filter the already-loaded `allDrivers` list in real time
-  // (case-insensitive, partial match). When a Transport Owner is selected we
-  // narrow to that owner's drivers; otherwise all active drivers are shown.
+  // When a vehicle is selected, narrow to drivers belonging to that vehicle's owner
   const filteredDrivers = useMemo(() => {
     const term = driverSearch.trim().toLowerCase();
-    const base = formData.transport_owner_id
-      ? allDrivers.filter((d) => d.transport_owner_id === parseInt(formData.transport_owner_id))
-      : allDrivers;
+    let base = allDrivers;
+    if (selectedVehicle?.owner_id) {
+      base = allDrivers.filter((d) => d.transport_owner_id === selectedVehicle.owner_id);
+    }
     if (!term) return base;
     return base.filter((d) =>
       (d.driver_name || '').toLowerCase().includes(term) ||
@@ -369,36 +431,12 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep }) {
       String(d.driver_id).includes(driverSearch.trim()) ||
       (d.license_number || '').toLowerCase().includes(term)
     );
-  }, [allDrivers, formData.transport_owner_id, driverSearch]);
+  }, [allDrivers, selectedVehicle, driverSearch]);
 
   return (
-    <div className="flex gap-6 h-full">
+    <div className="flex flex-col h-full">
       {/* Main Wizard */}
-      <div className="flex-1 flex flex-col h-full min-w-0">
-        {/* Step Indicator */}
-        <div className="flex items-center gap-1 mb-6 overflow-x-auto pb-2">
-          {WIZARD_STEPS.map((step, index) => {
-            const isClickable = index <= currentStep + 1 || completedSteps.has(index);
-            return (
-              <button
-                key={step.key}
-                type="button"
-                onClick={() => isClickable && setCurrentStep(index)}
-                className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap ${
-                  index === currentStep
-                    ? 'bg-amber-500 text-white'
-                    : isClickable
-                    ? 'bg-amber-100 text-amber-700 cursor-pointer hover:bg-amber-200'
-                    : 'bg-gray-100 text-gray-500'
-                }`}
-              >
-                <span>{step.icon}</span>
-                <span className="hidden sm:inline">{step.label}</span>
-              </button>
-            );
-          })}
-        </div>
-
+      <div className="flex-1 flex flex-col min-w-0">
         {error && (
           <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-600">
             {error}
@@ -406,16 +444,17 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep }) {
         )}
 
         {/* Step Content */}
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto">
-          {/* Step 0: Client */}
+        <form onSubmit={handleSubmit} className="flex-1">
+          {/* Step 0: Trip */}
           {currentStep === 0 && (
             <div className="space-y-4">
               <h3 className="text-lg font-semibold flex items-center gap-2">
-                <span>👤</span> Select Client
+                <span>📋</span> Trip Details
               </h3>
 
+              {/* Client Selection */}
               <div>
-                <label className="block text-sm font-medium text-muted mb-1.5">Search or Select Client *</label>
+                <label className="block text-sm font-medium text-muted mb-1.5">Customer *</label>
                 <input
                   type="text"
                   placeholder="Search by name or phone..."
@@ -423,380 +462,202 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep }) {
                   onChange={(e) => setClientSearch(e.target.value)}
                   className="w-full px-3 py-2.5 bg-surface border border-border/60 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors"
                 />
-              </div>
-
-              {/* Client List */}
-              {clientSearch && !showAddClient && (
-                <div className="max-h-48 overflow-y-auto border border-border/60 rounded-xl">
-                  {filteredClients.length > 0 ? (
-                    filteredClients.slice(0, 10).map((client) => (
-                      <button
-                        key={client.user_id}
-                        type="button"
-                        onClick={() => handleClientSelect(client)}
-                        className={`w-full text-left px-4 py-3 hover:bg-hover/60 transition-colors border-b border-border/40 last:border-0 ${
-                          formData.user_id === client.user_id ? 'bg-amber-50' : ''
-                        }`}
-                      >
-                        <div className="font-medium">{client.first_name} {client.last_name}</div>
-                        <div className="text-xs text-muted">{client.phone}</div>
-                      </button>
-                    ))
-                  ) : (
-                    <div className="px-4 py-3 text-sm text-muted">No clients found</div>
-                  )}
-                </div>
-              )}
-
-              {/* Selected Client Info */}
-              {selectedClient && (
-                <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl">
-                  <div className="font-medium text-amber-800">
-                    {selectedClient.first_name} {selectedClient.last_name}
+                {clientSearch && !showAddClient && (
+                  <div className="max-h-48 overflow-y-auto border border-border/60 rounded-xl mt-1">
+                    {filteredClients.length > 0 ? (
+                      filteredClients.slice(0, 10).map((client) => (
+                        <button
+                          key={client.user_id}
+                          type="button"
+                          onClick={() => handleClientSelect(client)}
+                          className={`w-full text-left px-4 py-3 hover:bg-hover/60 transition-colors border-b border-border/40 last:border-0 ${
+                            formData.user_id === client.user_id ? 'bg-amber-50' : ''
+                          }`}
+                        >
+                          <div className="font-medium">{client.first_name} {client.last_name}</div>
+                          <div className="text-xs text-muted">{client.phone}</div>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="px-4 py-3 text-sm text-muted">No clients found</div>
+                    )}
                   </div>
-                  <div className="text-sm text-amber-600">{selectedClient.phone}</div>
-                </div>
-              )}
-
-              {/* Add New Client Button */}
-              {!showAddClient ? (
-                <button
-                  type="button"
-                  onClick={() => setShowAddClient(true)}
-                  className="w-full py-3 border-2 border-dashed border-border/60 rounded-xl text-sm font-medium text-muted hover:border-amber-500 hover:text-amber-600 transition-colors"
-                >
-                  + Add New Client
-                </button>
-              ) : (
-                <div className="p-4 border border-border/60 rounded-xl space-y-4">
-                  <div className="flex items-center justify-between">
-                    <h4 className="font-medium">Add New Client</h4>
-                    <button
-                      type="button"
-                      onClick={() => setShowAddClient(false)}
-                      className="text-sm text-muted hover:text-text"
-                    >
-                      Cancel
-                    </button>
+                )}
+                {selectedClient && (
+                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl mt-2">
+                    <div className="font-medium text-amber-800">{selectedClient.first_name} {selectedClient.last_name}</div>
+                    <div className="text-sm text-amber-600">{selectedClient.phone}</div>
                   </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-medium text-muted mb-1">First Name *</label>
-                      <input
-                        type="text"
-                        value={newClient.first_name}
-                        onChange={(e) => setNewClient(prev => ({ ...prev, first_name: e.target.value }))}
-                        className="w-full px-3 py-2 bg-surface border border-border/60 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-muted mb-1">Last Name *</label>
-                      <input
-                        type="text"
-                        value={newClient.last_name}
-                        onChange={(e) => setNewClient(prev => ({ ...prev, last_name: e.target.value }))}
-                        className="w-full px-3 py-2 bg-surface border border-border/60 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-medium text-muted mb-1">Phone *</label>
-                      <input
-                        type="tel"
-                        value={newClient.phone}
-                        onChange={(e) => setNewClient(prev => ({ ...prev, phone: e.target.value }))}
-                        placeholder="10-digit number"
-                        className="w-full px-3 py-2 bg-surface border border-border/60 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-muted mb-1">Email *</label>
-                      <input
-                        type="email"
-                        value={newClient.email}
-                        onChange={(e) => setNewClient(prev => ({ ...prev, email: e.target.value }))}
-                        className="w-full px-3 py-2 bg-surface border border-border/60 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-muted mb-1">Address</label>
-                    <input
-                      type="text"
-                      value={newClient.address}
-                      onChange={(e) => setNewClient(prev => ({ ...prev, address: e.target.value }))}
-                      className="w-full px-3 py-2 bg-surface border border-border/60 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
-                    />
-                  </div>
-
+                )}
+                {!showAddClient && !selectedClient && (
                   <button
                     type="button"
-                    onClick={handleCreateClient}
-                    disabled={creatingClient || !newClient.first_name || !newClient.last_name || !newClient.phone || !newClient.email}
-                    className="w-full py-2.5 bg-amber-500 text-white rounded-xl text-sm font-medium hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    onClick={() => setShowAddClient(true)}
+                    className="w-full py-3 border-2 border-dashed border-border/60 rounded-xl text-sm font-medium text-muted hover:border-amber-500 hover:text-amber-600 transition-colors mt-2"
                   >
-                    {creatingClient ? 'Creating...' : 'Create Client'}
+                    + Add New Client
                   </button>
-                </div>
-              )}
-            </div>
-          )}
+                )}
+                {showAddClient && (
+                  <div className="p-4 border border-border/60 rounded-xl space-y-4 mt-2">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-medium">Add New Client</h4>
+                      <button type="button" onClick={() => setShowAddClient(false)} className="text-sm text-muted hover:text-text">Cancel</button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-medium text-muted mb-1">First Name *</label>
+                        <input type="text" value={newClient.first_name} onChange={(e) => setNewClient(prev => ({ ...prev, first_name: e.target.value }))} className="w-full px-3 py-2 bg-surface border border-border/60 rounded-lg text-sm" required />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-muted mb-1">Last Name *</label>
+                        <input type="text" value={newClient.last_name} onChange={(e) => setNewClient(prev => ({ ...prev, last_name: e.target.value }))} className="w-full px-3 py-2 bg-surface border border-border/60 rounded-lg text-sm" required />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-medium text-muted mb-1">Phone *</label>
+                        <input type="tel" value={newClient.phone} onChange={(e) => setNewClient(prev => ({ ...prev, phone: e.target.value }))} className="w-full px-3 py-2 bg-surface border border-border/60 rounded-lg text-sm" required />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-muted mb-1">Email *</label>
+                        <input type="email" value={newClient.email} onChange={(e) => setNewClient(prev => ({ ...prev, email: e.target.value }))} className="w-full px-3 py-2 bg-surface border border-border/60 rounded-lg text-sm" required />
+                      </div>
+                    </div>
+                    <button type="button" onClick={handleCreateClient} disabled={creatingClient || !newClient.first_name || !newClient.last_name || !newClient.phone || !newClient.email} className="w-full py-2.5 bg-amber-500 text-white rounded-xl text-sm font-medium hover:bg-amber-600 disabled:opacity-50 transition-colors">
+                      {creatingClient ? 'Creating...' : 'Create Client'}
+                    </button>
+                  </div>
+                )}
+                {validationErrors.client && <p className="mt-1 text-xs text-red-500">{validationErrors.client}</p>}
+              </div>
 
-          {/* Step 1: Route */}
-          {currentStep === 1 && (
-            <div className="space-y-4">
-              <h3 className="text-lg font-semibold flex items-center gap-2">
-                <span>📍</span> Route Information
-              </h3>
-
+              {/* Route */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-muted mb-1.5">Pickup City *</label>
-                  <input
-                    type="text"
-                    name="pickup_city"
-                    value={formData.pickup_city}
-                    onChange={handleChange}
-                    placeholder="e.g., Patna"
-                    className="w-full px-3 py-2.5 bg-surface border border-border/60 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors"
-                    required
-                  />
-                  {validationErrors.pickup_city && (
-                    <p className="mt-1 text-xs text-red-500">{validationErrors.pickup_city}</p>
-                  )}
+                  <input type="text" name="pickup_city" value={formData.pickup_city} onChange={handleChange} placeholder="e.g., Patna" className="w-full px-3 py-2.5 bg-surface border border-border/60 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors" required />
+                  {validationErrors.pickup_city && <p className="mt-1 text-xs text-red-500">{validationErrors.pickup_city}</p>}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-muted mb-1.5">Drop City *</label>
-                  <input
-                    type="text"
-                    name="drop_city"
-                    value={formData.drop_city}
-                    onChange={handleChange}
-                    placeholder="e.g., Delhi"
-                    className="w-full px-3 py-2.5 bg-surface border border-border/60 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors"
-                    required
-                  />
-                  {validationErrors.drop_city && (
-                    <p className="mt-1 text-xs text-red-500">{validationErrors.drop_city}</p>
-                  )}
+                  <input type="text" name="drop_city" value={formData.drop_city} onChange={handleChange} placeholder="e.g., Delhi" className="w-full px-3 py-2.5 bg-surface border border-border/60 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors" required />
+                  {validationErrors.drop_city && <p className="mt-1 text-xs text-red-500">{validationErrors.drop_city}</p>}
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-muted mb-1.5">Pickup Location</label>
-                  <input
-                    type="text"
-                    name="pickup_location"
-                    value={formData.pickup_location}
-                    onChange={handleChange}
-                    placeholder="Full pickup address"
-                    className="w-full px-3 py-2.5 bg-surface border border-border/60 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors"
-                  />
+                  <input type="text" name="pickup_location" value={formData.pickup_location} onChange={handleChange} placeholder="Full pickup address" className="w-full px-3 py-2.5 bg-surface border border-border/60 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-muted mb-1.5">Drop Location</label>
-                  <input
-                    type="text"
-                    name="drop_location"
-                    value={formData.drop_location}
-                    onChange={handleChange}
-                    placeholder="Full drop address"
-                    className="w-full px-3 py-2.5 bg-surface border border-border/60 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors"
-                  />
+                  <input type="text" name="drop_location" value={formData.drop_location} onChange={handleChange} placeholder="Full drop address" className="w-full px-3 py-2.5 bg-surface border border-border/60 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors" />
                 </div>
               </div>
 
               <div className="grid grid-cols-3 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-muted mb-1.5">Distance (km)</label>
-                  <input
-                    type="number"
-                    name="distance_km"
-                    value={formData.distance_km}
-                    onChange={handleChange}
-                    step="0.1"
-                    className="w-full px-3 py-2.5 bg-surface border border-border/60 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors"
-                  />
+                  <input type="number" name="distance_km" value={formData.distance_km} onChange={handleChange} step="0.1" className="w-full px-3 py-2.5 bg-surface border border-border/60 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-muted mb-1.5">Trip Date *</label>
-                  <input
-                    type="date"
-                    name="trip_date"
-                    value={formData.trip_date}
-                    onChange={handleChange}
-                    className="w-full px-3 py-2.5 bg-surface border border-border/60 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors"
-                    required
-                  />
-                  {validationErrors.trip_date && (
-                    <p className="mt-1 text-xs text-red-500">{validationErrors.trip_date}</p>
-                  )}
+                  <input type="date" name="trip_date" value={formData.trip_date} onChange={handleChange} className="w-full px-3 py-2.5 bg-surface border border-border/60 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors" required />
+                  {validationErrors.trip_date && <p className="mt-1 text-xs text-red-500">{validationErrors.trip_date}</p>}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-muted mb-1.5">Expected Delivery</label>
-                  <input
-                    type="date"
-                    name="expected_delivery_date"
-                    value={formData.expected_delivery_date}
-                    onChange={handleChange}
-                    className="w-full px-3 py-2.5 bg-surface border border-border/60 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors"
-                  />
+                  <input type="date" name="expected_delivery_date" value={formData.expected_delivery_date} onChange={handleChange} className="w-full px-3 py-2.5 bg-surface border border-border/60 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors" />
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-muted mb-1.5">Freight Amount (₹) *</label>
+                <input type="number" name="freight_amount" value={formData.freight_amount} onChange={handleChange} step="0.01" placeholder="0.00" className="w-full px-3 py-2.5 bg-surface border border-border/60 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors" required />
+                {validationErrors.freight && <p className="mt-1 text-xs text-red-500">{validationErrors.freight}</p>}
               </div>
             </div>
           )}
 
-          {/* Step 2: Transport Assignment */}
-          {currentStep === 2 && (
+          {/* Step 1: Resources */}
+          {currentStep === 1 && (
             <div className="space-y-6">
               <h3 className="text-lg font-semibold flex items-center gap-2">
-                <span>🚛</span> Transport Assignment
+                <span>🚛</span> Resources
               </h3>
-              <p className="text-sm text-muted">Select the transport owner, vehicle and driver for this trip.</p>
+              <p className="text-sm text-muted">Select vehicle and driver for this trip. The transport owner is automatically resolved from the vehicle.</p>
 
-              {/* Transport Owner */}
-              <div className="space-y-3" ref={ownerDropdownRef}>
-                <label className="block text-sm font-medium text-muted">Transport Owner *</label>
+              {/* Vehicle */}
+              <div className="space-y-3" ref={vehicleDropdownRef}>
+                <label className="block text-sm font-medium text-muted">Vehicle *</label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none">🔍</span>
                   <input
                     type="text"
-                    placeholder="Search transport owner..."
-                    value={ownerSearch}
-                    onChange={(e) => { setOwnerSearch(e.target.value); setShowOwnerDropdown(true); }}
-                    onFocus={() => setShowOwnerDropdown(true)}
+                    placeholder="Search vehicle by number or name..."
+                    value={vehicleSearch}
+                    onChange={(e) => { setVehicleSearch(e.target.value); setShowVehicleDropdown(true); }}
+                    onFocus={() => setShowVehicleDropdown(true)}
                     className="w-full pl-9 pr-9 py-2.5 bg-surface border border-border/60 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors"
                   />
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none">▼</span>
                 </div>
 
-                {showOwnerDropdown && (
+                {showVehicleDropdown && (
                   <div className="max-h-60 overflow-y-auto border border-border/60 rounded-xl bg-surface shadow-lg">
                     {loading ? (
-                      <div className="px-4 py-3 text-sm text-muted">Loading transport owners...</div>
-                    ) : filteredOwners.length > 0 ? (
-                      filteredOwners.map((owner) => {
-                        const ownerTypeLabel = {
-                          TRANSPORT_COMPANY: 'Transport Company',
-                          INDIVIDUAL_OWNER: 'Individual Owner',
-                          DRIVER_OWNER: 'Driver Owner',
-                        }[owner.owner_type] || 'Owner';
-                        const ownerTypeColor = {
-                          TRANSPORT_COMPANY: 'bg-blue-100 text-blue-700',
-                          INDIVIDUAL_OWNER: 'bg-green-100 text-green-700',
-                          DRIVER_OWNER: 'bg-amber-100 text-amber-700',
-                        }[owner.owner_type] || 'bg-gray-100 text-gray-700';
-
-                        return (
-                          <button
-                            key={owner.owner_id}
-                            type="button"
-                            onClick={() => handleOwnerSelect(owner)}
-                            className={`w-full text-left px-4 py-3 hover:bg-hover/60 transition-colors border-b border-border/40 last:border-0 ${
-                              formData.transport_owner_id === owner.owner_id ? 'bg-amber-50' : ''
-                            }`}
-                          >
-                            <div className="flex items-center gap-2">
-                              <div className="font-medium">{owner.owner_name}</div>
-                              <span className={`text-xs px-2 py-0.5 rounded-full ${ownerTypeColor}`}>{ownerTypeLabel}</span>
-                            </div>
-                            <div className="flex items-center gap-2 text-xs text-muted mt-1">
-                              {owner.company_name && <span>{owner.company_name}</span>}
-                              {owner.company_name && <span>•</span>}
-                              <span>{owner.mobile}</span>
-                              {owner.city && <><span>•</span><span>{owner.city}</span></>}
-                              <span>•</span>
-                              <span className={`capitalize ${owner.status === 'active' ? 'text-green-600' : 'text-red-600'}`}>{owner.status}</span>
-                            </div>
-                          </button>
-                        );
-                      })
-                    ) : (
-                      <div className="px-4 py-3 text-sm text-muted">No transport owners found</div>
-                    )}
-                  </div>
-                )}
-
-                {selectedOwner && (
-                  <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl">
-                    <div className="flex items-center gap-2">
-                      <div className="font-medium text-blue-800">{selectedOwner.owner_name}</div>
-                      {selectedOwner.owner_type && (
-                        <span className={`text-xs px-2 py-0.5 rounded-full ${
-                          selectedOwner.owner_type === 'TRANSPORT_COMPANY' ? 'bg-blue-100 text-blue-700' :
-                          selectedOwner.owner_type === 'INDIVIDUAL_OWNER' ? 'bg-green-100 text-green-700' :
-                          selectedOwner.owner_type === 'DRIVER_OWNER' ? 'bg-amber-100 text-amber-700' :
-                          'bg-gray-100 text-gray-700'
-                        }`}>
-                          {selectedOwner.owner_type === 'TRANSPORT_COMPANY' ? 'Transport Company' :
-                           selectedOwner.owner_type === 'INDIVIDUAL_OWNER' ? 'Individual Owner' :
-                           selectedOwner.owner_type === 'DRIVER_OWNER' ? 'Driver Owner' :
-                           selectedOwner.owner_type}
-                        </span>
-                      )}
-                    </div>
-                    {selectedOwner.company_name && (
-                      <div className="text-sm text-blue-600">{selectedOwner.company_name}</div>
-                    )}
-                    <div className="text-sm text-blue-600">{selectedOwner.mobile}</div>
-                    {selectedOwner.city && <div className="text-sm text-blue-600">{selectedOwner.city}</div>}
-                    <div className="text-xs text-blue-500 capitalize mt-1">Status: {selectedOwner.status}</div>
-                  </div>
-                )}
-              </div>
-
-              {/* Vehicle */}
-              {formData.transport_owner_id && (
-                <div className="space-y-3">
-                  <label className="block text-sm font-medium text-muted">Available Vehicles *</label>
-
-                  {loadingOwnerData ? (
-                    <div className="p-4 text-sm text-muted">Loading vehicles...</div>
-                  ) : ownerVehicles.length > 0 ? (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {ownerVehicles.map((vehicle) => (
+                      <div className="px-4 py-3 text-sm text-muted">Loading vehicles...</div>
+                    ) : filteredVehicles.length > 0 ? (
+                      filteredVehicles.map((vehicle) => (
                         <button
                           key={vehicle.vehicle_id}
                           type="button"
                           onClick={() => handleVehicleSelect(vehicle)}
-                          className={`w-full text-left p-4 rounded-xl border-2 transition-colors ${
-                            formData.vehicle_id === vehicle.vehicle_id
-                              ? 'border-amber-500 bg-amber-50'
-                              : 'border-border/60 hover:border-amber-300 hover:bg-hover/40'
+                          className={`w-full text-left px-4 py-3 hover:bg-hover/60 transition-colors border-b border-border/40 last:border-0 ${
+                            formData.vehicle_id === vehicle.vehicle_id ? 'bg-amber-50' : ''
                           }`}
                         >
                           <div className="font-medium text-sm">{vehicle.vehicle_number}</div>
                           <div className="text-xs text-muted mt-1">{vehicle.vehicle_name} • {vehicle.vehicle_type}</div>
                         </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-xl text-sm text-yellow-700">
-                      No vehicles found for this transport owner.
-                    </div>
-                  )}
+                      ))
+                    ) : (
+                      <div className="px-4 py-3 text-sm text-muted">No vehicles found</div>
+                    )}
+                  </div>
+                )}
 
-                  {selectedVehicle && (
-                    <div className="p-3 bg-green-50 border border-green-200 rounded-xl">
-                      <div className="text-sm font-medium text-green-800">Selected: {selectedVehicle.vehicle_number}</div>
-                      <div className="text-xs text-green-600">{selectedVehicle.vehicle_name} • {selectedVehicle.vehicle_type}</div>
-                    </div>
-                  )}
+                {selectedVehicle && (
+                  <div className="p-4 bg-green-50 border border-green-200 rounded-xl">
+                    <div className="text-sm font-medium text-green-800">Selected: {selectedVehicle.vehicle_number}</div>
+                    <div className="text-xs text-green-600">{selectedVehicle.vehicle_name} • {selectedVehicle.vehicle_type}</div>
+                  </div>
+                )}
+              </div>
+
+              {/* Auto-resolved Transport Owner */}
+              {selectedVehicle?.owner_id && (
+                <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl">
+                  <div className="text-sm font-medium text-blue-800 mb-1">✓ Transport Owner (Auto-resolved)</div>
+                  {(() => {
+                    const owner = owners.find(o => o.owner_id === selectedVehicle.owner_id);
+                    return owner ? (
+                      <div>
+                        <div className="text-sm text-blue-700 font-medium">{owner.owner_name}</div>
+                        <div className="text-xs text-blue-600">{owner.company_name} • {owner.mobile}</div>
+                      </div>
+                    ) : (
+                      <div className="text-sm text-blue-600">Owner ID: {selectedVehicle.owner_id}</div>
+                    );
+                  })()}
                 </div>
               )}
 
-              {/* Driver - always visible */}
+              {/* Driver */}
               <div className="space-y-3" ref={driverDropdownRef}>
-                <label className="block text-sm font-medium text-muted">Available Drivers *</label>
+                <label className="block text-sm font-medium text-muted">Driver *</label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none">🔍</span>
                   <input
@@ -810,9 +671,9 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep }) {
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none">▼</span>
                 </div>
 
-                {!formData.transport_owner_id && (
+                {!selectedVehicle && (
                   <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-700">
-                    Showing all available drivers. Select a transport owner to filter the list.
+                    Select a vehicle first to filter drivers by transport owner.
                   </div>
                 )}
 
@@ -870,99 +731,22 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep }) {
                 )}
               </div>
 
-              {validationErrors.owner && (
-                <p className="text-sm text-red-500">{validationErrors.owner}</p>
-              )}
-              {validationErrors.vehicle && (
-                <p className="text-sm text-red-500">{validationErrors.vehicle}</p>
-              )}
-              {validationErrors.driver && (
-                <p className="text-sm text-red-500">{validationErrors.driver}</p>
-              )}
+              {validationErrors.vehicle && <p className="text-sm text-red-500">{validationErrors.vehicle}</p>}
+              {validationErrors.driver && <p className="text-sm text-red-500">{validationErrors.driver}</p>}
             </div>
           )}
 
-          {/* Step 3: Finance */}
+          {/* Step 2: Advance */}
+          {currentStep === 2 && (
+            <TripAdvanceStep
+              formData={formData}
+              onChange={(advances) => setFormData((prev) => ({ ...prev, advances }))}
+              errors={validationErrors}
+            />
+          )}
+
+          {/* Step 3: Review */}
           {currentStep === 3 && (
-            <div className="space-y-4">
-              <h3 className="text-lg font-semibold flex items-center gap-2">
-                <span>💰</span> Financial Details
-              </h3>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-muted mb-1.5">Client Freight (₹) *</label>
-                  <input
-                    type="number"
-                    name="freight_amount"
-                    value={formData.freight_amount}
-                    onChange={handleChange}
-                    step="0.01"
-                    placeholder="0.00"
-                    className="w-full px-3 py-2.5 bg-surface border border-border/60 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors"
-                    required
-                  />
-                  {validationErrors.freight && (
-                    <p className="mt-1 text-xs text-red-500">{validationErrors.freight}</p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-muted mb-1.5">Owner Payable (₹)</label>
-                  <input
-                    type="number"
-                    name="owner_payment"
-                    value={formData.owner_payment}
-                    onChange={handleChange}
-                    step="0.01"
-                    placeholder="0.00"
-                    className="w-full px-3 py-2.5 bg-surface border border-border/60 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-muted mb-1.5">Driver Payable (₹)</label>
-                  <input
-                    type="number"
-                    name="driver_payment"
-                    value={formData.driver_payment}
-                    onChange={handleChange}
-                    step="0.01"
-                    placeholder="0.00"
-                    className="w-full px-3 py-2.5 bg-surface border border-border/60 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-muted mb-1.5">Advance (₹)</label>
-                  <input
-                    type="number"
-                    name="advance"
-                    value={formData.advance}
-                    onChange={handleChange}
-                    step="0.01"
-                    placeholder="0.00"
-                    className="w-full px-3 py-2.5 bg-surface border border-border/60 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-muted mb-1.5">Notes</label>
-                <textarea
-                  name="notes"
-                  value={formData.notes}
-                  onChange={handleChange}
-                  rows={3}
-                  placeholder="Any additional notes..."
-                  className="w-full px-3 py-2.5 bg-surface border border-border/60 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors resize-none"
-                />
-              </div>
-            </div>
-          )}
-
-          {/* Step 4: Review */}
-          {currentStep === 4 && (
             <div className="space-y-4">
               <h3 className="text-lg font-semibold flex items-center gap-2">
                 <span>✓</span> Review & Create Trip
@@ -970,7 +754,7 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep }) {
 
               <div className="space-y-3 p-4 bg-gray-50 rounded-xl">
                 <div className="flex justify-between py-2 border-b border-gray-200">
-                  <span className="text-sm text-muted">Client</span>
+                  <span className="text-sm text-muted">Customer</span>
                   <span className="text-sm font-medium">
                     {selectedClient ? `${selectedClient.first_name} ${selectedClient.last_name}` : '-'}
                   </span>
@@ -982,15 +766,15 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep }) {
                   </span>
                 </div>
                 <div className="flex justify-between py-2 border-b border-gray-200">
-                  <span className="text-sm text-muted">Transport Assignment</span>
-                  <span className="text-sm font-medium">
-                    {selectedOwner ? selectedOwner.owner_name : '-'}
-                  </span>
-                </div>
-                <div className="flex justify-between py-2 border-b border-gray-200">
                   <span className="text-sm text-muted">Vehicle</span>
                   <span className="text-sm font-medium">
                     {selectedVehicle ? selectedVehicle.vehicle_number : '-'}
+                  </span>
+                </div>
+                <div className="flex justify-between py-2 border-b border-gray-200">
+                  <span className="text-sm text-muted">Transport Owner</span>
+                  <span className="text-sm font-medium">
+                    {selectedOwner ? selectedOwner.owner_name : '-'}
                   </span>
                 </div>
                 <div className="flex justify-between py-2 border-b border-gray-200">
@@ -1005,18 +789,14 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep }) {
                     ₹{parseFloat(formData.freight_amount || 0).toLocaleString('en-IN')}
                   </span>
                 </div>
-                <div className="flex justify-between py-2 border-b border-gray-200">
-                  <span className="text-sm text-muted">Owner Payable</span>
-                  <span className="text-sm font-medium">
-                    ₹{parseFloat(formData.owner_payment || 0).toLocaleString('en-IN')}
-                  </span>
-                </div>
-                <div className="flex justify-between py-2">
-                  <span className="text-sm text-muted">Driver Payable</span>
-                  <span className="text-sm font-medium">
-                    ₹{parseFloat(formData.driver_payment || 0).toLocaleString('en-IN')}
-                  </span>
-                </div>
+                {formData.advances && formData.advances.length > 0 && (
+                  <div className="flex justify-between py-2 border-b border-gray-200">
+                    <span className="text-sm text-muted">Total Advance</span>
+                    <span className="text-sm font-medium text-orange-600">
+                      ₹{formData.advances.reduce((sum, a) => sum + (parseFloat(a.amount) || 0), 0).toLocaleString('en-IN')}
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1053,20 +833,6 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep }) {
           </div>
         </div>
       </div>
-
-      {/* Trip Summary Sidebar */}
-      {onNavigateToStep && (
-        <div className="w-80 shrink-0 hidden lg:block">
-          <TripSummary
-            formData={formData}
-            clients={clients}
-            owners={owners}
-            ownerVehicles={ownerVehicles}
-            allDrivers={allDrivers}
-            onNavigateToStep={onNavigateToStep}
-          />
-        </div>
-      )}
     </div>
   );
 }

@@ -74,6 +74,22 @@ class TripAdvanceRepository {
   }
 
   /**
+   * Find all advances matching a filter.
+   * @param {Object} where - Prisma where clause
+   * @returns {Promise<Array>}
+   */
+  async findMany(where = {}) {
+    return await prisma.tripAdvance.findMany({
+      where,
+      orderBy: { given_at: 'desc' },
+      include: {
+        booking: { select: { booking_id: true, booking_number: true } },
+        trip: { select: { trip_id: true, trip_number: true } },
+      },
+    });
+  }
+
+  /**
    * Update advance.
    * @param {number} advanceId
    * @param {Object} data

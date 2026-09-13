@@ -100,7 +100,16 @@ router.post('/driver-signup', [
   body('phone').matches(/^[0-9]{10}$/).withMessage('Valid 10-digit phone required'),
   body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
   body('license_number').optional({ values: 'falsy' }).notEmpty().withMessage('License number is required'),
-  body('license_expiry').optional({ values: 'falsy' }).notEmpty().withMessage('License expiry date is required')
+  body('license_expiry').optional({ values: 'falsy' }).notEmpty().withMessage('License expiry date is required'),
+  // Phase 2: transport_owner_id is REQUIRED. Every driver must belong to
+  // a Transport Owner. If the user is registering themselves as a
+  // Self-Owner, the public site should first POST /api/vehicle-owners
+  // (or the public partner-apply endpoint) and then pass that owner's
+  // id here. We do NOT auto-create owners on this path.
+  body('transport_owner_id')
+    .notEmpty().withMessage('Transport Owner is required. Every driver must belong to exactly one Transport Owner.')
+    .bail()
+    .isInt({ min: 1 }).withMessage('Transport Owner id must be a positive integer.'),
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -111,7 +120,7 @@ router.post('/driver-signup', [
       });
     }
 
-    const { first_name, last_name, email, phone, password, license_number, license_expiry, address, city } = req.body;
+    const { first_name, last_name, email, phone, password, license_number, license_expiry, address, city, transport_owner_id } = req.body;
 
     // Check if user exists (Prisma/PostgreSQL)
     const existingUser = await prisma.user.findFirst({
@@ -155,6 +164,9 @@ router.post('/driver-signup', [
     const user_id = newUser.user_id;
 
     // Insert driver details via Prisma
+    // Phase 2: transport_owner_id is required and is provided by the caller
+    // after they have already registered / selected their Transport Owner
+    // through the appropriate public endpoint.
     await prisma.driver.create({
       data: {
         user_id,
@@ -162,6 +174,7 @@ router.post('/driver-signup', [
         mobile: phone,
         license_number: license_number || null,
         license_expiry: license_expiry || null,
+        transport_owner_id: parseInt(transport_owner_id, 10),
       },
     });
 

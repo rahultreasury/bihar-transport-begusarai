@@ -7,13 +7,20 @@ const { prisma } = require('../config/prisma');
 
 class AuditLogRepository {
   /**
+   * @param {Object} [tx] - Optional Prisma transaction client
+   */
+  _client(tx = null) {
+    return tx || prisma;
+  }
+
+  /**
    * Create an audit log entry.
    * @param {Object} data
    * @param {Object} tx - Optional Prisma transaction client
    * @returns {Promise<Object>}
    */
   async create(data, tx = null) {
-    const client = tx || prisma;
+    const client = this._client(tx);
     return await client.auditLog.create({
       data,
     });

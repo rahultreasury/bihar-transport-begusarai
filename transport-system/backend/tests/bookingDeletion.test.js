@@ -130,6 +130,9 @@ function makeTxStub({ deleteResult = { booking_id: 1, booking_number: 'BTB-2026-
         return { ...args.data, vehicle_id: args.where.vehicle_id };
       },
     },
+    trip: {
+      findFirst: async () => null, // No active trips by default
+    },
     _updates: updates,
     _deletes: deletes,
   };

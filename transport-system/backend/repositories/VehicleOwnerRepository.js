@@ -584,7 +584,7 @@ class VehicleOwnerRepository {
     // Get current vehicle and driver
     const vehicle = await client.transportVehicle.findUnique({
       where: { vehicle_id: vehicleId },
-      select: { vehicle_id: true, driver_id: true, partner_id: true },
+      select: { vehicle_id: true, driver_id: true, partner_id: true, owner_id: true },
     });
     if (!vehicle) {
       throw new Error('Vehicle not found');
@@ -592,7 +592,7 @@ class VehicleOwnerRepository {
 
     const driver = await client.driver.findUnique({
       where: { driver_id: driverId },
-      select: { driver_id: true, current_vehicle_id: true, partner_id: true },
+      select: { driver_id: true, current_vehicle_id: true, partner_id: true, transport_owner_id: true },
     });
     if (!driver) {
       throw new Error('Driver not found');
@@ -610,6 +610,22 @@ class VehicleOwnerRepository {
       });
       throw new Error(
         `Driver belongs to partner "${driverPartner?.partner_name || driver.partner_id}" but vehicle belongs to partner "${partner?.partner_name || vehicle.partner_id}". Driver cannot be assigned to a vehicle operated by a different transport partner.`
+      );
+    }
+
+    // CRITICAL: Vehicle/Owner/Driver consistency check
+    // A vehicle and its driver must belong to the same transport owner
+    if (vehicle.owner_id && driver.transport_owner_id && vehicle.owner_id !== driver.transport_owner_id) {
+      const vehicleOwner = await client.vehicleOwner.findUnique({
+        where: { owner_id: vehicle.owner_id },
+        select: { owner_name: true },
+      });
+      const driverOwner = await client.vehicleOwner.findUnique({
+        where: { owner_id: driver.transport_owner_id },
+        select: { owner_name: true },
+      });
+      throw new Error(
+        `Driver belongs to transport owner "${driverOwner?.owner_name || driver.transport_owner_id}" but vehicle belongs to "${vehicleOwner?.owner_name || vehicle.owner_id}". Driver cannot be assigned to a vehicle owned by a different transport owner.`
       );
     }
 
@@ -876,6 +892,24 @@ class VehicleOwnerRepository {
       }
       if (newOwner.status !== 'active' || !newOwner.is_active) {
         throw new Error('Transport Owner is not active');
+      }
+
+      // CRITICAL: If vehicle has an assigned driver, validate that the driver
+      // belongs to the new owner. A vehicle and its driver must belong to the same owner.
+      if (vehicle.driver && vehicle.driver.transport_owner_id !== newOwnerId) {
+        const driverOwner = await prismaTx.vehicleOwner.findUnique({
+          where: { owner_id: vehicle.driver.transport_owner_id },
+          select: { owner_name: true },
+        });
+        const newOwnerName = await prismaTx.vehicleOwner.findUnique({
+          where: { owner_id: newOwnerId },
+          select: { owner_name: true },
+        });
+        throw new Error(
+          `Cannot change vehicle owner: assigned driver ${vehicle.driver.driver_name} belongs to "${driverOwner?.owner_name || vehicle.driver.transport_owner_id}". ` +
+          `Vehicle can only be assigned to "${newOwnerName?.owner_name || newOwnerId}". ` +
+          `Reassign the driver first or choose a different owner.`
+        );
       }
 
       // Perform the ownership update

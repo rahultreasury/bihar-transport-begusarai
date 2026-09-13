@@ -184,10 +184,17 @@ function OverviewTab({ driver }) {
     { label: 'Full Name', value: driver.driver_name },
     { label: 'Mobile Number', value: driver.mobile },
     { label: 'Transport Owner', value: driver.transportOwner ? (
-      <span className="text-amber-600 dark:text-amber-400 font-medium cursor-pointer hover:underline" onClick={() => navigate(`/admin/vehicle-owners/${driver.transportOwner.owner_id}`)}>
-        {driver.transportOwner.owner_name}
-        {driver.transportOwner.company_name && <span className="text-muted text-xs ml-1">({driver.transportOwner.company_name})</span>}
-      </span>
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-amber-600 dark:text-amber-400 font-medium cursor-pointer hover:underline" onClick={() => navigate(`/admin/vehicle-owners/${driver.transportOwner.owner_id}`)}>
+          {driver.transportOwner.owner_name}
+          {driver.transportOwner.company_name && <span className="text-muted text-xs ml-1">({driver.transportOwner.company_name})</span>}
+        </span>
+        {String(driver.transportOwner.owner_type || '').toUpperCase() === 'DRIVER_OWNER' && (
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider bg-violet-500/10 text-violet-600 dark:text-violet-400 border border-violet-500/20">
+            Self Owner
+          </span>
+        )}
+      </div>
     ) : '—' },
     { label: 'Current Status', value: <DriverStatusBadge status={driver.status} size="sm" /> },
 { label: 'Vehicle Type', value: driver.vehicle_type || '—' },

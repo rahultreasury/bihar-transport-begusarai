@@ -63,14 +63,14 @@ function AdminDashboard() {
   const recentBookings = dashboard?.recentBookings || [];
 
   const kpis = [
-    { key: 'todayRevenue', title: "Today's Revenue", value: stats?.todayRevenue ?? stats?.totalRevenue, sub: 'INR', accent: 'amber', loading },
-    { key: 'todayBookings', title: "Today's Bookings", value: stats?.todayBookings ?? 0, sub: 'New bookings', accent: 'green', loading },
-    { key: 'pendingBookings', title: 'Pending Bookings', value: stats?.pendingBookings ?? 0, sub: 'Awaiting dispatch', accent: 'purple', loading },
-    { key: 'activeTrips', title: 'Active Trips', value: stats?.activeTrips ?? stats?.activeDeliveries, sub: 'In progress', accent: 'sky', loading },
-    { key: 'totalOwners', title: 'Total Owners', value: stats?.totalOwners ?? 0, sub: 'Transport owners', accent: 'green', loading },
-    { key: 'activeOwners', title: 'Active Owners', value: stats?.activeOwners ?? 0, sub: 'Currently active', accent: 'green', loading },
-    { key: 'inactiveOwners', title: 'Inactive Owners', value: stats?.inactiveOwners ?? 0, sub: 'Inactive', accent: 'purple', loading },
-    { key: 'outstandingPayments', title: 'Outstanding Payments', value: stats?.outstandingPayments ?? 0, sub: 'Due amount', accent: 'amber', loading },
+    { key: 'totalFreight', title: 'Total Freight', value: stats?.totalFreight ?? 0, sub: 'All trips', accent: 'amber', loading },
+    { key: 'totalRevenue', title: 'Total Collected', value: stats?.totalRevenue ?? 0, sub: 'Customer payments', accent: 'green', loading },
+    { key: 'customerDue', title: 'Customer Due', value: stats?.customerDue ?? stats?.outstandingPayments ?? 0, sub: 'Pending payments', accent: 'red', loading },
+    { key: 'totalCommission', title: 'BT Commission', value: stats?.totalCommission ?? 0, sub: 'Revenue', accent: 'purple', loading },
+    { key: 'totalBtNetProfit', title: 'BT Net Profit', value: stats?.totalBtNetProfit ?? 0, sub: 'After payouts', accent: 'sky', loading },
+    { key: 'ownerOutstanding', title: 'Owner Outstanding', value: stats?.ownerOutstanding ?? 0, sub: 'Payable', accent: 'orange', loading },
+    { key: 'totalAdvances', title: 'Total Advances', value: stats?.totalAdvances ?? 0, sub: 'Given', accent: 'yellow', loading },
+    { key: 'totalBookings', title: 'Total Bookings', value: stats?.totalBookings ?? 0, sub: 'All time', accent: 'blue', loading },
   ];
 
   const navigate = useNavigate();

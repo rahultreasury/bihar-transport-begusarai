@@ -6,12 +6,11 @@ function TripSummary({ formData, clients, owners, ownerVehicles, allDrivers, onN
   const selectedVehicle = ownerVehicles.find(v => v.vehicle_id === parseInt(formData.vehicle_id));
   const selectedDriver = allDrivers.find(d => d.driver_id === parseInt(formData.driver_id));
 
+  // If vehicle is selected but owner is not, auto-resolve owner from vehicle
+  const effectiveOwner = selectedOwner || (selectedVehicle?.owner_id ? owners.find(o => o.owner_id === selectedVehicle.owner_id) : null);
+
   const freightAmount = parseFloat(formData.freight_amount || 0);
-  const ownerPayment = parseFloat(formData.owner_payment || 0);
-  const driverPayment = parseFloat(formData.driver_payment || 0);
-  const advance = parseFloat(formData.advance || 0);
-  const totalExpenses = ownerPayment + driverPayment + advance;
-  const estimatedProfit = freightAmount - totalExpenses;
+  const totalAdvance = (formData.advances || []).reduce((sum, a) => sum + (parseFloat(a.amount) || 0), 0);
 
   const SummaryRow = ({ label, value, subValue, step, isClickable = true }) => (
     <button
@@ -40,7 +39,7 @@ function TripSummary({ formData, clients, owners, ownerVehicles, allDrivers, onN
 
       <div className="space-y-1">
         <SummaryRow
-          label="Client"
+          label="Customer"
           value={selectedClient ? `${selectedClient.first_name} ${selectedClient.last_name}` : ''}
           subValue={selectedClient?.phone}
           step={0}
@@ -50,7 +49,7 @@ function TripSummary({ formData, clients, owners, ownerVehicles, allDrivers, onN
           label="Route"
           value={formData.pickup_city && formData.drop_city ? `${formData.pickup_city} → ${formData.drop_city}` : ''}
           subValue={formData.trip_date}
-          step={1}
+          step={0}
         />
 
         <div className="py-2.5 border-b border-border/40">
@@ -59,27 +58,27 @@ function TripSummary({ formData, clients, owners, ownerVehicles, allDrivers, onN
             <SummaryRow
               label="Owner"
               value={
-                selectedOwner?.owner_name
-                  ? `${selectedOwner.owner_name} ${selectedOwner.owner_type === 'DRIVER_OWNER' ? '(Driver Owner)' : selectedOwner.owner_type === 'INDIVIDUAL_OWNER' ? '(Individual)' : ''}`
+                effectiveOwner?.owner_name
+                  ? `${effectiveOwner.owner_name} ${effectiveOwner.owner_type === 'DRIVER_OWNER' ? '(Driver Owner)' : effectiveOwner.owner_type === 'INDIVIDUAL_OWNER' ? '(Individual)' : ''}`
                   : ''
               }
-              subValue={selectedOwner?.company_name || selectedOwner?.mobile}
-              step={2}
+              subValue={effectiveOwner?.company_name || effectiveOwner?.mobile}
+              step={1}
               isClickable={!!formData.user_id}
             />
             <SummaryRow
               label="Vehicle"
               value={selectedVehicle?.vehicle_number}
               subValue={selectedVehicle?.vehicle_name}
-              step={2}
-              isClickable={!!formData.transport_owner_id}
+              step={1}
+              isClickable={!!formData.user_id}
             />
             <SummaryRow
               label="Driver"
               value={selectedDriver?.driver_name}
               subValue={selectedDriver?.mobile}
-              step={2}
-              isClickable={!!formData.transport_owner_id}
+              step={1}
+              isClickable={!!formData.user_id}
             />
           </div>
         </div>
@@ -87,48 +86,32 @@ function TripSummary({ formData, clients, owners, ownerVehicles, allDrivers, onN
         <SummaryRow
           label="Freight"
           value={freightAmount > 0 ? `₹${freightAmount.toLocaleString('en-IN')}` : ''}
-          step={3}
+          step={2}
           isClickable={!!formData.user_id}
         />
 
-        <SummaryRow
-          label="Owner Payable"
-          value={ownerPayment > 0 ? `₹${ownerPayment.toLocaleString('en-IN')}` : ''}
-          step={3}
-          isClickable={!!formData.user_id}
-        />
-
-        <SummaryRow
-          label="Driver Payable"
-          value={driverPayment > 0 ? `₹${driverPayment.toLocaleString('en-IN')}` : ''}
-          step={3}
-          isClickable={!!formData.user_id}
-        />
-
-        <SummaryRow
-          label="Advance"
-          value={advance > 0 ? `₹${advance.toLocaleString('en-IN')}` : ''}
-          step={3}
-          isClickable={!!formData.user_id}
-        />
+        {totalAdvance > 0 && (
+          <SummaryRow
+            label="Total Advance"
+            value={`₹${totalAdvance.toLocaleString('en-IN')}`}
+            step={2}
+            isClickable={!!formData.user_id}
+          />
+        )}
       </div>
 
       {/* Financial Totals */}
       <div className="mt-4 pt-4 border-t border-border/60 space-y-2">
         <div className="flex justify-between text-sm">
-          <span className="text-muted">Total Revenue</span>
+          <span className="text-muted">Freight / GMV</span>
           <span className="font-medium text-amber-600">₹{freightAmount.toLocaleString('en-IN')}</span>
         </div>
-        <div className="flex justify-between text-sm">
-          <span className="text-muted">Total Expenses</span>
-          <span className="font-medium text-red-600">₹{totalExpenses.toLocaleString('en-IN')}</span>
-        </div>
-        <div className="flex justify-between text-sm pt-2 border-t border-border/40">
-          <span className="font-medium">Estimated Profit</span>
-          <span className={`font-semibold ${estimatedProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-            ₹{estimatedProfit.toLocaleString('en-IN')}
-          </span>
-        </div>
+        {totalAdvance > 0 && (
+          <div className="flex justify-between text-sm">
+            <span className="text-muted">Total Advance</span>
+            <span className="font-medium text-orange-600">₹{totalAdvance.toLocaleString('en-IN')}</span>
+          </div>
+        )}
       </div>
     </div>
   );
