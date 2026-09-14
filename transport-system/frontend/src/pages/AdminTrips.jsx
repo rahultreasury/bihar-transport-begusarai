@@ -730,7 +730,7 @@ function AdminTrips() {
         </div>
         <div className="flex items-center gap-3 text-sm">
           <button
-            onClick={() => navigate('/admin/trips/financials')}
+            onClick={() => navigate('/admin/financials')}
             className="text-muted hover:text-text transition-colors"
           >
             Financials →
