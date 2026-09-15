@@ -7,7 +7,7 @@ import KpiCard from '../components/admin-premium/ui/KpiCard';
 import PremiumTable from '../components/admin-premium/ui/PremiumTable';
 import EmptyState from '../components/admin-premium/ui/EmptyState';
 import { LoadingSkeleton } from '../components/admin-premium/ui/LoadingSkeleton';
-import VehicleRegisterModal from '../components/admin-premium/vehicles/VehicleRegisterModal';
+import TransportResourceRegistrationModal from '../components/admin-premium/transport/TransportResourceRegistrationModal';
 
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: '▦' },
@@ -85,6 +85,7 @@ export default function AdminVehicles() {
   const [toast, setToast] = useState(null);
   const [owners, setOwners] = useState([]);
   const [drivers, setDrivers] = useState([]);
+  const [registerContext, setRegisterContext] = useState({});
 
   const debouncedSearchValue = useDebounce(search, 300);
 
@@ -434,13 +435,13 @@ export default function AdminVehicles() {
             </p>
           </div>
           <button
-            onClick={() => setShowRegisterModal(true)}
+            onClick={() => { setRegisterContext({ sourcePage: 'vehicles' }); setShowRegisterModal(true); }}
             className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition shadow-sm shadow-amber-500/20"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
             </svg>
-            + Add Vehicle
+            + Register Resource
           </button>
         </div>
 
@@ -610,13 +611,13 @@ export default function AdminVehicles() {
                   Add your first vehicle to start managing your transport fleet.
                 </p>
                 <button
-                  onClick={() => setShowRegisterModal(true)}
+                  onClick={() => { setRegisterContext({ sourcePage: 'vehicles' }); setShowRegisterModal(true); }}
                   className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition shadow-lg shadow-amber-500/20"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                   </svg>
-                  + Add Vehicle
+                  + Register Resource
                 </button>
               </>
             )}
@@ -663,11 +664,14 @@ export default function AdminVehicles() {
         )}
 
         {/* Register Modal */}
-        <VehicleRegisterModal
-          isOpen={showRegisterModal}
-          onClose={() => setShowRegisterModal(false)}
-          onSuccess={handleRegisterSuccess}
-        />
+        {showRegisterModal && (
+          <TransportResourceRegistrationModal
+            isOpen={showRegisterModal}
+            onClose={() => setShowRegisterModal(false)}
+            onSuccess={handleRegisterSuccess}
+            context={registerContext}
+          />
+        )}
       </div>
     </AdminShell>
   );

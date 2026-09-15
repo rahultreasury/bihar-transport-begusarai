@@ -7,6 +7,7 @@ import KpiCard from '../components/admin-premium/ui/KpiCard';
 import PremiumTable from '../components/admin-premium/ui/PremiumTable';
 import EmptyState from '../components/admin-premium/ui/EmptyState';
 import { LoadingSkeleton } from '../components/admin-premium/ui/LoadingSkeleton';
+import TransportResourceRegistrationModal from '../components/admin-premium/transport/TransportResourceRegistrationModal';
 
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: '▦' },
@@ -103,6 +104,7 @@ export default function AdminVehicleOwners() {
   const [showRegisterModal, setShowRegisterModal] = useState(false);
   const [editingOwner, setEditingOwner] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [registerContext, setRegisterContext] = useState({});
 
   const debouncedSearch = useDebounce(search, 300);
 
@@ -166,7 +168,7 @@ export default function AdminVehicleOwners() {
   };
 
   const handleEdit = (owner) => {
-    setEditingOwner(owner);
+    setRegisterContext({ ownerId: owner.owner_id, sourcePage: 'owners' });
     setShowRegisterModal(true);
   };
 
@@ -193,13 +195,17 @@ export default function AdminVehicleOwners() {
 
   const handleModalClose = () => {
     setShowRegisterModal(false);
-    setEditingOwner(null);
+    setRegisterContext({});
   };
 
-  const handleModalSuccess = () => {
+  const handleModalSuccess = (createdEntities) => {
     handleModalClose();
     fetchOwners();
     fetchStats();
+    // If owner was created, we could navigate to it or show a toast
+    if (createdEntities?.owner) {
+      // Optionally navigate to the new owner
+    }
   };
 
   const columns = [
@@ -305,10 +311,10 @@ export default function AdminVehicleOwners() {
             <p className="text-muted text-sm mt-1">Manage vehicle owners and their fleet</p>
           </div>
           <button
-            onClick={() => { setEditingOwner(null); setShowRegisterModal(true); }}
+            onClick={() => { setRegisterContext({ sourcePage: 'owners' }); setShowRegisterModal(true); }}
             className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-medium transition"
           >
-            + Register Owner
+            + Register Resource
           </button>
         </div>
 
@@ -382,10 +388,11 @@ export default function AdminVehicleOwners() {
 
         {/* Register/Edit Modal */}
         {showRegisterModal && (
-          <OwnerRegisterModal
-            owner={editingOwner}
+          <TransportResourceRegistrationModal
+            isOpen={showRegisterModal}
             onClose={handleModalClose}
             onSuccess={handleModalSuccess}
+            context={registerContext}
           />
         )}
       </div>
