@@ -147,7 +147,9 @@ test('PRIVACY: customer DTO never exposes a driver mobile number', () => {
     'customer DTO must not contain driver contact keys'
   );
 
-  // The assignment block carries the four displayable facts and nothing else.
+  // The assignment block is an EXPLICIT allow-list. Every key below is a
+  // displayable fact the customer is entitled to see once an admin has
+  // committed the resources — no driver contact channel of any kind.
   assert.deepEqual(Object.keys(dto.assignment).sort(), [
     'assigned_at',
     'contact',
@@ -158,6 +160,9 @@ test('PRIVACY: customer DTO never exposes a driver mobile number', () => {
     'driver_total_deliveries',
     'driver_verified',
     'transport_owner',
+    'vehicle_assigned',
+    'vehicle_body_type',
+    'vehicle_capacity_kg',
     'vehicle_id',
     'vehicle_number',
     'vehicle_type',
@@ -199,12 +204,60 @@ test('PRIVACY: admin DTO DOES carry the driver mobile (dispatch needs it)', () =
   assert.equal(dto.assignment.driver.alternate_mobile, '9000000002');
 });
 
-test('PRIVACY: assignment is hidden until the customer commits', () => {
-  const notCommitted = toCustomerEnquiry(committedEnquiry({ status: 'AWAITING_CUSTOMER_ACCEPTANCE' }), []);
-  assert.equal(notCommitted.assignment, null, 'no driver details before acceptance');
+test('PRIVACY: nothing is assigned until the admin commits resources', () => {
+  // Not "hidden until the customer accepts" — the assignment block is null only
+  // while the admin has committed nothing at all. Once they have, the same fact
+  // is already published to the customer as a customer-visible EnquiryEvent
+  // ("Driver Raj Kumar assigned") and as progress stage 3 on the customer's own
+  // timeline, so suppressing the structured card achieved no privacy.
+  const nothingAssigned = toCustomerEnquiry(
+    committedEnquiry({ status: 'AWAITING_CUSTOMER_ACCEPTANCE', assigned_vehicle_id: null, assigned_driver_id: null }),
+    []
+  );
+  assert.equal(nothingAssigned.assignment, null, 'no assignment block while nothing is assigned');
+
+  // A vehicle on its own (driver still to come) is still an assignment.
+  const vehicleOnly = toCustomerEnquiry(
+    committedEnquiry({ status: 'AWAITING_CUSTOMER_ACCEPTANCE', assigned_driver_id: null }),
+    []
+  );
+  assert.ok(vehicleOnly.assignment, 'a reserved vehicle is an assignment');
+  assert.equal(vehicleOnly.assignment.vehicle_assigned, true);
+  assert.equal(vehicleOnly.assignment.driver_assigned, false);
+});
+
+test('PRIVACY: no driver contact detail leaks before the customer commits', () => {
+  // The invariant that must hold in EVERY state: a driver phone number never
+  // reaches a customer payload, before or after acceptance. The customer's
+  // only route to the driver is the fixed customer-care number.
+  for (const status of ['AWAITING_CUSTOMER_ACCEPTANCE', 'CUSTOMER_ACCEPTED', 'CONFIRMED']) {
+    const dto = toCustomerEnquiry(committedEnquiry({ status }), []);
+    const serialised = JSON.stringify(dto);
+
+    assert.ok(
+      !/"driver_mobile"|"driver_phone"|"alternate_mobile"|"phoneNumber"/.test(serialised),
+      `no driver contact key may appear in status ${status}`
+    );
+    assert.ok(
+      !serialised.includes('9000000001'),
+      `no driver mobile value may appear in status ${status}`
+    );
+    // The only phone-shaped values allowed are the customer's own and the
+    // company-controlled customer-care profile.
+    assert.ok(dto.contact, 'customer-care contact is always offered');
+  }
+});
+
+test('PRIVACY: the quoted price stays hidden until the admin sends the quote', () => {
+  // A saved-but-unsent price is a DRAFT. It must not reach the customer before
+  // "Send Quote to Customer" — this is the commitment gate that the assignment
+  // block deliberately does not duplicate.
+  const draft = toCustomerEnquiry(committedEnquiry({ status: 'ENQUIRY_SUBMITTED' }), []);
+  assert.equal(draft.pricing.final_quoted_price, null, 'unsent quote is not disclosed');
+  assert.equal(draft.pricing.quote_remarks, null, 'internal price commentary is not disclosed');
 
   const afterAccept = toCustomerEnquiry(committedEnquiry({ status: 'CUSTOMER_ACCEPTED' }), []);
-  assert.ok(afterAccept.assignment, 'driver details appear after acceptance');
+  assert.equal(afterAccept.pricing.final_quoted_price, 61000, 'a sent quote is disclosed');
   assert.equal(afterAccept.assignment.driver_name, 'Raj Kumar');
 });
 

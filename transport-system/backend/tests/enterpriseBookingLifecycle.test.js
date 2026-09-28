@@ -280,9 +280,11 @@ test('sendQuoteWithReservation requires driver_id; vehicle is auto-resolved from
       }
     }
 
-    // 2. Driver selected but has NO active vehicle (no vehicle_number) → rejected.
+    // 2. Driver selected but has NO registered vehicle → rejected.
+    //    `currentVehicle` is the real Prisma relationship BookingService reads;
+    //    the denormalised `vehicle_number` column on Driver is not consulted.
     {
-      const fakes = makeFakes({ driver_id: 1, is_available: true, vehicle_number: null });
+      const fakes = makeFakes({ driver_id: 1, is_available: true, vehicle_number: null, currentVehicle: null });
       const service = makeService(fakes);
       const restore = patchPrisma(fakes);
       try {
@@ -311,9 +313,16 @@ test('sendQuoteWithReservation requires driver_id; vehicle is auto-resolved from
     }
 
     // 4. driver_id only (no explicit vehicle_id) → SUCCEEDS when the driver has
-    //    an active vehicle. The current vehicle is auto-resolved from the driver.
+    //    a registered vehicle. The vehicle is auto-resolved from the driver's
+    //    `currentVehicle` relationship.
     {
-      const fakes = makeFakes({ driver_id: 1, is_available: true, vehicle_number: 'BR09AB1234', vehicle_type: 'pickup' });
+      const fakes = makeFakes({
+        driver_id: 1,
+        is_available: true,
+        vehicle_number: 'BR09AB1234',
+        vehicle_type: 'pickup',
+        currentVehicle: { vehicle_id: 1, vehicle_number: 'BR09AB1234' },
+      });
       const service = makeService(fakes);
       const restore = patchPrisma(fakes);
       let result;
