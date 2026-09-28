@@ -341,6 +341,26 @@ class PartnerRepository {
   }
 
   /**
+   * Find VehicleOwner by ID (with partner_link so callers can inspect the
+   * current link before deciding whether to link).
+   */
+  async findVehicleOwnerById(vehicleOwnerId, tx = null) {
+    const client = tx || prisma;
+    return await client.vehicleOwner.findUnique({
+      where: { owner_id: vehicleOwnerId },
+      select: {
+        owner_id: true,
+        owner_name: true,
+        owner_code: true,
+        mobile: true,
+        status: true,
+        is_active: true,
+        partner_link: true,
+      },
+    });
+  }
+
+  /**
    * Link an existing VehicleOwner to this Partner
    */
   async linkVehicleOwner(partnerId, vehicleOwnerId, tx = null) {
@@ -591,7 +611,9 @@ class PartnerRepository {
       completedTrips: completedBookings,
       pendingSettlement: pendingSettlements,
       totalPaid: totalSettlementsAgg._sum.owner_settlement_amount || 0,
-      totalAdvance: (debitAgg._sum.debit || 0) + (fuelAdvanceAgg._sum.debit || 0),
+      // totalAdvance = all expense debits (fuel_advance + driver_advance + toll + repair + penalty + other_expense)
+      // fuel_advance is already included in debitAgg, so do NOT add fuelAdvanceAgg again
+      totalAdvance: (debitAgg._sum.debit || 0),
       commission: commissionAgg._sum.commission_amount || 0,
       // Admin-only internal BT financials
       totalCustomerRevenue: tripFinancialAgg._sum.customer_fare || 0,
@@ -641,12 +663,67 @@ class PartnerRepository {
 
   /**
    * Get sourced vehicles for a partner (vehicles this partner has provided)
+   * Supports pagination and optional filters
+   * @param {number} partnerId
+   * @param {Object} options - { page, limit, status, vehicle_type, is_available }
+   * @returns {Promise<{data: Object[], pagination: Object}>}
    */
-  async getSourcedVehicles(partnerId) {
-    return await prisma.transportVehicle.findMany({
-      where: { partner_id: partnerId },
-      orderBy: { created_at: 'desc' },
-    });
+  async getSourcedVehicles(partnerId, options = {}) {
+    const where = { partner_id: partnerId };
+    
+    if (options.status) {
+      where.current_status = options.status;
+    }
+    if (options.vehicle_type) {
+      where.vehicle_type = options.vehicle_type;
+    }
+    if (options.is_available !== undefined) {
+      where.is_available = options.is_available;
+    }
+    
+    const page = Number(options.page) || 1;
+    const limit = Math.min(Number(options.limit) || 20, 100);
+    const skip = (page - 1) * limit;
+    
+    const [vehicles, total] = await Promise.all([
+      prisma.transportVehicle.findMany({
+        where,
+        include: {
+          driver: {
+            include: {
+              user: {
+                select: {
+                  first_name: true,
+                  last_name: true,
+                  phone: true,
+                },
+              },
+            },
+          },
+          owner: {
+            select: {
+              owner_id: true,
+              owner_name: true,
+              company_name: true,
+            },
+          },
+        },
+        orderBy: { created_at: 'desc' },
+        take: limit,
+        skip,
+      }),
+      prisma.transportVehicle.count({ where }),
+    ]);
+    
+    return {
+      data: vehicles,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 0,
+      },
+    };
   }
 
   /**

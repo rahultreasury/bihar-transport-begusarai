@@ -3,12 +3,17 @@ const required = [
 ];
 
 
-// Treat these as optional; booking/maps/email can still work with fallback.
+// Treat these as optional; booking/maps/email/SMS can still work with fallback.
 const optional = [
   'GOOGLE_MAPS_API_KEY',
   'WHATSAPP_ACCESS_TOKEN',
   'WHATSAPP_PHONE_NUMBER_ID',
   'WHATSAPP_BUSINESS_NUMBER',
+  'SMS_PROVIDER',
+  'SMS_API_KEY',
+  'SMS_SENDER_ID',
+  'SMS_TEMPLATE_ID',
+  'SMS_TEMPLATE_NAME',
 ];
 
 function validateEnv() {

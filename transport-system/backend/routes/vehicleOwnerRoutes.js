@@ -8,9 +8,11 @@ const router = express.Router();
 const { body, param, validationResult } = require('express-validator');
 const { protect } = require('../middleware/auth');
 const VehicleOwnerService = require('../services/VehicleOwnerService');
+const PartnerService = require('../services/PartnerService');
 const ConnectionService = require('../services/ConnectionService');
 
 const vehicleOwnerService = new VehicleOwnerService();
+const partnerService = new PartnerService();
 const connectionService = new ConnectionService();
 
 // Admin access middleware
@@ -231,6 +233,46 @@ router.post('/:id/vehicles', protect, adminCheck, [
   } catch (error) {
     if (error.code === 'VEHICLE_ALREADY_EXISTS') {
       return res.status(409).json({ success: false, message: error.message, data: error.data });
+    }
+    handleError(res, error);
+  }
+});
+
+// ============================
+// PARTNER LINKING
+// ============================
+
+// Link an existing VehicleOwner to an existing Partner.
+// Lets an admin-created Transport Owner (VehicleOwner) be connected to a
+// Partner so the two systems share the same identity.
+router.post('/:ownerId/link-partner', protect, adminCheck, [
+  body('partner_id').isInt({ min: 1 }).withMessage('Valid partner_id is required'),
+], handleValidation, async (req, res) => {
+  try {
+    const ownerId = parseInt(req.params.ownerId, 10);
+    if (isNaN(ownerId)) return res.status(400).json({ success: false, message: 'Invalid vehicle owner ID' });
+
+    const partnerId = parseInt(req.body.partner_id, 10);
+    const result = await partnerService.linkAdminVehicleOwnerToPartner(partnerId, ownerId);
+
+    // Return the updated VehicleOwner including the linked Partner.
+    const owner = await vehicleOwnerService.getOwnerProfile(ownerId);
+    res.json({
+      success: true,
+      message: result.already_linked
+        ? 'VehicleOwner was already linked to this Partner'
+        : 'VehicleOwner linked to Partner successfully',
+      data: {
+        link: result,
+        vehicleOwner: owner,
+      },
+    });
+  } catch (error) {
+    if (error.code === 'VEHICLE_OWNER_ALREADY_LINKED') {
+      return res.status(409).json({ success: false, message: error.message, data: error.data });
+    }
+    if (error.code === 'PARTNER_NOT_FOUND' || error.code === 'VEHICLE_OWNER_NOT_FOUND' || error.code === 'PARTNER_INACTIVE') {
+      return res.status(404).json({ success: false, message: error.message });
     }
     handleError(res, error);
   }

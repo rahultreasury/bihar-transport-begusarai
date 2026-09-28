@@ -1,5 +1,10 @@
 import { useCallback, useState, useMemo, useEffect } from 'react';
-import { GoogleMap, useJsApiLoader, Marker, DirectionsRenderer, StandaloneSearchBox } from '@react-google-maps/api';
+import { GoogleMap, Marker, DirectionsRenderer, StandaloneSearchBox } from '@react-google-maps/api';
+// The Maps script is configured in exactly one module. The underlying loader is
+// a per-document singleton and THROWS if it is called again with different
+// options, which used to blank the whole page when this component and the
+// enquiry page's map were both mounted after a client-side navigation.
+import { useGoogleMapsApi } from '../services/googleMapsLoader';
 
 // Bihar region center coordinates
 const BIHAR_CENTER = { lat: 25.6200, lng: 85.8900 };
@@ -13,18 +18,13 @@ const defaultMapOptions = {
   fullscreenControl: true,
 };
 
-// Libraries for Places API and Distance Matrix
-const libraries = ['places', 'geometry', 'distanceMatrix'];
-
+/**
+ * Shared Google Maps status. Backwards-compatible alias kept because several
+ * components import `useGoogleMaps`; it now delegates to the single shared
+ * loader so there is exactly one option set in the app.
+ */
 export function useGoogleMaps() {
-  const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
-  
-  const { isLoaded, loadError } = useJsApiLoader({
-    googleMapsApiKey: apiKey,
-    libraries: apiKey && apiKey.length > 10 ? libraries : [],
-  });
-
-  return { isLoaded, loadError, hasApiKey: apiKey && apiKey.length > 10 };
+  return useGoogleMapsApi();
 }
 
 // Custom hook for distance calculation using Google Distance Matrix API

@@ -109,7 +109,7 @@ export default function AdminDriverProfile() {
         </button>
 
         {/* Driver Header Card */}
-        <div className="rounded-3xl border border-border/60 bg-card/40 backdrop-blur-xl p-6 shadow-sm">
+        <div className="rounded-[16px] border border-border/60 bg-card/40 p-6 shadow-sm">
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 sm:gap-6">
             {/* Avatar */}
             <div className="h-20 w-20 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center text-white font-bold text-2xl shrink-0 shadow-lg shadow-amber-500/20">
@@ -119,7 +119,7 @@ export default function AdminDriverProfile() {
             {/* Info */}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-3 flex-wrap">
-                <h1 className="text-2xl font-bold">{driver.driver_name}</h1>
+                <h1 className="bt-page-title">{driver.driver_name}</h1>
                 <DriverStatusBadge status={driver.status} size="md" />
               </div>
               <div className="flex items-center gap-4 mt-2 text-sm text-muted flex-wrap">

@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { adminAPI, authAPI } from '../../../services/api';
+import { adminAPI } from '../../../services/api';
 import TripAdvanceStep from './TripAdvanceStep';
+import TransportResourceRegistrationModal from '../transport/TransportResourceRegistrationModal';
+import ClientFormModal from '../clients/ClientFormModal';
 
 const WIZARD_STEPS = [
   { key: 'trip', label: 'Trip', description: 'Trip Details', icon: '📋' },
@@ -27,6 +29,7 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep, curre
     trip_date: new Date().toISOString().split('T')[0],
     expected_delivery_date: '',
     freight_amount: '',
+    partner_id: '',
     vehicle_id: '',
     driver_id: '',
     transport_owner_id: '',
@@ -38,60 +41,40 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep, curre
   const [clients, setClients] = useState([]);
   const [offlineClients, setOfflineClients] = useState([]);
   const [owners, setOwners] = useState([]);
+  const [partners, setPartners] = useState([]);
   const [allVehicles, setAllVehicles] = useState([]);
   const [allDrivers, setAllDrivers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [clientSearch, setClientSearch] = useState('');
-  const [offlineClientSearch, setOfflineClientSearch] = useState('');
-  const [showAddClient, setShowAddClient] = useState(false);
-  const [showAddOfflineClient, setShowAddOfflineClient] = useState(false);
-  const [newClient, setNewClient] = useState({
-    first_name: '',
-    last_name: '',
-    phone: '',
-    email: '',
-    address: '',
-    city: '',
-    state: '',
-    pincode: '',
-  });
-  const [newOfflineClient, setNewOfflineClient] = useState({
-    company_name: '',
-    contact_person: '',
-    phone: '',
-    email: '',
-    address: '',
-    city: '',
-    state: 'Bihar',
-    gst_number: '',
-    pan_number: '',
-    bank_account: '',
-    bank_ifsc: '',
-    bank_name: '',
-    upi_id: '',
-    notes: '',
-  });
-  const [creatingClient, setCreatingClient] = useState(false);
-  const [creatingOfflineClient, setCreatingOfflineClient] = useState(false);
-  const [vehicleSearch, setVehicleSearch] = useState('');
-  const [driverSearch, setDriverSearch] = useState('');
+  const [partnerSearch, setPartnerSearch] = useState('');
+  const [showClientModal, setShowClientModal] = useState(false);
+  const [showPartnerDropdown, setShowPartnerDropdown] = useState(false);
   const [showVehicleDropdown, setShowVehicleDropdown] = useState(false);
   const [showDriverDropdown, setShowDriverDropdown] = useState(false);
+  const [vehicleSearch, setVehicleSearch] = useState('');
+  const [driverSearch, setDriverSearch] = useState('');
+  const partnerDropdownRef = useRef(null);
   const vehicleDropdownRef = useRef(null);
   const driverDropdownRef = useRef(null);
+
+  // Registration modal state
+  const [showRegisterModal, setShowRegisterModal] = useState(false);
+  const [registerContext, setRegisterContext] = useState({});
+  const [registerResourceType, setRegisterResourceType] = useState(null);
 
   // Fetch base lookup data
   const fetchLookupData = useCallback(async () => {
     setLoading(true);
     try {
-      const [clientsRes, offlineClientsRes, vehiclesRes, driversRes, ownersRes] = await Promise.all([
+      const [clientsRes, offlineClientsRes, vehiclesRes, driversRes, ownersRes, partnersRes] = await Promise.all([
         adminAPI.getTripClients(''),
         adminAPI.getTripOfflineClients(''),
         adminAPI.getTripVehicles(''),
         adminAPI.getTripDrivers(''),
         adminAPI.getTripOwners(''),
+        adminAPI.getPartners({ limit: 500 }),
       ]);
 
       if (clientsRes.data?.success) setClients(clientsRes.data.data || []);
@@ -99,6 +82,7 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep, curre
       if (vehiclesRes.data?.success) setAllVehicles(vehiclesRes.data.data || []);
       if (driversRes.data?.success) setAllDrivers(driversRes.data.data || []);
       if (ownersRes.data?.success) setOwners(ownersRes.data.data || []);
+      if (partnersRes.data?.success) setPartners(partnersRes.data.data || []);
     } catch (err) {
       console.error('Failed to fetch lookup data:', err);
     } finally {
@@ -106,9 +90,38 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep, curre
     }
   }, []);
 
+  // Registration modal handlers
+  const handleOpenRegisterModal = useCallback((resourceType) => {
+    setRegisterResourceType(resourceType);
+    setRegisterContext({ sourcePage: 'trip-wizard', resourceType });
+    setShowRegisterModal(true);
+  }, []);
+
+  const handleRegisterSuccess = useCallback((createdEntities) => {
+    setShowRegisterModal(false);
+    setRegisterContext({});
+    setRegisterResourceType(null);
+    
+    // Auto-select the created resource in the form
+    if (createdEntities.vehicle) {
+      setFormData((prev) => ({ ...prev, vehicle_id: createdEntities.vehicle.vehicle_id }));
+      setVehicleSearch(createdEntities.vehicle.vehicle_number);
+    }
+    if (createdEntities.driver) {
+      setFormData((prev) => ({ ...prev, driver_id: createdEntities.driver.driver_id }));
+      setDriverSearch(createdEntities.driver.driver_name);
+    }
+    if (createdEntities.owner) {
+      setFormData((prev) => ({ ...prev, transport_owner_id: createdEntities.owner.owner_id }));
+    }
+    
+    // Refresh lookup data to include new entities
+    fetchLookupData();
+  }, [fetchLookupData]);
+
   useEffect(() => {
     fetchLookupData();
-    setShowAddClient(false);
+    setShowClientModal(false);
     setCurrentStep(0);
   }, [fetchLookupData]);
 
@@ -151,7 +164,7 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep, curre
       if (editingTrip.source_type === 'ONLINE_BOOKING' && editingTrip.user_id) {
         setClientSearch(`${editingTrip.user?.first_name || ''} ${editingTrip.user?.last_name || ''}`);
       } else if (editingTrip.source_type === 'OFFLINE_CLIENT' && editingTrip.client_id) {
-        setOfflineClientSearch(editingTrip.client?.company_name || '');
+        setClientSearch(editingTrip.client?.company_name || '');
       }
       if (editingTrip.vehicle_id) {
         setVehicleSearch(editingTrip.vehicle?.vehicle_number || '');
@@ -168,87 +181,66 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep, curre
   };
 
   const handleClientSelect = (client) => {
-    setFormData((prev) => ({ ...prev, user_id: client.user_id, client_id: '' }));
-    setClientSearch(`${client.first_name} ${client.last_name}`);
-    setOfflineClientSearch('');
-    setShowAddClient(false);
-  };
-
-  const handleCreateClient = async (e) => {
-    e.preventDefault();
-    setCreatingClient(true);
-    setError(null);
-
-    try {
-      // Normalize phone: keep only digits, then take the last 10.
-      // The backend /api/auth/signup validates phone with /^[0-9]{10}$/
-      // and the `users.phone` unique column expects exactly 10 digits.
-      const digitsOnly = String(newClient.phone || '').replace(/\D/g, '');
-      const normalizedPhone = digitsOnly.slice(-10);
-
-      if (normalizedPhone.length !== 10) {
-        throw new Error('Phone must be exactly 10 digits');
-      }
-
-      const normalizedEmail = String(newClient.email || '').trim();
-
-      const defaultPassword = 'client@123';
-      const response = await authAPI.signup({
-        ...newClient,
-        phone: normalizedPhone,
-        email: normalizedEmail,
-        password: defaultPassword,
-      });
-
-      if (response.data?.success) {
-        const createdClient = response.data.data;
-        setFormData((prev) => ({ ...prev, user_id: createdClient.user_id, client_id: '' }));
-        setClientSearch(`${createdClient.first_name} ${createdClient.last_name}`);
-        setOfflineClientSearch('');
-        setShowAddClient(false);
-        // Reflect the normalized phone in the form state so subsequent
-        // submits stay consistent.
-        setNewClient((prev) => ({ ...prev, phone: normalizedPhone, email: normalizedEmail }));
-        await fetchLookupData();
-      } else {
-        throw new Error(response.data?.message || 'Failed to create client');
-      }
-    } catch (err) {
-      setError(err.response?.data?.message || err.message || 'Failed to create client');
-    } finally {
-      setCreatingClient(false);
+    if (client._source === 'offline') {
+      setFormData((prev) => ({ ...prev, client_id: client._id, user_id: '', source_type: 'OFFLINE_CLIENT' }));
+      setClientSearch(client._name);
+    } else {
+      setFormData((prev) => ({ ...prev, user_id: client._id, client_id: '', source_type: 'ONLINE_BOOKING' }));
+      setClientSearch(`${client.first_name} ${client.last_name}`);
     }
+    setShowClientModal(false);
   };
 
-  const handleOfflineClientSelect = (client) => {
-    setFormData((prev) => ({ ...prev, client_id: client.client_id, user_id: '' }));
-    setOfflineClientSearch(client.company_name);
+  // Called by ClientFormModal after a new client is created.
+  // Automatically selects the new client and refreshes the lookup list.
+  const handleClientCreated = (createdClient) => {
+    setFormData((prev) => ({
+      ...prev,
+      client_id: createdClient.client_id,
+      user_id: '',
+      source_type: 'OFFLINE_CLIENT',
+    }));
+    setClientSearch(createdClient.company_name);
+    setShowClientModal(false);
+    fetchLookupData();
+  };
+
+  const handleClearClient = () => {
+    setFormData((prev) => ({ ...prev, client_id: '', user_id: '', source_type: 'ONLINE_BOOKING' }));
     setClientSearch('');
-    setShowAddOfflineClient(false);
   };
 
-  const handleCreateOfflineClient = async (e) => {
-    e.preventDefault();
-    setCreatingOfflineClient(true);
-    setError(null);
+  const handlePartnerSelect = async (partner) => {
+    setFormData((prev) => ({ ...prev, partner_id: partner.partner_id, vehicle_id: '', driver_id: '', transport_owner_id: '' }));
+    setPartnerSearch(`${partner.partner_name}`);
+    setShowPartnerDropdown(false);
+    setVehicleSearch('');
+    setDriverSearch('');
 
+    // Resolve the linked VehicleOwner for this partner and load only that
+    // partner's vehicles + drivers (dependent selectors — ownership-aware).
     try {
-      const response = await adminAPI.createClient(newOfflineClient);
+      const ownerRes = await adminAPI.getOwnerByPartner(partner.partner_id);
+      if (ownerRes.data?.success && ownerRes.data.data) {
+        const owner = ownerRes.data.data;
+        setFormData((prev) => ({ ...prev, transport_owner_id: owner.owner_id }));
 
-      if (response.data?.success) {
-        const createdClient = response.data.data;
-        setFormData((prev) => ({ ...prev, client_id: createdClient.client_id, user_id: '' }));
-        setOfflineClientSearch(createdClient.company_name);
-        setClientSearch('');
-        setShowAddOfflineClient(false);
-        await fetchLookupData();
+        const [vehiclesRes, driversRes] = await Promise.all([
+          adminAPI.getVehiclesByOwner(owner.owner_id),
+          adminAPI.getDriversByOwner(owner.owner_id, ''),
+        ]);
+        if (vehiclesRes.data?.success) setAllVehicles(vehiclesRes.data.data || []);
+        if (driversRes.data?.success) setAllDrivers(driversRes.data.data || []);
       } else {
-        throw new Error(response.data?.message || 'Failed to create client');
+        // Partner has no linked transport owner — clear dependent lists so the
+        // UI cannot show vehicles/drivers from another partner.
+        setAllVehicles([]);
+        setAllDrivers([]);
       }
     } catch (err) {
-      setError(err.response?.data?.message || err.message || 'Failed to create client');
-    } finally {
-      setCreatingOfflineClient(false);
+      console.error('Failed to load partner resources:', err);
+      setAllVehicles([]);
+      setAllDrivers([]);
     }
   };
 
@@ -293,6 +285,7 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep, curre
         if (!formData.freight_amount || parseFloat(formData.freight_amount) < 0) errors.freight = 'Freight amount is required';
         break;
       case 1: // Resources
+        if (!formData.partner_id) errors.partner = 'Please select a transport partner';
         if (!formData.vehicle_id) errors.vehicle = 'Please select a vehicle';
         if (!formData.driver_id) errors.driver = 'Please select a driver';
         break;
@@ -349,6 +342,7 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep, curre
         trip_date: formData.trip_date ? new Date(formData.trip_date) : null,
         expected_delivery_date: formData.expected_delivery_date ? new Date(formData.expected_delivery_date) : null,
         freight_amount: parseFloat(formData.freight_amount),
+        partner_id: formData.partner_id ? parseInt(formData.partner_id) : null,
         vehicle_id: parseInt(formData.vehicle_id),
         driver_id: parseInt(formData.driver_id),
         transport_owner_id: parseInt(formData.transport_owner_id),
@@ -400,10 +394,41 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep, curre
     return name.includes(searchLower) || phone.includes(searchLower);
   });
 
-  const selectedClient = clients.find(c => c.user_id === parseInt(formData.user_id));
+  const filteredOfflineClients = offlineClients.filter((client) => {
+    const searchLower = clientSearch.toLowerCase();
+    const company = (client.company_name || '').toLowerCase();
+    const contact = (client.contact_person || '').toLowerCase();
+    const phone = (client.phone || '').toLowerCase();
+    const code = (client.client_code || '').toLowerCase();
+    const email = (client.email || '').toLowerCase();
+    return company.includes(searchLower) || contact.includes(searchLower) || phone.includes(searchLower) || code.includes(searchLower) || email.includes(searchLower);
+  });
+
+  // Merge both client sources for the dropdown
+  const allFilteredClients = [
+    ...filteredClients.map(c => ({ ...c, _source: 'online', _id: c.user_id, _name: `${c.first_name} ${c.last_name}`, _phone: c.phone, _code: null })),
+    ...filteredOfflineClients.map(c => ({ ...c, _source: 'offline', _id: c.client_id, _name: c.company_name, _phone: c.phone, _code: c.client_code, _contact: c.contact_person })),
+  ];
+
+  const selectedClient = formData.source_type === 'OFFLINE_CLIENT' && formData.client_id
+    ? offlineClients.find(c => c.client_id === parseInt(formData.client_id))
+    : clients.find(c => c.user_id === parseInt(formData.user_id));
   const selectedVehicle = allVehicles.find(v => v.vehicle_id === parseInt(formData.vehicle_id));
   const selectedDriver = allDrivers.find(d => d.driver_id === parseInt(formData.driver_id));
   const selectedOwner = owners.find(o => o.owner_id === parseInt(formData.transport_owner_id));
+  const selectedPartner = partners.find(p => p.partner_id === parseInt(formData.partner_id));
+
+  // Partner options: filter the already-loaded `partners` list in real time
+  const filteredPartners = useMemo(() => {
+    const term = partnerSearch.trim().toLowerCase();
+    if (!term) return partners;
+    return partners.filter((p) =>
+      (p.partner_name || '').toLowerCase().includes(term) ||
+      (p.company_name || '').toLowerCase().includes(term) ||
+      (p.city || '').toLowerCase().includes(term) ||
+      (p.mobile || '').includes(partnerSearch.trim())
+    );
+  }, [partners, partnerSearch]);
 
   // Vehicle options: filter the already-loaded `allVehicles` list in real time
   const filteredVehicles = useMemo(() => {
@@ -455,79 +480,78 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep, curre
               {/* Client Selection */}
               <div>
                 <label className="block text-sm font-medium text-muted mb-1.5">Customer *</label>
-                <input
-                  type="text"
-                  placeholder="Search by name or phone..."
-                  value={clientSearch}
-                  onChange={(e) => setClientSearch(e.target.value)}
-                  className="w-full px-3 py-2.5 bg-surface border border-border/60 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors"
-                />
-                {clientSearch && !showAddClient && (
-                  <div className="max-h-48 overflow-y-auto border border-border/60 rounded-xl mt-1">
-                    {filteredClients.length > 0 ? (
-                      filteredClients.slice(0, 10).map((client) => (
-                        <button
-                          key={client.user_id}
-                          type="button"
-                          onClick={() => handleClientSelect(client)}
-                          className={`w-full text-left px-4 py-3 hover:bg-hover/60 transition-colors border-b border-border/40 last:border-0 ${
-                            formData.user_id === client.user_id ? 'bg-amber-50' : ''
-                          }`}
-                        >
-                          <div className="font-medium">{client.first_name} {client.last_name}</div>
-                          <div className="text-xs text-muted">{client.phone}</div>
-                        </button>
-                      ))
-                    ) : (
-                      <div className="px-4 py-3 text-sm text-muted">No clients found</div>
-                    )}
-                  </div>
-                )}
-                {selectedClient && (
-                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl mt-2">
-                    <div className="font-medium text-amber-800">{selectedClient.first_name} {selectedClient.last_name}</div>
-                    <div className="text-sm text-amber-600">{selectedClient.phone}</div>
-                  </div>
-                )}
-                {!showAddClient && !selectedClient && (
-                  <button
-                    type="button"
-                    onClick={() => setShowAddClient(true)}
-                    className="w-full py-3 border-2 border-dashed border-border/60 rounded-xl text-sm font-medium text-muted hover:border-amber-500 hover:text-amber-600 transition-colors mt-2"
-                  >
-                    + Add New Client
-                  </button>
-                )}
-                {showAddClient && (
-                  <div className="p-4 border border-border/60 rounded-xl space-y-4 mt-2">
-                    <div className="flex items-center justify-between">
-                      <h4 className="font-medium">Add New Client</h4>
-                      <button type="button" onClick={() => setShowAddClient(false)} className="text-sm text-muted hover:text-text">Cancel</button>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-xs font-medium text-muted mb-1">First Name *</label>
-                        <input type="text" value={newClient.first_name} onChange={(e) => setNewClient(prev => ({ ...prev, first_name: e.target.value }))} className="w-full px-3 py-2 bg-surface border border-border/60 rounded-lg text-sm" required />
+                {selectedClient ? (
+                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between">
+                    <div>
+                      <div className="font-medium text-amber-800">
+                        {formData.source_type === 'OFFLINE_CLIENT'
+                          ? selectedClient.company_name
+                          : `${selectedClient.first_name} ${selectedClient.last_name}`}
                       </div>
-                      <div>
-                        <label className="block text-xs font-medium text-muted mb-1">Last Name *</label>
-                        <input type="text" value={newClient.last_name} onChange={(e) => setNewClient(prev => ({ ...prev, last_name: e.target.value }))} className="w-full px-3 py-2 bg-surface border border-border/60 rounded-lg text-sm" required />
+                      <div className="text-sm text-amber-600 flex items-center gap-2">
+                        {formData.source_type === 'OFFLINE_CLIENT' && selectedClient.client_code && (
+                          <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded text-[10px] font-mono">{selectedClient.client_code}</span>
+                        )}
+                        {formData.source_type === 'OFFLINE_CLIENT' && selectedClient.contact_person && (
+                          <span className="text-[11px]">{selectedClient.contact_person}</span>
+                        )}
+                        <span>{selectedClient.phone}</span>
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-xs font-medium text-muted mb-1">Phone *</label>
-                        <input type="tel" value={newClient.phone} onChange={(e) => setNewClient(prev => ({ ...prev, phone: e.target.value }))} className="w-full px-3 py-2 bg-surface border border-border/60 rounded-lg text-sm" required />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-muted mb-1">Email *</label>
-                        <input type="email" value={newClient.email} onChange={(e) => setNewClient(prev => ({ ...prev, email: e.target.value }))} className="w-full px-3 py-2 bg-surface border border-border/60 rounded-lg text-sm" required />
-                      </div>
-                    </div>
-                    <button type="button" onClick={handleCreateClient} disabled={creatingClient || !newClient.first_name || !newClient.last_name || !newClient.phone || !newClient.email} className="w-full py-2.5 bg-amber-500 text-white rounded-xl text-sm font-medium hover:bg-amber-600 disabled:opacity-50 transition-colors">
-                      {creatingClient ? 'Creating...' : 'Create Client'}
+                    <button
+                      type="button"
+                      onClick={handleClearClient}
+                      className="text-amber-600 hover:text-amber-800 text-xl leading-none"
+                      title="Clear selection"
+                    >
+                      ×
                     </button>
                   </div>
+                ) : (
+                  <>
+                    <input
+                      type="text"
+                      placeholder="Search by name, phone, or client code..."
+                      value={clientSearch}
+                      onChange={(e) => setClientSearch(e.target.value)}
+                      className="w-full px-3 py-2.5 bg-surface border border-border/60 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors"
+                    />
+                    {clientSearch && (
+                      <div className="max-h-48 overflow-y-auto border border-border/60 rounded-xl mt-1">
+                        {allFilteredClients.length > 0 ? (
+                          allFilteredClients.slice(0, 10).map((client) => (
+                            <button
+                              key={`${client._source}-${client._id}`}
+                              type="button"
+                              onClick={() => handleClientSelect(client)}
+                              className={`w-full text-left px-4 py-3 hover:bg-hover/60 transition-colors border-b border-border/40 last:border-0 ${
+                                (formData.source_type === 'ONLINE_BOOKING' && formData.user_id === client._id) ||
+                                (formData.source_type === 'OFFLINE_CLIENT' && formData.client_id === client._id)
+                                  ? 'bg-amber-50'
+                                  : ''
+                              }`}
+                            >
+                              <div className="font-medium">{client._name}</div>
+                              <div className="text-xs text-muted flex items-center gap-2">
+                                {client._code && <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded text-[10px] font-mono">{client._code}</span>}
+                                {client._contact && <span className="text-[11px]">{client._contact}</span>}
+                                <span>{client._phone}</span>
+                              </div>
+                            </button>
+                          ))
+                        ) : (
+                          <div className="px-4 py-3 text-sm text-muted">No clients found</div>
+                        )}
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setShowClientModal(true)}
+                      className="w-full py-3 border-2 border-dashed border-border/60 rounded-xl text-sm font-medium text-muted hover:border-amber-500 hover:text-amber-600 transition-colors mt-2"
+                    >
+                      + Add New Client
+                    </button>
+                  </>
                 )}
                 {validationErrors.client && <p className="mt-1 text-xs text-red-500">{validationErrors.client}</p>}
               </div>
@@ -587,11 +611,71 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep, curre
               <h3 className="text-lg font-semibold flex items-center gap-2">
                 <span>🚛</span> Resources
               </h3>
-              <p className="text-sm text-muted">Select vehicle and driver for this trip. The transport owner is automatically resolved from the vehicle.</p>
+              <p className="text-sm text-muted">Select a transport partner first. The partner's linked transport owner, vehicles, and drivers are then loaded automatically so the assignment stays ownership-consistent.</p>
+
+              {/* Partner / Transport Owner */}
+              <div className="space-y-3" ref={partnerDropdownRef}>
+                <div className="flex items-center justify-between">
+                  <label className="block text-sm font-medium text-muted">Transport Partner *</label>
+                </div>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none">🔍</span>
+                  <input
+                    type="text"
+                    placeholder="Search partner by name or company..."
+                    value={partnerSearch}
+                    onChange={(e) => { setPartnerSearch(e.target.value); setShowPartnerDropdown(true); }}
+                    onFocus={() => setShowPartnerDropdown(true)}
+                    className="w-full pl-9 pr-9 py-2.5 bg-surface border border-border/60 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none">▼</span>
+                </div>
+
+                {showPartnerDropdown && (
+                  <div className="max-h-60 overflow-y-auto border border-border/60 rounded-xl bg-surface shadow-lg">
+                    {loading ? (
+                      <div className="px-4 py-3 text-sm text-muted">Loading partners...</div>
+                    ) : filteredPartners.length > 0 ? (
+                      filteredPartners.map((partner) => (
+                        <button
+                          key={partner.partner_id}
+                          type="button"
+                          onClick={() => handlePartnerSelect(partner)}
+                          className={`w-full text-left px-4 py-3 hover:bg-hover/60 transition-colors border-b border-border/40 last:border-0 ${
+                            formData.partner_id === partner.partner_id ? 'bg-amber-50' : ''
+                          }`}
+                        >
+                          <div className="font-medium text-sm">{partner.partner_name}</div>
+                          <div className="text-xs text-muted mt-1">{partner.company_name} • {partner.city}</div>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="px-4 py-3 text-sm text-muted">No partners found</div>
+                    )}
+                  </div>
+                )}
+
+                {selectedPartner && (
+                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl">
+                    <div className="text-sm font-medium text-amber-800">Selected: {selectedPartner.partner_name}</div>
+                    <div className="text-xs text-amber-600">{selectedPartner.company_name} • {selectedPartner.city}</div>
+                  </div>
+                )}
+                {validationErrors.partner && <p className="text-sm text-red-500">{validationErrors.partner}</p>}
+              </div>
 
               {/* Vehicle */}
               <div className="space-y-3" ref={vehicleDropdownRef}>
-                <label className="block text-sm font-medium text-muted">Vehicle *</label>
+                <div className="flex items-center justify-between">
+                  <label className="block text-sm font-medium text-muted">Vehicle *</label>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenRegisterModal('vehicle')}
+                    className="px-3 py-1.5 text-xs font-medium text-amber-600 hover:text-amber-700 hover:underline"
+                  >
+                    + Add New Vehicle
+                  </button>
+                </div>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none">🔍</span>
                   <input
@@ -657,7 +741,16 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep, curre
 
               {/* Driver */}
               <div className="space-y-3" ref={driverDropdownRef}>
-                <label className="block text-sm font-medium text-muted">Driver *</label>
+                <div className="flex items-center justify-between">
+                  <label className="block text-sm font-medium text-muted">Driver *</label>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenRegisterModal('driver')}
+                    className="px-3 py-1.5 text-xs font-medium text-amber-600 hover:text-amber-700 hover:underline"
+                  >
+                    + Add New Driver
+                  </button>
+                </div>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none">🔍</span>
                   <input
@@ -756,7 +849,11 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep, curre
                 <div className="flex justify-between py-2 border-b border-gray-200">
                   <span className="text-sm text-muted">Customer</span>
                   <span className="text-sm font-medium">
-                    {selectedClient ? `${selectedClient.first_name} ${selectedClient.last_name}` : '-'}
+                    {selectedClient
+                      ? formData.source_type === 'OFFLINE_CLIENT'
+                        ? `${selectedClient.company_name}${selectedClient.client_code ? ` (${selectedClient.client_code})` : ''}`
+                        : `${selectedClient.first_name} ${selectedClient.last_name}`
+                      : '-'}
                   </span>
                 </div>
                 <div className="flex justify-between py-2 border-b border-gray-200">
@@ -769,6 +866,12 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep, curre
                   <span className="text-sm text-muted">Vehicle</span>
                   <span className="text-sm font-medium">
                     {selectedVehicle ? selectedVehicle.vehicle_number : '-'}
+                  </span>
+                </div>
+                <div className="flex justify-between py-2 border-b border-gray-200">
+                  <span className="text-sm text-muted">Transport Partner</span>
+                  <span className="text-sm font-medium">
+                    {selectedPartner ? selectedPartner.partner_name : '-'}
                   </span>
                 </div>
                 <div className="flex justify-between py-2 border-b border-gray-200">
@@ -833,6 +936,21 @@ function TripWizard({ onComplete, onCancel, editingTrip, onNavigateToStep, curre
           </div>
         </div>
       </div>
+
+      {showRegisterModal && (
+        <TransportResourceRegistrationModal
+          isOpen={showRegisterModal}
+          onClose={() => { setShowRegisterModal(false); setRegisterContext({}); setRegisterResourceType(null); }}
+          onSuccess={handleRegisterSuccess}
+          context={registerContext}
+        />
+      )}
+
+      <ClientFormModal
+        isOpen={showClientModal}
+        onClose={() => setShowClientModal(false)}
+        onSuccess={handleClientCreated}
+      />
     </div>
   );
 }

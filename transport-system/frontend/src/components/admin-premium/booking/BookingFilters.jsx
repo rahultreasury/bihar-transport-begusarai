@@ -34,7 +34,7 @@ const BookingFilters = React.memo(function BookingFilters({
             value={search}
             onChange={(e) => onSearchChange(e.target.value)}
             placeholder="Search by booking #, customer, mobile, city..."
-            className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border/60 bg-card/40 backdrop-blur-xl text-sm font-medium placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500/50 transition-all"
+            className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border/60 bg-card/40 text-sm font-medium placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500/50 transition-all"
             aria-label="Search bookings"
           />
           {search && (
@@ -52,7 +52,7 @@ const BookingFilters = React.memo(function BookingFilters({
 
         <button
           onClick={onToggleFilters}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border/60 bg-card/40 backdrop-blur-xl text-sm font-medium hover:bg-hover/60 transition-all"
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border/60 bg-card/40 text-sm font-medium hover:bg-hover/60 transition-all"
           aria-label="Toggle filters"
           aria-expanded={showFilters}
         >
@@ -80,7 +80,7 @@ const BookingFilters = React.memo(function BookingFilters({
 
       {/* Filter Panel */}
       {showFilters && (
-        <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-4">
+        <div className="rounded-2xl border border-border/60 bg-card/40 p-4">
           <div className="flex items-center justify-between mb-3">
             <div className="text-xs font-semibold text-muted uppercase tracking-wider">Advanced Filters</div>
             <button

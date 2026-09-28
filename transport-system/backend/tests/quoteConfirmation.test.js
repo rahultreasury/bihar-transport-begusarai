@@ -260,14 +260,14 @@ describe('Quote → Confirmation single source of truth', () => {
     assert.strictEqual(booking.quote_status, 'REJECTED');
   });
 
-  test('confirmBooking is idempotent when already ACCEPTED', async () => {
+  test('confirmBooking is idempotent when the ADMIN already confirmed', async () => {
     const fakes = makeFakeRepos({
       initialBooking: {
         booking_id: 4,
         booking_reference: 'BTB-4',
         quote_status: 'ACCEPTED',
         status: 'confirmed',
-        confirmation_source: 'CUSTOMER',
+        confirmation_source: 'ADMIN',
       },
     });
     const service = makeService(fakes);
@@ -283,8 +283,75 @@ describe('Quote → Confirmation single source of truth', () => {
     }
 
     assert.strictEqual(txCalled, false, 'should NOT run a new transaction when already confirmed');
+    assert.strictEqual(result.alreadyConfirmed, true);
     assert.strictEqual(result.quote_status, 'ACCEPTED');
-    assert.strictEqual(result.confirmation_source, 'CUSTOMER');
+    assert.strictEqual(result.confirmation_source, 'ADMIN');
+  });
+
+  /**
+   * Stage 5 → 6 of the admin ENQUIRY workflow.
+   *
+   * The customer's accept already flips `status` to 'confirmed' inside its own
+   * transaction, so `status` alone cannot express "an admin has signed this off".
+   * `confirmation_source` is the column the schema already documents for exactly
+   * this ("CUSTOMER | ADMIN"), and it is what the six-stage rail derives from.
+   *
+   * The admin confirmation is therefore a real, audited write that happens
+   * exactly ONCE: a second call must be a no-op.
+   */
+  test('confirmBooking records the ADMIN confirmation once on a customer-accepted booking', async () => {
+    const fakes = makeFakeRepos({
+      initialBooking: {
+        booking_id: 6,
+        booking_reference: 'BTB-6',
+        quote_status: 'ACCEPTED',
+        // The customer's accept already set status=confirmed; only the ADMIN
+        // sign-off is still outstanding (workflow stage 5 → 6).
+        status: 'confirmed',
+        confirmation_source: 'CUSTOMER',
+      },
+    });
+    const service = makeService(fakes);
+
+    const originalTx = realPrisma.$transaction;
+    let txCount = 0;
+    const fakeTx = {
+      bookingEvent: { create: async () => ({ booking_event_id: 1 }) },
+    };
+    realPrisma.$transaction = async (fn) => { txCount += 1; return fn(fakeTx); };
+
+    let result;
+    try {
+      result = await service.confirmBooking(6, { adminId: 1 });
+    } finally {
+      realPrisma.$transaction = originalTx;
+    }
+
+    assert.strictEqual(result.confirmation_source, 'ADMIN', 'admin confirmation must be recorded');
+    assert.strictEqual(result.status, 'confirmed');
+    assert.strictEqual(txCount, 1, 'must run exactly one transaction for the admin confirmation');
+
+    // The fake bookingRepo.update merges into the fake state, so this is the
+    // exact patch the service persisted.
+    const booking = fakes.getState();
+    assert.strictEqual(booking.confirmation_source, 'ADMIN', 'must persist confirmation_source=ADMIN');
+    assert.ok(booking.confirmed_at, 'must persist confirmed_at');
+    assert.ok(
+      fakes.timelineEvents.some((e) => e.eventType === 'booking_confirmed_by_admin'),
+      'must record the admin confirmation in the audit trail',
+    );
+
+    // Second call: idempotent, no further write.
+    let txCount2 = 0;
+    realPrisma.$transaction = async (fn) => { txCount2 += 1; return fn(fakeTx); };
+    let second;
+    try {
+      second = await service.confirmBooking(6, { adminId: 1 });
+    } finally {
+      realPrisma.$transaction = originalTx;
+    }
+    assert.strictEqual(second.alreadyConfirmed, true);
+    assert.strictEqual(txCount2, 0, 'a second admin confirmation must not write again');
   });
 
   test('confirmBooking rejects cancelled/completed/delivered bookings', async () => {

@@ -5,6 +5,7 @@ import { adminAPI } from '../services/api';
 import AdminShell from '../components/admin-premium/layout/AdminShell';
 import KpiCard from '../components/admin-premium/ui/KpiCard';
 import EmptyState from '../components/admin-premium/ui/EmptyState';
+import TransportResourceRegistrationModal from '../components/admin-premium/transport/TransportResourceRegistrationModal';
 
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: '▦' },
@@ -35,6 +36,7 @@ export default function AdminVehicleProfile() {
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
   const [showAssignDriverModal, setShowAssignDriverModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
   const [trips, setTrips] = useState([]);
   const [tripsLoading, setTripsLoading] = useState(false);
 
@@ -74,6 +76,11 @@ export default function AdminVehicleProfile() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleEditSuccess = () => {
+    setShowEditModal(false);
+    fetchVehicleProfile();
   };
 
   const handleAssignSuccess = () => {
@@ -202,9 +209,8 @@ export default function AdminVehicleProfile() {
           </div>
           <div className="flex items-center gap-2">
             <button
-              disabled
-              className="px-4 py-2 rounded-xl border border-border/60 text-sm font-semibold text-slate-400 cursor-not-allowed"
-              title="Edit vehicle API not yet available"
+              onClick={() => setShowEditModal(true)}
+              className="px-4 py-2 rounded-xl border border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300 text-sm font-semibold hover:bg-amber-100 dark:hover:bg-amber-500/20 transition"
             >
               Edit Vehicle
             </button>
@@ -249,7 +255,7 @@ export default function AdminVehicleProfile() {
         {activeTab === 'overview' && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             {/* Vehicle Information */}
-            <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-6">
+            <div className="rounded-2xl border border-border/60 bg-card/40 p-6">
               <h3 className="text-base font-semibold text-text mb-4">Vehicle Information</h3>
               <div className="space-y-3">
                 {[
@@ -272,7 +278,7 @@ export default function AdminVehicleProfile() {
             </div>
 
             {/* Registration Details */}
-            <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-6">
+            <div className="rounded-2xl border border-border/60 bg-card/40 p-6">
               <h3 className="text-base font-semibold text-text mb-4">Registration Details</h3>
               <div className="space-y-3">
                 {[
@@ -292,7 +298,7 @@ export default function AdminVehicleProfile() {
             </div>
 
             {/* Documents & Rates */}
-            <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-6">
+            <div className="rounded-2xl border border-border/60 bg-card/40 p-6">
               <h3 className="text-base font-semibold text-text mb-4">Documents & Rates</h3>
               <div className="space-y-3">
                 {[
@@ -321,7 +327,7 @@ export default function AdminVehicleProfile() {
             </div>
 
             {/* Transport Owner */}
-            <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-6">
+            <div className="rounded-2xl border border-border/60 bg-card/40 p-6">
               <h3 className="text-base font-semibold text-text mb-4">Transport Owner</h3>
               {owner ? (
                 <button
@@ -347,7 +353,7 @@ export default function AdminVehicleProfile() {
             </div>
 
             {/* Current Driver */}
-            <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-6">
+            <div className="rounded-2xl border border-border/60 bg-card/40 p-6">
               <h3 className="text-base font-semibold text-text mb-4">Current Driver</h3>
               {driver ? (
                 <button
@@ -383,7 +389,7 @@ export default function AdminVehicleProfile() {
         )}
 
         {activeTab === 'trips' && (
-          <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-6">
+          <div className="rounded-2xl border border-border/60 bg-card/40 p-6">
             <h3 className="text-base font-semibold text-text mb-4">Trip History</h3>
             {tripsLoading ? (
               <div className="flex items-center justify-center py-8">
@@ -453,14 +459,14 @@ export default function AdminVehicleProfile() {
         )}
 
         {activeTab === 'maintenance' && (
-          <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-6">
+          <div className="rounded-2xl border border-border/60 bg-card/40 p-6">
             <h3 className="text-base font-semibold text-text mb-4">Maintenance History</h3>
             <EmptyState title="No maintenance records" subtitle="Maintenance records will appear here." />
           </div>
         )}
 
         {activeTab === 'documents' && (
-          <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-6">
+          <div className="rounded-2xl border border-border/60 bg-card/40 p-6">
             <h3 className="text-base font-semibold text-text mb-4">Documents & Expiry Status</h3>
             <div className="space-y-3">
               {[
@@ -492,7 +498,7 @@ export default function AdminVehicleProfile() {
         {activeTab === 'assignments' && (
           <div className="space-y-5">
             {/* Driver Assignment History */}
-            <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-6">
+            <div className="rounded-2xl border border-border/60 bg-card/40 p-6">
               <h3 className="text-base font-semibold text-text mb-4">Driver Assignment History</h3>
               {vehicle.assignment_history && vehicle.assignment_history.length > 0 ? (
                 <div className="overflow-x-auto">
@@ -535,7 +541,7 @@ export default function AdminVehicleProfile() {
             </div>
 
             {/* Booking History */}
-            <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-6">
+            <div className="rounded-2xl border border-border/60 bg-card/40 p-6">
               <h3 className="text-base font-semibold text-text mb-4">Booking History</h3>
               {vehicle.booking_history && vehicle.booking_history.length > 0 ? (
                 <div className="overflow-x-auto">
@@ -590,6 +596,19 @@ export default function AdminVehicleProfile() {
               )}
             </div>
           </div>
+        )}
+
+        {/* Edit Vehicle Modal */}
+        {showEditModal && vehicle && (
+          <TransportResourceRegistrationModal
+            isOpen={showEditModal}
+            onClose={() => setShowEditModal(false)}
+            onSuccess={handleEditSuccess}
+            mode="edit"
+            editingVehicle={vehicle}
+            editIntent="vehicle"
+            initialOwner={owner}
+          />
         )}
 
         {/* Assign Driver Modal */}
@@ -680,7 +699,7 @@ function AssignDriverModal({ isOpen, onClose, onSuccess, driverId, currentVehicl
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={handleClose} />
+      <div className="absolute inset-0 bg-black/40" onClick={handleClose} />
       <div className="relative w-full max-w-lg bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-border/60 overflow-hidden" role="dialog" aria-modal="true" aria-label="Assign Vehicle">
         <div className="p-5 border-b border-border/60">
           <div className="flex items-center justify-between">

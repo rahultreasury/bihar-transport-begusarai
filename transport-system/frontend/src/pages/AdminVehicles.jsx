@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { adminAPI } from '../services/api';
 
 import AdminShell from '../components/admin-premium/layout/AdminShell';
@@ -22,13 +22,24 @@ const NAV_ITEMS = [
 
 const ITEMS_PER_PAGE = 20;
 
-function useDebounce(value, delay = 300) {
+function useDebounce(value, delay = 300, resetKey = null) {
   const [debouncedValue, setDebouncedValue] = useState(value);
+
+  useEffect(() => {
+    setDebouncedValue(value);
+  }, [resetKey]);
+
   useEffect(() => {
     const handler = setTimeout(() => setDebouncedValue(value), delay);
     return () => clearTimeout(handler);
-  }, [value, delay]);
+  }, [value, delay, resetKey]);
+
   return debouncedValue;
+}
+
+function parsePage(value) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 1;
 }
 
 function getInitials(name) {
@@ -68,30 +79,70 @@ const DOCUMENT_STATUS_OPTIONS = [
 
 export default function AdminVehicles() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [vehicles, setVehicles] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [pagination, setPagination] = useState({ page: 1, limit: ITEMS_PER_PAGE, total: 0, pages: 0 });
-  const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [pagination, setPagination] = useState({
+    page: parsePage(searchParams.get('page')),
+    limit: ITEMS_PER_PAGE,
+    total: 0,
+    pages: 0,
+  });
+  const [search, setSearch] = useState(searchParams.get('search') || '');
   const [searchLoading, setSearchLoading] = useState(false);
-  const [statusFilter, setStatusFilter] = useState('');
-  const [typeFilter, setTypeFilter] = useState('');
-  const [ownerFilter, setOwnerFilter] = useState('');
-  const [driverFilter, setDriverFilter] = useState('');
-  const [docFilter, setDocFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState(searchParams.get('status') || '');
+  const [typeFilter, setTypeFilter] = useState(searchParams.get('type') || '');
+  const [ownerFilter, setOwnerFilter] = useState(searchParams.get('owner_id') || '');
+  const [driverFilter, setDriverFilter] = useState(searchParams.get('driver_id') || '');
+  const [docFilter, setDocFilter] = useState(searchParams.get('document_status') || '');
   const [showRegisterModal, setShowRegisterModal] = useState(false);
   const [toast, setToast] = useState(null);
   const [owners, setOwners] = useState([]);
   const [drivers, setDrivers] = useState([]);
   const [registerContext, setRegisterContext] = useState({});
+  const [searchResetKey, setSearchResetKey] = useState(0);
+  const requestIdRef = useRef(0);
 
-  const debouncedSearchValue = useDebounce(search, 300);
+  const debouncedSearchValue = useDebounce(search, 300, searchResetKey);
+  const searchParamsKey = searchParams.toString();
 
+  // Keep local filter state in sync when the user navigates with browser
+  // back/forward or opens a shared vehicle-list URL.
   useEffect(() => {
-    setDebouncedSearch(debouncedSearchValue);
-  }, [debouncedSearchValue]);
+    const nextSearch = searchParams.get('search') || '';
+    const nextStatus = searchParams.get('status') || '';
+    const nextType = searchParams.get('type') || '';
+    const nextOwner = searchParams.get('owner_id') || '';
+    const nextDriver = searchParams.get('driver_id') || '';
+    const nextDocument = searchParams.get('document_status') || '';
+    const nextPage = parsePage(searchParams.get('page'));
+
+    setSearch(prev => prev === nextSearch ? prev : nextSearch);
+    setStatusFilter(prev => prev === nextStatus ? prev : nextStatus);
+    setTypeFilter(prev => prev === nextType ? prev : nextType);
+    setOwnerFilter(prev => prev === nextOwner ? prev : nextOwner);
+    setDriverFilter(prev => prev === nextDriver ? prev : nextDriver);
+    setDocFilter(prev => prev === nextDocument ? prev : nextDocument);
+    setPagination(prev => prev.page === nextPage ? prev : { ...prev, page: nextPage });
+  }, [searchParamsKey]);
+
+  const updateVehicleQuery = useCallback((updates, options = {}) => {
+    const { resetPage = true } = options;
+    const nextParams = new URLSearchParams(searchParams);
+    Object.entries(updates).forEach(([key, value]) => {
+      if (value === '' || value === null || value === undefined) {
+        nextParams.delete(key);
+      } else {
+        nextParams.set(key, String(value));
+      }
+    });
+    if (resetPage) {
+      nextParams.delete('page');
+    }
+    setSearchParams(nextParams);
+  }, [searchParams, setSearchParams]);
 
   const fetchFilters = useCallback(async () => {
     try {
@@ -107,85 +158,50 @@ export default function AdminVehicles() {
   }, []);
 
   const fetchVehicles = useCallback(async (page = 1) => {
-    setLoading(true);
-    setSearchLoading(true);
+    const requestId = ++requestIdRef.current;
     setError(null);
+    setLoading(true);
+    setSearchLoading(Boolean(debouncedSearchValue));
+
     try {
-      const params = {
+      const response = await adminAPI.getVehicles({
         page,
         limit: ITEMS_PER_PAGE,
         type: typeFilter || undefined,
-      };
+        status: statusFilter || undefined,
+        search: debouncedSearchValue || undefined,
+        owner_id: ownerFilter || undefined,
+        driver_id: driverFilter || undefined,
+        document_status: docFilter || undefined,
+      });
 
-      const response = await adminAPI.getVehicles(params);
+      if (requestId !== requestIdRef.current) return false;
+
       if (response.data?.success) {
-        let data = response.data.data || [];
-        
-        // Apply search filter on frontend
-        if (debouncedSearch) {
-          const q = debouncedSearch.toLowerCase();
-          data = data.filter(v => 
-            (v.vehicle_number && v.vehicle_number.toLowerCase().includes(q)) ||
-            (v.vehicle_type && v.vehicle_type.toLowerCase().includes(q)) ||
-            (v.vehicle_name && v.vehicle_name.toLowerCase().includes(q)) ||
-            (v.owner_name && v.owner_name.toLowerCase().includes(q))
-          );
-        }
-
-        // Apply owner filter
-        if (ownerFilter) {
-          data = data.filter(v => String(v.owner_id) === String(ownerFilter));
-        }
-
-        // Apply driver filter
-        if (driverFilter) {
-          data = data.filter(v => String(v.driver_id) === String(driverFilter));
-        }
-
-        // Apply status filter (backward-compat: treat 'assigned' as 'on_trip')
-        if (statusFilter) {
-          data = data.filter(v => {
-            const status = v.current_status || (v.is_available ? 'available' : 'inactive');
-            return status === statusFilter || (statusFilter === 'on_trip' && status === 'assigned');
-          });
-        }
-
-        // Apply document status filter
-        if (docFilter) {
-          const today = new Date();
-          data = data.filter(v => {
-            if (docFilter === 'valid') {
-              return (v.insurance_expiry && new Date(v.insurance_expiry) > today) &&
-                     (v.permit_expiry && new Date(v.permit_expiry) > today);
-            } else if (docFilter === 'expired') {
-              return (v.insurance_expiry && new Date(v.insurance_expiry) <= today) ||
-                     (v.permit_expiry && new Date(v.permit_expiry) <= today);
-            } else if (docFilter === 'expiring') {
-              const thirtyDays = new Date();
-              thirtyDays.setDate(today.getDate() + 30);
-              return (v.insurance_expiry && new Date(v.insurance_expiry) <= thirtyDays && new Date(v.insurance_expiry) > today) ||
-                     (v.permit_expiry && new Date(v.permit_expiry) <= thirtyDays && new Date(v.permit_expiry) > today);
-            }
-            return true;
-          });
-        }
-
-        setVehicles(data);
-        if (response.data.pagination) {
-          setPagination(response.data.pagination);
-        }
-      } else {
-        throw new Error(response.data?.message || 'Failed to fetch vehicles');
+        setVehicles(response.data.data || []);
+        setPagination(response.data.pagination || {
+          page,
+          limit: ITEMS_PER_PAGE,
+          total: 0,
+          pages: 0,
+        });
+        return true;
       }
+
+      throw new Error(response.data?.message || 'Failed to fetch vehicles');
     } catch (err) {
+      if (requestId !== requestIdRef.current) return false;
       console.error('Error fetching vehicles:', err);
       setError(err.message || 'Failed to load vehicles');
       setVehicles([]);
+      return false;
     } finally {
-      setLoading(false);
-      setSearchLoading(false);
+      if (requestId === requestIdRef.current) {
+        setLoading(false);
+        setSearchLoading(false);
+      }
     }
-  }, [debouncedSearch, statusFilter, typeFilter, ownerFilter, driverFilter, docFilter]);
+  }, [debouncedSearchValue, statusFilter, typeFilter, ownerFilter, driverFilter, docFilter]);
 
   const fetchStats = useCallback(async () => {
     try {
@@ -203,33 +219,74 @@ export default function AdminVehicles() {
     setTimeout(() => setToast(null), 4000);
   }, []);
 
-  // Initial load
+  // Load the list whenever the active URL-backed filters or page change.
   useEffect(() => {
-    fetchVehicles(1);
+    const requestId = ++requestIdRef.current;
+    setLoading(true);
+    setError(null);
+
+    fetchVehicles(pagination.page).then((isCurrent) => {
+      if (isCurrent) {
+        setLoading(false);
+        setSearchLoading(false);
+      }
+    });
+  }, [fetchVehicles, pagination.page]);
+
+  // Load summary data and filter options once on mount.
+  useEffect(() => {
     fetchStats();
     fetchFilters();
-  }, []);
-
-  // Re-fetch when search or filters change
-  useEffect(() => {
-    fetchVehicles(1);
-  }, [fetchVehicles]);
+  }, [fetchStats, fetchFilters]);
 
   const handlePageChange = useCallback((newPage) => {
     if (newPage < 1 || newPage > pagination.pages) return;
     setPagination(prev => ({ ...prev, page: newPage }));
-    fetchVehicles(newPage);
-  }, [pagination.pages, fetchVehicles]);
+    updateVehicleQuery({ page: newPage }, { resetPage: false });
+  }, [pagination.pages, updateVehicleQuery]);
+
+  const handleKpiClick = useCallback((status) => {
+    setStatusFilter(status);
+    setPagination(prev => ({ ...prev, page: 1 }));
+    updateVehicleQuery({ status });
+  }, [updateVehicleQuery]);
+
+  const handleFilterChange = useCallback((key, value) => {
+    if (key === 'type') setTypeFilter(value);
+    if (key === 'status') setStatusFilter(value);
+    if (key === 'owner_id') setOwnerFilter(value);
+    if (key === 'driver_id') setDriverFilter(value);
+    if (key === 'document_status') setDocFilter(value);
+    setPagination(prev => ({ ...prev, page: 1 }));
+    updateVehicleQuery({ [key]: value });
+  }, [updateVehicleQuery]);
+
+  const handleClearSearch = useCallback(() => {
+    setSearch('');
+    setSearchResetKey(key => key + 1);
+    setPagination(prev => ({ ...prev, page: 1 }));
+    updateVehicleQuery({ search: '' });
+  }, [updateVehicleQuery]);
 
   const handleClearFilters = useCallback(() => {
     setSearch('');
+    setSearchResetKey(key => key + 1);
     setStatusFilter('');
     setTypeFilter('');
     setOwnerFilter('');
     setDriverFilter('');
     setDocFilter('');
     setPagination(prev => ({ ...prev, page: 1 }));
-  }, []);
+    updateVehicleQuery({
+      search: '',
+      status: '',
+      type: '',
+      owner_id: '',
+      driver_id: '',
+      document_status: '',
+      page: '',
+    });
+  }, [updateVehicleQuery]);
 
   const handleRegisterSuccess = useCallback(() => {
     fetchVehicles(1);
@@ -404,7 +461,7 @@ export default function AdminVehicles() {
         {/* Toast notification */}
         {toast && (
           <div className="fixed top-6 right-6 z-[100] animate-slide-down">
-            <div className={`px-5 py-3.5 rounded-2xl shadow-2xl border text-sm font-semibold flex items-center gap-3 backdrop-blur-sm ${
+            <div className={`px-5 py-3.5 rounded-2xl shadow-2xl border text-sm font-semibold flex items-center gap-3 ${
               toast.type === 'success'
                 ? 'bg-emerald-50 dark:bg-emerald-900/50 border-emerald-200 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300'
                 : 'bg-red-50 dark:bg-red-900/50 border-red-200 dark:border-red-700 text-red-700 dark:text-red-300'
@@ -429,7 +486,7 @@ export default function AdminVehicles() {
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
           <div>
-            <h1 className="text-[22px] font-bold tracking-tight text-text">Vehicles</h1>
+            <h1 className="bt-page-title">Vehicles</h1>
             <p className="text-sm text-muted mt-1">
               Manage your fleet, availability, assignments and vehicle documents
             </p>
@@ -448,11 +505,51 @@ export default function AdminVehicles() {
         {/* KPI Cards */}
         {stats && (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-            <KpiCard title="Total Vehicles" value={stats.total ?? 0} sub="Registered" accent="blue" />
-            <KpiCard title="Available" value={stats.available ?? 0} sub="Ready for dispatch" accent="emerald" />
-            <KpiCard title="On Trip" value={stats.onTrip ?? 0} sub="With driver" accent="sky" />
-            <KpiCard title="Maintenance" value={stats.maintenance ?? 0} sub="In service" accent="amber" />
-            <KpiCard title="Inactive" value={stats.inactive ?? 0} sub="Not available" accent="slate" />
+            <KpiCard
+              title="Total Vehicles"
+              value={stats.total ?? 0}
+              sub="Registered"
+              accent="blue"
+              onClick={() => handleKpiClick('')}
+              active={!statusFilter}
+              ariaLabel="Show all vehicles"
+            />
+            <KpiCard
+              title="Available"
+              value={stats.available ?? 0}
+              sub="Ready for dispatch"
+              accent="emerald"
+              onClick={() => handleKpiClick('available')}
+              active={statusFilter === 'available'}
+              ariaLabel="Show available vehicles"
+            />
+            <KpiCard
+              title="On Trip"
+              value={stats.onTrip ?? 0}
+              sub="With driver"
+              accent="sky"
+              onClick={() => handleKpiClick('on_trip')}
+              active={statusFilter === 'on_trip'}
+              ariaLabel="Show vehicles on trip"
+            />
+            <KpiCard
+              title="Maintenance"
+              value={stats.maintenance ?? 0}
+              sub="In service"
+              accent="amber"
+              onClick={() => handleKpiClick('maintenance')}
+              active={statusFilter === 'maintenance'}
+              ariaLabel="Show vehicles in maintenance"
+            />
+            <KpiCard
+              title="Inactive"
+              value={stats.inactive ?? 0}
+              sub="Not available"
+              accent="slate"
+              onClick={() => handleKpiClick('inactive')}
+              active={statusFilter === 'inactive'}
+              ariaLabel="Show inactive vehicles"
+            />
           </div>
         )}
 
@@ -471,7 +568,7 @@ export default function AdminVehicles() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search vehicle number, name, owner, driver..."
-                className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-border/60 bg-card/40 backdrop-blur-xl text-sm font-medium placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500/50 transition-all"
+                className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-border/60 bg-card/40 text-sm font-medium placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500/50 transition-all"
                 aria-label="Search vehicles"
               />
               {searchLoading && (
@@ -484,7 +581,7 @@ export default function AdminVehicles() {
               )}
               {search && !searchLoading && (
                 <button
-                  onClick={() => setSearch('')}
+                  onClick={handleClearSearch}
                   className="absolute inset-y-0 right-3 flex items-center text-muted hover:text-text transition"
                   aria-label="Clear search"
                 >
@@ -500,7 +597,7 @@ export default function AdminVehicles() {
           <div className="flex flex-wrap items-center gap-2">
             <select
               value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value)}
+              onChange={(e) => handleFilterChange('type', e.target.value)}
               className="px-3 py-2 rounded-xl border border-border/60 bg-card/40 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-amber-500/30 transition-all"
             >
               {VEHICLE_TYPE_OPTIONS.map(opt => (
@@ -510,7 +607,7 @@ export default function AdminVehicles() {
 
             <select
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
+              onChange={(e) => handleFilterChange('status', e.target.value)}
               className="px-3 py-2 rounded-xl border border-border/60 bg-card/40 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-amber-500/30 transition-all"
             >
               {STATUS_OPTIONS.map(opt => (
@@ -520,7 +617,7 @@ export default function AdminVehicles() {
 
             <select
               value={ownerFilter}
-              onChange={(e) => setOwnerFilter(e.target.value)}
+              onChange={(e) => handleFilterChange('owner_id', e.target.value)}
               className="px-3 py-2 rounded-xl border border-border/60 bg-card/40 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-amber-500/30 transition-all"
             >
               <option value="">All Owners</option>
@@ -531,7 +628,7 @@ export default function AdminVehicles() {
 
             <select
               value={driverFilter}
-              onChange={(e) => setDriverFilter(e.target.value)}
+              onChange={(e) => handleFilterChange('driver_id', e.target.value)}
               className="px-3 py-2 rounded-xl border border-border/60 bg-card/40 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-amber-500/30 transition-all"
             >
               <option value="">All Drivers</option>
@@ -542,7 +639,7 @@ export default function AdminVehicles() {
 
             <select
               value={docFilter}
-              onChange={(e) => setDocFilter(e.target.value)}
+              onChange={(e) => handleFilterChange('document_status', e.target.value)}
               className="px-3 py-2 rounded-xl border border-border/60 bg-card/40 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-amber-500/30 transition-all"
             >
               {DOCUMENT_STATUS_OPTIONS.map(opt => (
@@ -587,13 +684,13 @@ export default function AdminVehicles() {
 
         {/* Empty State */}
         {!loading && !error && vehicles.length === 0 && (
-          <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-10 text-center">
+          <div className="rounded-2xl border border-border/60 bg-card/40 p-10 text-center">
             <div className="w-16 h-16 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center mx-auto mb-4">
               <svg className="w-8 h-8 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0zM13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0" />
               </svg>
             </div>
-            {debouncedSearch || hasActiveFilters ? (
+            {debouncedSearchValue || hasActiveFilters ? (
               <>
                 <h3 className="text-base font-semibold text-text mb-1">No vehicles found</h3>
                 <p className="text-sm text-muted max-w-md mx-auto mb-4">Try adjusting your search or filters.</p>
@@ -626,7 +723,7 @@ export default function AdminVehicles() {
 
         {/* Table */}
         {!loading && !error && vehicles.length > 0 && (
-          <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl overflow-hidden">
+          <div className="rounded-2xl border border-border/60 bg-card/40 overflow-hidden">
             <PremiumTable
               columns={columns}
               rows={vehicles.map(v => ({ ...v, id: v.vehicle_id }))}

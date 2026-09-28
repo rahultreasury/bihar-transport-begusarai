@@ -23,6 +23,16 @@ const TripInclude = {
       phone: true,
     },
   },
+  client: {
+    select: {
+      client_id: true,
+      client_code: true,
+      company_name: true,
+      contact_person: true,
+      phone: true,
+      email: true,
+    },
+  },
   transportOwner: {
     select: {
       owner_id: true,
@@ -124,9 +134,13 @@ class TripRepository {
       where.status = status;
     }
 
-    // Client filter
+    // Client filter (supports both online user_id and offline client_id)
     if (clientId) {
-      where.user_id = parseInt(clientId);
+      const parsedId = parseInt(clientId);
+      where.OR = [
+        { user_id: parsedId },
+        { client_id: parsedId },
+      ];
     }
 
     // Driver filter
@@ -727,6 +741,156 @@ class TripRepository {
         driver_name: 'asc',
       },
     });
+  }
+
+  /**
+   * Resolve the VehicleOwner linked to a Partner.
+   * A Partner links to exactly one VehicleOwner via VehicleOwner.partner_link.
+   * @param {number} partnerId
+   * @returns {Promise<Object|null>}
+   */
+  async getOwnerByPartnerId(partnerId) {
+    return this.tx.vehicleOwner.findFirst({
+      where: {
+        partner_link: partnerId,
+        deleted_at: null,
+      },
+      select: {
+        owner_id: true,
+        owner_code: true,
+        owner_name: true,
+        company_name: true,
+        mobile: true,
+        city: true,
+        status: true,
+        owner_type: true,
+        partner_link: true,
+      },
+    });
+  }
+
+  /**
+   * Find trips belonging to a Partner's linked VehicleOwner.
+   *
+   * A Partner owns trips indirectly: Trip.transport_owner_id →
+   * VehicleOwner.partner_link → Partner.partner_id. This method scopes all
+   * queries to that owner so a Partner can ONLY see trips assigned to their
+   * own fleet — never trips belonging to another partner.
+   *
+   * @param {number} partnerId
+   * @param {Object} filters - { page, limit, status, search, date_from, date_to, sort_by, sort_order }
+   * @returns {Promise<{ trips: Array, pagination: Object }>}
+   */
+  async getTripsByPartner(partnerId, filters = {}) {
+    const owner = await this.getOwnerByPartnerId(partnerId);
+    if (!owner) {
+      return {
+        trips: [],
+        pagination: { page: 1, limit: filters.limit || 20, total: 0, pages: 0 },
+      };
+    }
+
+    const {
+      page = 1,
+      limit = 20,
+      status = '',
+      search = '',
+      date_from = '',
+      date_to = '',
+      sort_by = 'created_at',
+      sort_order = 'desc',
+    } = filters;
+
+    const where = {
+      transport_owner_id: owner.owner_id,
+    };
+
+    if (status) {
+      where.status = status;
+    }
+
+    if (search && search.trim()) {
+      const term = search.trim();
+      where.OR = [
+        { trip_number: { contains: term, mode: 'insensitive' } },
+        { pickup_city: { contains: term, mode: 'insensitive' } },
+        { drop_city: { contains: term, mode: 'insensitive' } },
+        { pickup_location: { contains: term, mode: 'insensitive' } },
+        { drop_location: { contains: term, mode: 'insensitive' } },
+      ];
+    }
+
+    if (date_from || date_to) {
+      where.trip_date = {};
+      if (date_from) where.trip_date.gte = new Date(date_from);
+      if (date_to) where.trip_date.lte = new Date(date_to);
+    }
+
+    const allowedSortFields = ['created_at', 'trip_date', 'freight_amount', 'status'];
+    const field = allowedSortFields.includes(sort_by) ? sort_by : 'created_at';
+    const order = sort_order === 'asc' ? 'asc' : 'desc';
+
+    const skip = (Number(page) - 1) * Number(limit);
+
+    const [trips, total] = await Promise.all([
+      this.tx.trip.findMany({
+        where,
+        include: {
+          transportOwner: {
+            select: {
+              owner_id: true,
+              owner_name: true,
+              company_name: true,
+            },
+          },
+          vehicle: {
+            select: {
+              vehicle_id: true,
+              vehicle_number: true,
+              vehicle_name: true,
+              vehicle_type: true,
+            },
+          },
+          driver: {
+            select: {
+              driver_id: true,
+              driver_name: true,
+              mobile: true,
+              license_number: true,
+            },
+          },
+          user: {
+            select: {
+              user_id: true,
+              first_name: true,
+              last_name: true,
+              phone: true,
+            },
+          },
+          client: {
+            select: {
+              client_id: true,
+              company_name: true,
+              contact_person: true,
+            },
+          },
+        },
+        orderBy: { [field]: order },
+        skip,
+        take: parseInt(limit),
+      }),
+      this.tx.trip.count({ where }),
+    ]);
+
+    return {
+      trips,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / parseInt(limit)),
+      },
+    };
   }
 }
 

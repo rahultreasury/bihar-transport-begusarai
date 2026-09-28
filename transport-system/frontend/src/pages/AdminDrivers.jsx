@@ -505,7 +505,7 @@ const searchInputRef = useRef(null);
           </button>
 
           {openMenuId === r.driver_id && (
-            <div data-action-menu="true" className="absolute right-0 top-full mt-1 z-50 w-52 rounded-xl border border-border/60 bg-white dark:bg-gray-900 shadow-xl backdrop-blur-xl overflow-hidden py-1 animate-fade-in" onClick={(e) => e.stopPropagation()}>
+            <div data-action-menu="true" className="absolute right-0 top-full mt-1 z-50 w-52 rounded-xl border border-border/60 bg-white dark:bg-gray-900 shadow-xl overflow-hidden py-1 animate-fade-in" onClick={(e) => e.stopPropagation()}>
               <div className="px-3 py-1.5 border-b border-border/40 mb-1">
                 <div className="text-xs font-semibold text-text truncate">{r.driver_name}</div>
                 <div className="text-[10px] text-muted">{r.driver_code}</div>
@@ -593,7 +593,7 @@ const searchInputRef = useRef(null);
     return (
       <div
         key={driver.driver_id}
-        className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-4 space-y-3 cursor-pointer hover:bg-hover/30 transition"
+        className="rounded-2xl border border-border/60 bg-card/40 p-4 space-y-3 cursor-pointer hover:bg-hover/30 transition"
         onClick={() => navigate(`/admin/drivers/${driver.driver_id}`)}
       >
         <div className="flex items-center justify-between">
@@ -638,7 +638,7 @@ const searchInputRef = useRef(null);
         {/* Toast notification */}
         {toast && (
           <div className="fixed top-6 right-6 z-[100] animate-slide-down">
-            <div className={`px-5 py-3.5 rounded-2xl shadow-2xl border text-sm font-semibold flex items-center gap-3 backdrop-blur-sm ${
+            <div className={`px-5 py-3.5 rounded-2xl shadow-2xl border text-sm font-semibold flex items-center gap-3 ${
               toast.type === 'success'
                 ? 'bg-emerald-50 dark:bg-emerald-900/50 border-emerald-200 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300'
                 : 'bg-red-50 dark:bg-red-900/50 border-red-200 dark:border-red-700 text-red-700 dark:text-red-300'
@@ -663,7 +663,7 @@ const searchInputRef = useRef(null);
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">Driver Management</h1>
+            <h1 className="bt-page-title">Driver Management</h1>
             <p className="text-sm text-muted mt-1">
               {pagination.total > 0
                 ? `${pagination.total} driver${pagination.total !== 1 ? 's' : ''} registered`
@@ -705,7 +705,7 @@ const searchInputRef = useRef(null);
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search driver, mobile, licence, vehicle..."
-              className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-border/60 bg-card/40 backdrop-blur-xl text-sm font-medium placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500/50 transition-all"
+              className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-border/60 bg-card/40 text-sm font-medium placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500/50 transition-all"
               aria-label="Search drivers"
             />
             {searchLoading && (
@@ -801,7 +801,7 @@ const searchInputRef = useRef(null);
 
         {/* Empty State */}
         {!loading && !error && drivers.length === 0 && (
-          <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-10 text-center">
+          <div className="rounded-2xl border border-border/60 bg-card/40 p-10 text-center">
             <div className="w-20 h-20 rounded-full bg-gradient-to-br from-amber-100 to-amber-200 dark:from-amber-500/20 dark:to-orange-500/20 flex items-center justify-center mx-auto mb-5">
               {debouncedSearch ? (
                 <svg className="w-10 h-10 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -945,7 +945,7 @@ const searchInputRef = useRef(null);
 
         {/* Bulk Actions Toolbar */}
         {selectedIds.length > 0 && (
-          <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 backdrop-blur-xl p-3 flex items-center justify-between animate-fade-in">
+          <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-3 flex items-center justify-between animate-fade-in">
             <div className="text-sm font-medium">
               <span className="text-amber-600 dark:text-amber-400">{selectedIds.length}</span> driver{selectedIds.length !== 1 ? 's' : ''} selected
             </div>
@@ -1051,7 +1051,7 @@ const searchInputRef = useRef(null);
         {/* Delete Confirmation Modal */}
         {showDeleteConfirm && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setShowDeleteConfirm(null)} />
+            <div className="absolute inset-0 bg-black/40" onClick={() => setShowDeleteConfirm(null)} />
             <div className="relative w-full max-w-md bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-border/60 p-6" role="dialog" aria-modal="true" aria-label="Delete Driver">
               <div className="text-center">
                 <div className="w-14 h-14 rounded-full bg-red-500/10 flex items-center justify-center mx-auto mb-4">

@@ -1,5 +1,6 @@
 import { useEffect, useState, useContext, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Truck, Users, Wallet, Route, AlertTriangle, Package, UserRound } from 'lucide-react';
 import { AuthContext } from '../contexts/AuthContext';
 import { adminAPI } from '../services/api';
 
@@ -7,7 +8,9 @@ import AdminShell from '../components/admin-premium/layout/AdminShell';
 import SectionCard from '../components/admin-premium/ui/SectionCard';
 import PremiumTable from '../components/admin-premium/ui/PremiumTable';
 import EmptyState from '../components/admin-premium/ui/EmptyState';
-import { LoadingSkeleton } from '../components/admin-premium/ui/LoadingSkeleton';
+import KpiCard from '../components/admin-premium/ui/KpiCard';
+import { PageHeader, Button } from '../components/admin-premium/ui/AdminUI';
+import { SkeletonKpis, SkeletonTable } from '../components/admin-premium/ui/LoadingSkeleton';
 import StatusBadge from '../components/admin-premium/booking/StatusBadge';
 
 function AdminDashboard() {
@@ -112,68 +115,41 @@ function AdminDashboard() {
     return new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
   }, []);
 
-  // Loading skeleton for a KPI card
-  const KpiSkeleton = () => (
-    <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-5">
-      <div className="h-4 w-24 bg-skeleton animate-pulse rounded mb-2" />
-      <div className="h-8 w-32 bg-skeleton animate-pulse rounded mb-2" />
-      <div className="h-3 w-20 bg-skeleton animate-pulse rounded" />
-    </div>
-  );
-
-  // Enterprise KPI card
-  const DashboardKpi = ({ label, value, sub, onClick, loading, error, accent }) => {
-    const accentColors = {
-      green: 'bg-emerald-500/10 border-emerald-500/20',
-      amber: 'bg-amber-500/10 border-amber-500/20',
-      red: 'bg-red-500/10 border-red-500/20',
-      blue: 'bg-blue-500/10 border-blue-500/20',
-      sky: 'bg-sky-500/10 border-sky-500/20',
-      purple: 'bg-purple-500/10 border-purple-500/20',
-      emerald: 'bg-emerald-500/10 border-emerald-500/20',
-      slate: 'bg-slate-500/10 border-slate-500/20',
-    };
-    const accentClass = accentColors[accent] || accentColors.amber;
+  /**
+   * The dashboard's KPI tile.
+   *
+   * It is now the SAME KpiCard every other module uses, so a number on this
+   * page has exactly the same anatomy as a number in Drivers or Financials.
+   * The only local concern left is honesty about failure: a tile whose request
+   * failed says so rather than rendering a fake zero.
+   */
+  const DashboardKpi = ({ label, value, sub, onClick, loading, error, accent, icon }) => {
+    if (error) {
+      return (
+        <div className="bt-kpi border-bt-danger/40 bg-bt-danger-bg">
+          <span className="absolute inset-y-0 left-0 w-[3px] bg-bt-danger" aria-hidden="true" />
+          <div className="bt-kpi-label">
+            <span className="bt-kpi-dot bg-bt-danger" aria-hidden="true" />
+            <span className="truncate">{label}</span>
+          </div>
+          <p className="bt-kpi-error text-bt-danger">Unable to load</p>
+        </div>
+      );
+    }
 
     return (
-      <button
-        type="button"
+      <KpiCard
+        title={label}
+        value={value}
+        sub={sub}
+        accent={accent}
+        icon={icon}
+        loading={loading}
         onClick={onClick}
-        disabled={loading || error}
-        className={`w-full text-left rounded-2xl border transition-all ${
-          onClick
-            ? 'cursor-pointer hover:shadow-md hover:border-amber-500/40 hover:bg-amber-500/5'
-            : 'cursor-default'
-        } ${accentClass} ${error ? 'border-red-500/40 bg-red-500/5' : 'bg-card/40'} backdrop-blur-xl p-5`}
-        aria-busy={loading}
-        aria-disabled={loading || error}
-      >
-        <div className="text-[11px] font-semibold uppercase tracking-wider text-muted mb-1">{label}</div>
-        {loading ? (
-          <div className="h-10 w-36 bg-skeleton animate-pulse rounded" />
-        ) : error ? (
-          <div className="text-lg font-semibold text-red-500">Unable to load</div>
-        ) : (
-          <div className="text-3xl font-semibold tabular-nums">{value}</div>
-        )}
-        {sub && !loading && !error && <div className="text-xs text-muted mt-1.5">{sub}</div>}
-        {onClick && !loading && !error && (
-          <div className="mt-2 flex items-center gap-1 text-xs text-muted">
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
-            <span>View details</span>
-          </div>
-        )}
-      </button>
+        ariaLabel={`${label}: ${value}`}
+      />
     );
   };
-
-  // Section header with optional action
-  const SectionHeader = ({ title, action }) => (
-    <div className="flex items-center justify-between mb-4">
-      <h2 className="text-base font-semibold">{title}</h2>
-      {action}
-    </div>
-  );
 
   // Operations KPIs
   const opsKpis = useMemo(() => [
@@ -182,6 +158,7 @@ function AdminDashboard() {
       value: fmt(tripSummary?.inTransit ?? dashboard?.stats?.activeDeliveries ?? 0),
       sub: 'Currently running',
       accent: 'emerald',
+      icon: Route,
       onClick: () => navigate('/admin/trips?status=IN_TRANSIT'),
       loading: loading || !tripSummary,
       error: errors.tripSummary,
@@ -191,6 +168,7 @@ function AdminDashboard() {
       value: fmt(tripSummary?.pending ?? dashboard?.stats?.pendingBookings ?? 0),
       sub: 'Needs attention',
       accent: 'amber',
+      icon: AlertTriangle,
       onClick: () => navigate('/admin/trips?status=PENDING'),
       loading: loading || !tripSummary,
       error: errors.tripSummary,
@@ -199,7 +177,8 @@ function AdminDashboard() {
       label: 'Total Bookings',
       value: fmt(dashboard?.stats?.totalBookings ?? 0),
       sub: 'All time',
-      accent: 'blue',
+      accent: 'navy',
+      icon: Package,
       onClick: () => navigate('/admin/bookings'),
       loading: loading || !dashboard,
       error: errors.dashboard,
@@ -213,6 +192,7 @@ function AdminDashboard() {
       value: fmtCurrency(tripSummary?.totalFreight ?? 0),
       sub: 'Across trips',
       accent: 'amber',
+      icon: Wallet,
       onClick: () => navigate('/admin/financials?view=overview'),
       loading: loading || !tripSummary,
       error: errors.tripSummary,
@@ -222,6 +202,7 @@ function AdminDashboard() {
       value: fmtCurrency(tripSummary?.customerDue ?? 0),
       sub: 'Pending receivables',
       accent: 'red',
+      icon: Wallet,
       onClick: () => navigate('/admin/financials?view=client-receivable'),
       loading: loading || !tripSummary,
       error: errors.tripSummary,
@@ -231,6 +212,7 @@ function AdminDashboard() {
       value: fmtCurrency(tripSummary?.ownerOutstanding ?? 0),
       sub: 'Payable to owners',
       accent: 'sky',
+      icon: Wallet,
       onClick: () => navigate('/admin/financials?view=provider-payable'),
       loading: loading || !tripSummary,
       error: errors.tripSummary,
@@ -240,6 +222,7 @@ function AdminDashboard() {
       value: fmtCurrency(tripSummary?.totalProfit ?? 0),
       sub: 'After payouts',
       accent: 'green',
+      icon: Wallet,
       onClick: () => navigate('/admin/financials?view=overview'),
       loading: loading || !tripSummary,
       error: errors.tripSummary,
@@ -253,6 +236,7 @@ function AdminDashboard() {
       value: fmt(vehicleStats?.available ?? 0),
       sub: 'Ready for assignment',
       accent: 'emerald',
+      icon: Truck,
       onClick: () => navigate('/admin/vehicles'),
       loading: loading || !vehicleStats,
       error: errors.vehicleStats,
@@ -261,7 +245,8 @@ function AdminDashboard() {
       label: 'Available Drivers',
       value: fmt(driverStats?.available ?? 0),
       sub: 'Currently available',
-      accent: 'blue',
+      accent: 'navy',
+      icon: Users,
       onClick: () => navigate('/admin/drivers'),
       loading: loading || !driverStats,
       error: errors.driverStats,
@@ -270,7 +255,8 @@ function AdminDashboard() {
       label: 'Transport Owners',
       value: fmt(ownerStats?.activeOwners ?? 0),
       sub: 'Active owners',
-      accent: 'purple',
+      accent: 'orange',
+      icon: UserRound,
       onClick: () => navigate('/admin/owners'),
       loading: loading || !ownerStats,
       error: errors.ownerStats,
@@ -371,6 +357,11 @@ function AdminDashboard() {
   const navItems = useMemo(
     () => [
       { key: 'dashboard', label: 'Dashboard', icon: '▦', path: '/admin' },
+      // ENQUIRY — the operational quote queue over real Bookings. Sits above
+      // Bookings because an unanswered request is what needs attention first.
+      // The `enquiries` key is what makes AdminSidebar render the live
+      // pending-enquiry badge.
+      { key: 'enquiries', label: 'ENQUIRY', icon: '◉', path: '/admin/enquiries' },
       { key: 'bookings', label: 'Bookings', icon: '⟐', path: '/admin/bookings' },
       { key: 'trips', label: 'Trips', icon: '🚛', path: '/admin/trips' },
       { key: 'clients', label: 'Clients', icon: '☍', path: '/admin/clients' },
@@ -388,18 +379,14 @@ function AdminDashboard() {
   if (loading) {
     return (
       <AdminShell navItems={navItems} activeKey="dashboard" onNav={() => {}}>
-        <div className="w-full max-w-full min-w-0 space-y-4 lg:space-y-6 p-4">
-          <div className="h-8 w-48 bg-skeleton animate-pulse rounded" />
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {[1,2,3].map(i => <KpiSkeleton key={i} />)}
+        <div className="bt-dash space-y-3">
+          <div>
+            <div className="h-7 w-48 bt-skeleton rounded-lg" />
+            <div className="mt-2.5 h-3.5 w-80 max-w-full bt-skeleton rounded" />
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {[1,2,3,4].map(i => <KpiSkeleton key={`f${i}`} />)}
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {[1,2,3].map(i => <KpiSkeleton key={`r${i}`} />)}
-          </div>
-          <div className="h-64 bg-skeleton animate-pulse rounded-2xl" />
+          <SkeletonKpis count={3} />
+          <SkeletonKpis count={4} />
+          <SkeletonTable rows={6} />
         </div>
       </AdminShell>
     );
@@ -407,29 +394,35 @@ function AdminDashboard() {
 
   return (
     <AdminShell navItems={navItems} activeKey="dashboard" onNav={() => {}}>
-      <div className="w-full max-w-full min-w-0 space-y-4 lg:space-y-6 p-4">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2">
-          <div className="min-w-0">
-            <h1 className="text-xl lg:text-3xl font-bold tracking-tight">Admin Dashboard</h1>
-            <p className="text-xs lg:text-sm text-muted mt-1 truncate">
-              Operational and financial overview — {new Date().toLocaleDateString('en-IN', { weekday: 'long', month: 'long', day: 'numeric' })}
-            </p>
-          </div>
-          <div className="hidden md:flex items-center gap-3 shrink-0">
-            <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl px-4 py-2">
-              <div className="text-xs text-muted">Ops Mode</div>
-              <div className="text-sm font-semibold">Enterprise</div>
-            </div>
-          </div>
-        </div>
+      {/*
+        `bt-dash` activates the Dashboard density scope in index.css. It is
+        applied here and nowhere else, so the compressed vertical rhythm is
+        this page's alone — every other module keeps the shared spacing.
+        `lg:-mt-2` recovers a little of AdminShell's top padding on desktop
+        without letting the header crowd the sticky top bar on mobile.
+      */}
+      <div className="bt-dash space-y-3 lg:-mt-2">
+        {/* HEADER — the same PageHeader every module uses, tighter spacing */}
+        <PageHeader
+          className="!mb-3"
+          eyebrow="Operations Console"
+          title="Dashboard"
+          description={`Live operational and financial overview for ${new Date().toLocaleDateString('en-IN', { weekday: 'long', month: 'long', day: 'numeric' })}.`}
+          actions={
+            <Button variant="secondary" onClick={() => navigate('/admin/reports')}>
+              View Reports
+            </Button>
+          }
+        />
 
         {/* OPERATIONS */}
         <SectionCard
           title="Operations"
-          right={<span className="text-xs text-muted">What is happening with transport operations right now?</span>}
+          icon={Route}
+          subtitle="What is happening across transport operations right now."
+          bodyClass="!p-4"
         >
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {opsKpis.map((k) => (
               <DashboardKpi key={k.label} {...k} />
             ))}
@@ -439,9 +432,11 @@ function AdminDashboard() {
         {/* FINANCIALS */}
         <SectionCard
           title="Financials"
-          right={<span className="text-xs text-muted">What is happening with the company's money?</span>}
+          icon={Wallet}
+          subtitle="Freight, receivables, payables and net position across all trips."
+          bodyClass="!p-4"
         >
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {finKpis.map((k) => (
               <DashboardKpi key={k.label} {...k} />
             ))}
@@ -451,9 +446,11 @@ function AdminDashboard() {
         {/* RESOURCES */}
         <SectionCard
           title="Resources"
-          right={<span className="text-xs text-muted">Do we have enough resources to operate?</span>}
+          icon={Truck}
+          subtitle="Whether the fleet, drivers and owners on record can carry today's load."
+          bodyClass="!p-4"
         >
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {resKpis.map((k) => (
               <DashboardKpi key={k.label} {...k} />
             ))}
@@ -463,27 +460,34 @@ function AdminDashboard() {
         {/* NEEDS ATTENTION */}
         {needsAttentionCount > 0 && (
           <SectionCard
+            className="!mt-5"
             title="Needs Attention"
-            right={
-              <button
-                onClick={() => navigate('/admin/trips')}
-                className="text-xs font-medium text-amber-600 hover:underline"
-              >
-                View all →
-              </button>
+            icon={AlertTriangle}
+            subtitle="Trips currently stalled and waiting on an operator."
+            action={
+              <Button variant="ghost" size="sm" onClick={() => navigate('/admin/trips')}>
+                View all
+              </Button>
             }
           >
-            <div className="flex items-center gap-3 text-sm">
-              <div className="w-2 h-2 rounded-full bg-amber-500" />
-              <span>{needsAttentionCount} trip{needsAttentionCount !== 1 ? 's' : ''} require attention</span>
+            <div className="flex items-center gap-3 text-[13px] text-bt-navy">
+              <span className="bt-kpi-dot bg-bt-orange" aria-hidden="true" />
+              <span>
+                {needsAttentionCount} trip{needsAttentionCount !== 1 ? 's' : ''} require
+                attention
+              </span>
             </div>
           </SectionCard>
         )}
 
         {/* RECENT TRIPS */}
         <SectionCard
+          className="!mt-5"
           title="Recent Trips"
-          right={<span className="text-xs text-muted">Latest operational activity</span>}
+          icon={Route}
+          subtitle="The latest operational activity across the network."
+          padded={false}
+          bodyClass="p-4"
         >
           {tripRows.length ? (
             <PremiumTable

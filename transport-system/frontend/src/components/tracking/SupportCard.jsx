@@ -1,16 +1,23 @@
 import React from 'react';
 
-const PHONE_NUMBER = '+918210931799';
-const WHATSAPP_NUMBER = '918210931799';
+import { FALLBACK_CUSTOMER_CARE, buildWhatsAppUrl, buildCallUrl } from '../../config/customerCare';
+
+/* SINGLE SOURCE OF TRUTH FOR CONTACT
+   These two links are the same Bihar Transport customer-care line the Home
+   page and the enquiry Support card use. They used to be a second hardcoded
+   copy of the number, which is exactly how the enquiry page ended up dialling
+   a number the site never advertised. The rendered values are unchanged; they
+   are now resolved from the shared customer-care config instead. */
+const CALL_URL = buildCallUrl(FALLBACK_CUSTOMER_CARE);
 
 /**
  * SupportCard — Contact support section with call and WhatsApp options.
  * @param {{ bookingRef?: string }} props
  */
 const SupportCard = React.memo(function SupportCard({ bookingRef }) {
-  const whatsappMessage = bookingRef
-    ? `Hello Bihar Transport, I have a query regarding my booking ${bookingRef}. Please help.`
-    : 'Hello Bihar Transport, I need help with my booking. Please assist.';
+  // Built by the shared builder, so the WhatsApp destination is the same
+  // customer-care number as everywhere else.
+  const whatsappUrl = buildWhatsAppUrl(FALLBACK_CUSTOMER_CARE, bookingRef);
 
   return (
     <div className="rounded-2xl bg-gradient-to-br from-gray-50 to-gray-100 border border-gray-200 shadow-sm p-5 md:p-6">
@@ -21,7 +28,7 @@ const SupportCard = React.memo(function SupportCard({ bookingRef }) {
       <div className="space-y-3">
         {/* Call Support */}
         <a
-          href={`tel:${PHONE_NUMBER}`}
+          href={CALL_URL}
           className="flex items-center gap-4 rounded-xl bg-white p-4 border border-gray-100 hover:border-amber-200 hover:shadow-sm transition-all group cursor-pointer"
         >
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-green-50 text-green-600 group-hover:bg-green-100 transition-colors">
@@ -46,7 +53,7 @@ const SupportCard = React.memo(function SupportCard({ bookingRef }) {
 
         {/* WhatsApp Support */}
         <a
-          href={`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(whatsappMessage)}`}
+          href={whatsappUrl}
           target="_blank"
           rel="noopener noreferrer"
           className="flex items-center gap-4 rounded-xl bg-white p-4 border border-gray-100 hover:border-green-200 hover:shadow-sm transition-all group cursor-pointer"

@@ -208,7 +208,7 @@ function AdminAssignDriver() {
 
         {/* Header */}
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Assign Driver</h1>
+          <h1 className="bt-page-title">Assign Driver</h1>
           <p className="text-sm text-muted mt-1">
             Select an available driver to operate this booking. The driver's registered vehicle will be auto-assigned.
           </p>
@@ -216,7 +216,7 @@ function AdminAssignDriver() {
 
         {/* Booking summary */}
         {booking && (
-          <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-5">
+          <div className="rounded-2xl border border-border/60 bg-card/40 p-5">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -271,7 +271,7 @@ function AdminAssignDriver() {
 
         {/* Confirmation panel */}
         {confirmOpen && selectedDriver && (
-          <div className="rounded-2xl border border-amber-500/40 bg-amber-500/5 backdrop-blur-xl overflow-hidden">
+          <div className="rounded-2xl border border-amber-500/40 bg-amber-500/5 overflow-hidden">
             <div className="px-5 py-3.5 border-b border-border/40">
               <span className="text-sm font-bold tracking-tight">ASSIGN DRIVER</span>
             </div>
@@ -375,7 +375,7 @@ function AdminAssignDriver() {
             </div>
 
             {/* Search + filters */}
-            <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-4 space-y-3">
+            <div className="rounded-2xl border border-border/60 bg-card/40 p-4 space-y-3">
               <input
                 type="text"
                 value={search}
@@ -445,7 +445,7 @@ function AdminAssignDriver() {
                 return (
                   <div
                     key={driver.driver_id}
-                    className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-4"
+                    className="rounded-2xl border border-border/60 bg-card/40 p-4"
                     role="listitem"
                   >
                     <div className="flex items-start gap-4">
@@ -527,7 +527,7 @@ function AdminAssignDriver() {
         )}
 
 {!isDriverAssigned && !canAssign && !assignSuccess && (
-          <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-8 text-center">
+          <div className="rounded-2xl border border-border/60 bg-card/40 p-8 text-center">
             <div className="text-sm text-muted">
               This booking cannot accept a driver assignment in its current state.
             </div>

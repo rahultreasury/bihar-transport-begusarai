@@ -47,7 +47,13 @@ api.interceptors.response.use(
     const requestUrl = error.config?.url || '';
     const isAuthRequest = authPaths.some(path => requestUrl.includes(path));
 
-    if (error.response?.status === 401 && !isAuthRequest) {
+    // The enquiry endpoints authorise with a scoped guest token, not the user
+    // JWT. A 401 there means "this link expired on this device" — a message the
+    // enquiry page renders itself with a recovery path. Redirecting to /login
+    // there would throw the customer off a page they never needed an account for.
+    const isEnquiryRequest = requestUrl.includes('/enquiries');
+
+    if (error.response?.status === 401 && !isAuthRequest && !isEnquiryRequest) {
       // Clear persisted auth + dispatch auth:changed so AuthContext clears
       // runtime state, then let ProtectedRoute redirect to /login.
       clearStoredAuth();
@@ -71,7 +77,10 @@ export const authAPI = {
   partnerLogin: (data) => api.post('/auth/partner-login', data),
   getMe: () => api.get('/auth/me'),
   adminMe: () => api.get('/auth/admin/me'),
-  updateProfile: (data) => api.put('/auth/profile', data)
+  updateProfile: (data) => api.put('/auth/profile', data),
+  forgotPassword: (data) => api.post('/auth/forgot-password', data),
+  resetPassword: (data) => api.post('/auth/reset-password', data),
+  changePassword: (data) => api.post('/auth/change-password', data)
 };
 
 // Booking APIs
@@ -152,10 +161,34 @@ getDriversWithVehicles: (params) => api.get('/admin/drivers/drivers-with-vehicle
   // Each driver carries its assigned vehicle (one-driver-one-vehicle).
   getAssignableDrivers: (params) => api.get('/admin/booking-drivers', { params }),
   assignVehicle: (bookingId, vehicleId) => api.post(`/admin/bookings/${bookingId}/assign-vehicle`, { vehicle_id: vehicleId }),
+  // CANONICAL driver assignment. Persists driver_id, the vehicle resolved from
+  // the driver's registered vehicle, and the owner/partner on the BOOKING ROW,
+  // so the assignment survives a refresh. Pass { clear: true } to unassign —
+  // this is the only normal path that removes an assignment.
+  assignBookingDriver: (bookingId, data) => api.post(`/admin/bookings/${bookingId}/assign-driver`, data),
   // Quote workflow — admin reserves driver + vehicle and sends final quote
   sendQuote: (bookingId, data) => api.post(`/admin/bookings/${bookingId}/send-quote`, data),
   // Send quote using already-assigned driver (no driver selection needed)
   sendAdminQuote: (bookingId, data) => api.post(`/admin/bookings/${bookingId}/quote`, data),
+
+  // ---------------------------------------------------------------------------
+  // ENQUIRY WORKFLOW (the six-stage admin rail)
+  // ---------------------------------------------------------------------------
+  // These are thin clients for the booking module's own workflow endpoints.
+  // The stage the admin sees is always derived from the booking row the
+  // backend persists — nothing here invents state.
+  //
+  // STAGE 1 → 2 : Request Received → Under Review
+  startReview: (bookingId) => api.post(`/admin/bookings/${bookingId}/start-review`),
+  // STAGE 2 → 3 : Under Review → Quote Prepared (saves a draft, notifies nobody)
+  prepareQuote: (bookingId, data) => api.post(`/admin/bookings/${bookingId}/prepare-quote`, data),
+  // STAGE 5 → 6 : Customer Accepted → Confirmed (existing confirm path)
+  confirmBooking: (bookingId) => api.patch(`/admin/bookings/${bookingId}/status`, { status: 'confirmed' }),
+  // The real booking_events audit trail, newest first
+  getWorkflowTimeline: (bookingId, params) =>
+    api.get(`/admin/bookings/${bookingId}/workflow-timeline`, { params }),
+  // Prefills the EXISTING POST /api/trips body from the confirmed booking
+  getTripDraft: (bookingId) => api.get(`/admin/bookings/${bookingId}/trip-draft`),
 
   // Driver Management Module (Market Drivers - full CRUD + actions)
   getDriverStats: () => api.get('/admin/drivers/stats'),
@@ -283,6 +316,10 @@ updateDriver: (id, data) => api.put(`/admin/drivers/${id}`, data),
   getTripOwners: (search) => api.get('/trips/lookup/owners', { params: { search } }),
   getVehiclesByOwner: (ownerId) => api.get(`/trips/lookup/vehicles-by-owner/${ownerId}`),
   getDriversByOwner: (ownerId, search = '') => api.get(`/trips/lookup/drivers-by-owner/${ownerId}`, { params: { search } }),
+  // Resolve the VehicleOwner linked to a Partner (VehicleOwner.partner_link).
+  // Used by the Admin trip-creation wizard to select a Partner and then load
+  // that Partner's linked transport owner, vehicles, and drivers.
+  getOwnerByPartner: (partnerId) => api.get(`/trips/lookup/owner-by-partner/${partnerId}`),
 
   // Trips by entity
   getTripsByClientId: (clientId, params) => api.get(`/trips/client/${clientId}`, { params }),
@@ -308,6 +345,7 @@ updateDriver: (id, data) => api.put(`/admin/drivers/${id}`, data),
   getVehicleOwnerDrivers: (id, params) => api.get(`/admin/vehicle-owners/${id}/drivers`, { params }),
   getVehicleOwnerVehicles: (id, params) => api.get(`/admin/vehicle-owners/${id}/vehicles`, { params }),
   createVehicleOwnerVehicle: (id, data) => api.post(`/admin/vehicle-owners/${id}/vehicles`, data),
+  createVehicle: (data) => api.post('/admin/vehicles', data),
   updateVehicle: (id, data) => api.put(`/admin/vehicles/${id}`, data),
   getVehicleTrips: (id, params) => api.get(`/admin/vehicles/${id}/trips`, { params }),
   getAuditLogs: (params) => api.get('/admin/audit-logs', { params }),
@@ -334,6 +372,20 @@ updateDriver: (id, data) => api.put(`/admin/drivers/${id}`, data),
 export const partnerAPI = {
   apply: (data) => api.post('/partner/apply', data),
   getApplicationStatus: (id) => api.get(`/partner/apply/${id}/status`),
+  getMe: () => api.get('/partner/me'),
+  getDashboard: () => api.get('/partner/me/dashboard'),
+  // Authenticated partner self-service endpoints (shared backend APIs).
+  // These reuse the same /api/partner/me/* routes the Driver App will use.
+  getTrips: (params) => api.get('/partner/me/trips', { params }),
+  getTrip: (id) => api.get(`/partner/me/trips/${id}`),
+  getVehicles: (params) => api.get('/partner/me/vehicles', { params }),
+  getDrivers: (params) => api.get('/partner/me/drivers', { params }),
+  assignDriverToTrip: (tripId, driverId) => api.patch(`/partner/me/trips/${tripId}/driver`, { driver_id: driverId }),
+  getFinancials: () => api.get('/partner/me/financials'),
+  getLedger: (params) => api.get('/partner/me/ledger', { params }),
+  getPayments: (params) => api.get('/partner/me/payments', { params }),
+  getSettlements: (params) => api.get('/partner/me/settlements', { params }),
+  getTripTimeline: (id) => api.get(`/trips/${id}/timeline`),
 };
 
 // Delivery APIs
@@ -342,6 +394,15 @@ export const deliveryAPI = {
   getLocation: (bookingId) => api.get(`/delivery/location/${bookingId}`),
   verifyOTP: (data) => api.post('/delivery/verify-otp', data),
   completeDelivery: (data) => api.post('/delivery/complete', data)
+};
+
+// Maps / Route APIs — proxied through the backend so Google API keys are
+// never exposed in frontend code.
+export const mapsAPI = {
+  // Calculate route distance + estimated price range for a pickup/drop pair.
+  // Backend (mapsController.calculatePriceHandler) calls Google Distance Matrix
+  // and falls back to city-pair distances when the API is unavailable.
+  calculatePrice: (data) => api.post('/calculate-price', data),
 };
 
 // Vehicle Search APIs

@@ -19,7 +19,7 @@ const DriverFilters = React.memo(function DriverFilters({
       <div className="flex flex-wrap items-center gap-2 lg:gap-3">
         <button
           onClick={onToggleFilters}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border/60 bg-card/40 backdrop-blur-xl text-sm font-medium hover:bg-hover/60 transition-all"
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border/60 bg-card/40 text-sm font-medium hover:bg-hover/60 transition-all"
           aria-label="Toggle filters"
           aria-expanded={showFilters}
         >
@@ -47,7 +47,7 @@ const DriverFilters = React.memo(function DriverFilters({
 
       {/* Filter Panel */}
       {showFilters && (
-        <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-4 animate-fade-in">
+        <div className="rounded-2xl border border-border/60 bg-card/40 p-4 animate-fade-in">
           <div className="flex items-center justify-between mb-3">
             <div className="text-xs font-semibold text-muted uppercase tracking-wider">Filter Drivers</div>
             <button

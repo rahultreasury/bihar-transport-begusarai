@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { adminAPI } from '../services/api';
 
@@ -6,6 +6,7 @@ import AdminShell from '../components/admin-premium/layout/AdminShell';
 import KpiCard from '../components/admin-premium/ui/KpiCard';
 import PremiumTable from '../components/admin-premium/ui/PremiumTable';
 import EmptyState from '../components/admin-premium/ui/EmptyState';
+import TransportResourceRegistrationModal from '../components/admin-premium/transport/TransportResourceRegistrationModal';
 
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: '▦' },
@@ -36,9 +37,8 @@ export default function AdminVehicleOwnerProfile() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
-  const [showAddVehicleModal, setShowAddVehicleModal] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [formError, setFormError] = useState('');
+  const [showRegisterModal, setShowRegisterModal] = useState(false);
+  const [registerContext, setRegisterContext] = useState({});
 
   // --- Data fetching ---
   useEffect(() => {
@@ -156,48 +156,18 @@ export default function AdminVehicleOwnerProfile() {
     }
   }, [activeTab]);
 
-  const handleAddVehicle = async (e) => {
-    e.preventDefault();
-    setSubmitting(true);
-    setFormError('');
-
-    const formData = new FormData(e.target);
-    const data = {
-      vehicle_number: formData.get('vehicle_number'),
-      vehicle_type: formData.get('vehicle_type'),
-      vehicle_name: formData.get('vehicle_name'),
-      capacity_kg: formData.get('capacity_kg') ? parseFloat(formData.get('capacity_kg')) : null,
-      capacity_volume: formData.get('capacity_volume') ? parseFloat(formData.get('capacity_volume')) : null,
-      vehicle_make: formData.get('vehicle_make') || null,
-      vehicle_model: formData.get('vehicle_model') || null,
-      manufacturing_year: formData.get('manufacturing_year') ? parseInt(formData.get('manufacturing_year')) : null,
-      registration_date: formData.get('registration_date') || null,
-      insurance_number: formData.get('insurance_number') || null,
-      insurance_expiry: formData.get('insurance_expiry') || null,
-      permit_number: formData.get('permit_number') || null,
-      permit_expiry: formData.get('permit_expiry') || null,
-      pollution_certificate: formData.get('pollution_certificate') || null,
-      pollution_expiry: formData.get('pollution_expiry') || null,
-      base_location: formData.get('base_location') || null,
-      hourly_rate: formData.get('hourly_rate') ? parseFloat(formData.get('hourly_rate')) : null,
-      per_km_rate: formData.get('per_km_rate') ? parseFloat(formData.get('per_km_rate')) : null,
-    };
-
-    try {
-      const res = await adminAPI.createVehicleOwnerVehicle(id, data);
-      if (res.data?.success) {
-        setShowAddVehicleModal(false);
-        fetchVehicles();
-        fetchOwnerProfile();
-      } else {
-        setFormError(res.data?.message || 'Failed to add vehicle');
-      }
-    } catch (err) {
-      setFormError(err.response?.data?.message || 'Failed to add vehicle');
-    } finally {
-      setSubmitting(false);
+  const handleRegisterSuccess = useCallback((createdEntities) => {
+    setShowRegisterModal(false);
+    setRegisterContext({});
+    if (createdEntities?.vehicle) {
+      fetchVehicles();
+      fetchOwnerProfile();
     }
-  };
+    if (createdEntities?.driver) {
+      fetchDrivers();
+      fetchOwnerProfile();
+    }
+  }, [fetchVehicles, fetchDrivers, fetchOwnerProfile]);
 
   // --- Derived data ---
   const activeVehicles = useMemo(() => vehicles.filter(v => v.current_status === 'available').length, [vehicles]);
@@ -282,7 +252,7 @@ export default function AdminVehicleOwnerProfile() {
               </div>
               <div>
                 <div className="flex items-center gap-3 flex-wrap">
-                  <h1 className="text-2xl font-bold text-text">{owner.owner_name}</h1>
+                  <h1 className="bt-page-title">{owner.owner_name}</h1>
                   <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${getStatusColor(owner.status)}`}>
                     {owner.status || 'N/A'}
                   </span>
@@ -304,13 +274,13 @@ export default function AdminVehicleOwnerProfile() {
                 Edit Owner
               </button>
               <button
-                onClick={() => setShowAddVehicleModal(true)}
+                onClick={() => { setRegisterContext({ sourcePage: 'owner-detail', resourceType: 'vehicle', ownerId: id }); setShowRegisterModal(true); }}
                 className="px-3 py-2 text-sm font-medium bg-amber-500 text-white rounded-xl hover:bg-amber-600 transition"
               >
                 + Add Vehicle
               </button>
               <button
-                onClick={() => navigate('/admin/drivers/create?owner_id=' + id)}
+                onClick={() => { setRegisterContext({ sourcePage: 'owner-detail', resourceType: 'driver', ownerId: id }); setShowRegisterModal(true); }}
                 className="px-3 py-2 text-sm font-medium border border-border rounded-xl hover:bg-hover/60 transition"
               >
                 + Add Driver
@@ -563,7 +533,7 @@ export default function AdminVehicleOwnerProfile() {
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-text">Vehicles</h3>
               <button
-                onClick={() => setShowAddVehicleModal(true)}
+                onClick={() => { setRegisterContext({ sourcePage: 'owner-detail', resourceType: 'vehicle', ownerId: id }); setShowRegisterModal(true); }}
                 className="px-3 py-1.5 text-sm font-medium bg-amber-500 text-white rounded-xl hover:bg-amber-600 transition"
               >
                 + Add Vehicle
@@ -616,7 +586,7 @@ export default function AdminVehicleOwnerProfile() {
                 <div className="text-4xl mb-3">🚛</div>
                 <p className="text-muted mb-4">No vehicles registered for this owner yet.</p>
                 <button
-                  onClick={() => setShowAddVehicleModal(true)}
+                  onClick={() => { setRegisterContext({ sourcePage: 'owner-detail', resourceType: 'vehicle', ownerId: id }); setShowRegisterModal(true); }}
                   className="px-4 py-2 bg-amber-500 text-white rounded-xl hover:bg-amber-600 transition"
                 >
                   + Add First Vehicle
@@ -632,7 +602,7 @@ export default function AdminVehicleOwnerProfile() {
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-text">Drivers</h3>
               <button
-                onClick={() => navigate('/admin/drivers/create?owner_id=' + id)}
+                onClick={() => { setRegisterContext({ sourcePage: 'owner-detail', resourceType: 'driver', ownerId: id }); setShowRegisterModal(true); }}
                 className="px-3 py-1.5 text-sm font-medium bg-amber-500 text-white rounded-xl hover:bg-amber-600 transition"
               >
                 + Add Driver
@@ -689,7 +659,7 @@ export default function AdminVehicleOwnerProfile() {
                 <div className="text-4xl mb-3">👨‍✈️</div>
                 <p className="text-muted mb-4">No drivers connected to this owner yet.</p>
                 <button
-                  onClick={() => navigate('/admin/drivers/create?owner_id=' + id)}
+                  onClick={() => { setRegisterContext({ sourcePage: 'owner-detail', resourceType: 'driver', ownerId: id }); setShowRegisterModal(true); }}
                   className="px-4 py-2 bg-amber-500 text-white rounded-xl hover:bg-amber-600 transition"
                 >
                   + Add First Driver
@@ -814,6 +784,16 @@ export default function AdminVehicleOwnerProfile() {
           </div>
         )}
       </div>
+
+      {/* Common Registration Modal */}
+      {showRegisterModal && (
+        <TransportResourceRegistrationModal
+          isOpen={showRegisterModal}
+          onClose={() => { setShowRegisterModal(false); setRegisterContext({}); }}
+          onSuccess={handleRegisterSuccess}
+          context={registerContext}
+        />
+      )}
     </AdminShell>
   );
 }

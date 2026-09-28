@@ -592,7 +592,7 @@ render: (r) => <StatusBadge status={r.status} quoteStatus={r.quote_status} size=
   const renderMobileCard = useCallback((booking) => (
     <div
       key={booking.booking_id}
-      className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-4 space-y-3"
+      className="rounded-2xl border border-border/60 bg-card/40 p-4 space-y-3"
     >
       <div className="flex items-center justify-between">
         <button
@@ -661,7 +661,7 @@ render: (r) => <StatusBadge status={r.status} quoteStatus={r.quote_status} size=
         {/* Header */}
         <div className="flex items-end justify-between">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">Bookings</h1>
+            <h1 className="bt-page-title">Bookings</h1>
             <p className="text-sm text-muted mt-1">
               {pagination.total > 0
                 ? `${pagination.total} total bookings`
@@ -672,7 +672,7 @@ render: (r) => <StatusBadge status={r.status} quoteStatus={r.quote_status} size=
             {bookings.length > 0 && (
               <button
                 onClick={handleExportCSV}
-                className="px-4 py-2 rounded-xl border border-border/60 bg-card/40 backdrop-blur-xl text-sm font-medium hover:bg-hover/60 transition flex items-center gap-2"
+                className="px-4 py-2 rounded-xl border border-border/60 bg-card/40 text-sm font-medium hover:bg-hover/60 transition flex items-center gap-2"
                 aria-label="Export bookings as CSV"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -690,7 +690,7 @@ render: (r) => <StatusBadge status={r.status} quoteStatus={r.quote_status} size=
             {quickStats.map((stat) => (
               <div
                 key={stat.label}
-                className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-4"
+                className="rounded-2xl border border-border/60 bg-card/40 p-4"
               >
                 <div className="text-[11px] font-medium text-muted uppercase tracking-wider">{stat.label}</div>
                 <div className={`text-2xl font-bold mt-1 ${stat.color}`}>{stat.value}</div>
@@ -727,7 +727,7 @@ render: (r) => <StatusBadge status={r.status} quoteStatus={r.quote_status} size=
 
         {/* Bulk Actions Toolbar */}
         {selection.selectedCount > 0 && (
-          <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 backdrop-blur-xl p-3 flex items-center justify-between animate-fade-in">
+          <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-3 flex items-center justify-between animate-fade-in">
             <div className="text-sm font-medium">
               <span className="text-amber-600 dark:text-amber-400">{selection.selectedCount}</span> selected
             </div>
@@ -880,7 +880,7 @@ render: (r) => <StatusBadge status={r.status} quoteStatus={r.quote_status} size=
         {/* Send Quote Modal */}
         {quoteModalOpen && quoteTarget && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={handleCloseQuoteModal} />
+            <div className="absolute inset-0 bg-black/40" onClick={handleCloseQuoteModal} />
             <div className="relative w-full max-w-md bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-border/60 p-6" role="dialog" aria-modal="true" aria-label="Send Final Quote">
               <div className="text-center mb-4">
                 <div className="w-12 h-12 rounded-full bg-emerald-500/10 flex items-center justify-center mx-auto mb-3">
@@ -973,7 +973,7 @@ render: (r) => <StatusBadge status={r.status} quoteStatus={r.quote_status} size=
 {/* Toast notification */}
         {toast && (
           <div className="fixed top-6 right-6 z-[100] animate-slide-down">
-            <div className={`px-5 py-3.5 rounded-2xl shadow-2xl border text-sm font-semibold flex items-center gap-3 backdrop-blur-sm ${
+            <div className={`px-5 py-3.5 rounded-2xl shadow-2xl border text-sm font-semibold flex items-center gap-3 ${
               toast.type === 'success'
                 ? 'bg-emerald-50 dark:bg-emerald-900/50 border-emerald-200 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300'
                 : 'bg-red-50 dark:bg-red-900/50 border-red-200 dark:border-red-700 text-red-700 dark:text-red-300'
@@ -998,7 +998,7 @@ render: (r) => <StatusBadge status={r.status} quoteStatus={r.quote_status} size=
         {/* Booking Deletion Action Modal (Keep / Archive / Permanent Delete) */}
         {deleteTarget && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => { setDeleteTarget(null); setDeletionSummary(null); setSelectedAction('keep'); setConfirmationCode(''); }} />
+            <div className="absolute inset-0 bg-black/40" onClick={() => { setDeleteTarget(null); setDeletionSummary(null); setSelectedAction('keep'); setConfirmationCode(''); }} />
             <div className="relative w-full max-w-lg bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-border/60 p-6" role="dialog" aria-modal="true" aria-label="Booking Deletion Options">
               <div className="text-center mb-4">
                 <div className="w-14 h-14 rounded-full bg-amber-500/10 flex items-center justify-center mx-auto mb-4">
@@ -1146,7 +1146,7 @@ render: (r) => <StatusBadge status={r.status} quoteStatus={r.quote_status} size=
         {/* Second confirmation modal for permanent delete */}
         {showDeleteConfirm && deleteTarget && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setShowDeleteConfirm(false)} />
+            <div className="absolute inset-0 bg-black/40" onClick={() => setShowDeleteConfirm(false)} />
             <div className="relative w-full max-w-md bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-border/60 p-6" role="dialog" aria-modal="true" aria-label="Confirm Permanent Delete">
               <div className="text-center mb-4">
                 <div className="w-14 h-14 rounded-full bg-red-500/10 flex items-center justify-center mx-auto mb-4">
@@ -1200,7 +1200,7 @@ render: (r) => <StatusBadge status={r.status} quoteStatus={r.quote_status} size=
         {/* Status Update Modal */}
         {statusUpdateOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={handleCloseStatusUpdate} />
+            <div className="absolute inset-0 bg-black/40" onClick={handleCloseStatusUpdate} />
             <div className="relative w-full max-w-md bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-border/60 overflow-hidden" role="dialog" aria-modal="true" aria-label="Update Booking Status">
               <div className="p-5 border-b border-border/60">
                 <div className="flex items-center justify-between">

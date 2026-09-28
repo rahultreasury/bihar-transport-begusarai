@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import StatusBadge from './StatusBadge';
 import { adminAPI } from '../../../services/api';
+import DriverPickerModal from '../enquiries/DriverPickerModal';
 
 /* ===================================================================
    THEME CONSTANTS - Bihar Transport Branding
@@ -27,7 +28,7 @@ const ORANGE = {
   ring: 'ring-amber-500/30',
 };
 
-const DARK_NAVY = 'bg-[#1e3a5f]';
+const DARK_NAVY = 'bg-[#15345B]';
 const SUCCESS_GREEN = 'bg-emerald-500';
 
 /* ===================================================================
@@ -49,7 +50,7 @@ const SectionCard = React.memo(function SectionCard({ title, children, className
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
-      className={`rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl overflow-hidden ${className}`}
+      className={`rounded-2xl border border-border/60 bg-card/40 overflow-hidden ${className}`}
     >
       <div className="px-5 py-3.5 border-b border-border/40">
         <span className="text-sm font-bold tracking-tight">{title}</span>
@@ -89,24 +90,11 @@ function BookingDetailsDrawer({ booking, isOpen, onClose, onBookingUpdated }) {
   const [selectedQuoteDriver, setSelectedQuoteDriver] = useState(null);
   const [selectedQuoteVehicle, setSelectedQuoteVehicle] = useState(null); // auto-resolved from driver
 
-  // Scalable Driver Picker modal state (10k+ drivers) — server-side pagination,
-  // debounced search, filters, lazy loading. Only a bounded page is ever held
-  // in memory; the endpoint returns driver + assigned vehicle + trip stats.
+// Driver picker. The modal itself (server-side search, filters, paging, the
+  // driver's real vehicle) lives in the shared DriverPickerModal so this drawer
+  // and the full-page ENQUIRY workspace use ONE picker against ONE endpoint.
   const [showDriverPicker, setShowDriverPicker] = useState(false);
   const [pickerMode, setPickerMode] = useState('quote'); // 'assign' | 'quote'
-  const [pickerDrivers, setPickerDrivers] = useState([]);
-  const [pickerLoading, setPickerLoading] = useState(false);
-  const [pickerSearch, setPickerSearch] = useState('');
-  const [pickerStatus, setPickerStatus] = useState('');
-  const [pickerVehicleType, setPickerVehicleType] = useState('');
-  const [pickerPage, setPickerPage] = useState(1);
-  const [pickerHasMore, setPickerHasMore] = useState(false);
-  const [pickerTotal, setPickerTotal] = useState(0);
-  const [pickerError, setPickerError] = useState('');
-  const pickerListRef = useRef(null);
-  const pickerSearchRef = useRef(null);
-  const pickerPageRef = useRef(1);
-  const pickerLoadingRef = useRef(false);
 
   // Trap focus
   useEffect(() => {
@@ -158,65 +146,17 @@ const canAssignDriver = useCallback(() => {
     return true;
   }, [booking]);
 
-  // ===== Scalable Driver Picker (10k+ drivers) =====
-  // Server-side pagination + debounced search + filters + lazy loading.
-  // Only a bounded page of drivers is ever held in memory. The endpoint
-  // returns each driver with its assigned vehicle + today/lifetime trip stats,
-  // so the frontend never combines multiple API calls.
-
-  const fetchPickerPage = useCallback(async (page, { search, status, vehicleType, append = false } = {}) => {
-    if (pickerLoadingRef.current) return;
-    pickerLoadingRef.current = true;
-setPickerLoading(true);
-    setPickerError('');
-    try {
-      const response = await adminAPI.getAssignableDrivers({
-        page,
-        limit: 20,
-        search: search || '',
-        status: status || '',
-        vehicle_type: vehicleType || '',
-      });
-if (response.data?.success) {
-        const drivers = response.data.data || [];
-        const pagination = response.data.pagination || {};
-        setPickerDrivers((prev) => (append ? [...prev, ...drivers] : drivers));
-        setPickerTotal(pagination.total || 0);
-        setPickerPage(page);
-        pickerPageRef.current = page;
-        setPickerHasMore(page < (pagination.pages || 1));
-      } else {
-        setPickerError('Failed to load drivers');
-      }
-    } catch (err) {
-      setPickerError(err?.response?.data?.message || err?.message || 'Failed to load drivers');
-    } finally {
-      pickerLoadingRef.current = false;
-      setPickerLoading(false);
-    }
-  }, []);
-
-  // Open the scalable driver picker in 'assign' mode.
-  // When a driver is selected, they are auto-assigned to the booking and
-  // their registered vehicle is auto-resolved.
+  // Open the driver picker in 'assign' mode. Selecting a driver there assigns
+  // them to this booking immediately (their registered vehicle comes with them).
   const handleOpenAssignPicker = useCallback(() => {
     setPickerMode('assign');
     setShowDriverPicker(true);
-    setPickerDrivers([]);
-    setPickerPage(1);
-    pickerPageRef.current = 1;
-    setPickerError('');
-    setPickerSearch('');
-    setPickerStatus('');
-    setPickerVehicleType('');
     setSelectedQuoteDriverId(null);
     setSelectedQuoteDriver(null);
     setSelectedQuoteVehicle(null);
     setAssignDriverError('');
     setAssignDriverSuccess('');
-    // The debounced useEffect below is the single source of truth for fetching.
-    // It fires when showDriverPicker changes to true, after 300ms debounce.
-  }, [fetchPickerPage]);
+  }, []);
 
   // Assign the selected driver to the booking (called from the picker).
   const handleAssignDriverFromPicker = useCallback(async (driver) => {
@@ -243,56 +183,14 @@ if (response.data?.success) {
   }, [booking, onBookingUpdated]);
 
 
-  // Load first page when the picker opens.
-  // The debounced useEffect below is the single source of truth for fetching.
-  // It fires when showDriverPicker changes to true, after 300ms debounce.
+// Open the driver picker in 'quote' mode. The shared modal owns the fetching.
   const openDriverPicker = useCallback(() => {
     setPickerMode('quote');
     setShowDriverPicker(true);
-    setPickerDrivers([]);
-    setPickerPage(1);
-    pickerPageRef.current = 1;
-    setPickerError('');
-    setPickerSearch('');
-    setPickerStatus('');
-    setPickerVehicleType('');
     setSelectedQuoteDriverId(null);
     setSelectedQuoteDriver(null);
     setSelectedQuoteVehicle(null);
-  }, [fetchPickerPage]);
-
-  // Debounced server-side search (300ms) — resets to page 1
-  useEffect(() => {
-    if (!showDriverPicker) return;
-    const timer = setTimeout(() => {
-      fetchPickerPage(1, { search: pickerSearch, status: pickerStatus, vehicleType: pickerVehicleType });
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [pickerSearch, pickerStatus, pickerVehicleType, showDriverPicker, fetchPickerPage]);
-
-  // Infinite scroll — load next page when the admin scrolls near the bottom
-  const handlePickerScroll = useCallback(() => {
-    const el = pickerListRef.current;
-    if (!el) return;
-    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 120 && pickerHasMore && !pickerLoadingRef.current) {
-      fetchPickerPage(pickerPageRef.current + 1, {
-        search: pickerSearch,
-        status: pickerStatus,
-        vehicleType: pickerVehicleType,
-        append: true,
-      });
-    }
-  }, [fetchPickerPage, pickerSearch, pickerStatus, pickerVehicleType, pickerHasMore]);
-
-  // Lock page scroll while the picker is open
-  useEffect(() => {
-    if (showDriverPicker) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = '';
-    }
-    return () => { document.body.style.overflow = ''; };
-  }, [showDriverPicker]);
+  }, []);
 
 // Select a driver from the picker.
   // In 'assign' mode (opened from Assign Driver button): auto-assign to booking.
@@ -464,7 +362,7 @@ const canSendQuote = useCallback(() => {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="fixed inset-0 bg-black/40 backdrop-blur-sm z-40"
+            className="fixed inset-0 bg-black/40 z-40"
             onClick={onClose}
             aria-hidden="true"
           />
@@ -483,7 +381,7 @@ const canSendQuote = useCallback(() => {
             tabIndex={-1}
           >
             {/* Header */}
-            <div className="shrink-0 px-6 py-5 border-b border-border/60 flex items-center justify-between bg-header/30 backdrop-blur-xl">
+            <div className="shrink-0 px-6 py-5 border-b border-border/60 flex items-center justify-between bg-header/30">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <h2 className="text-lg font-bold tracking-tight truncate">
@@ -838,207 +736,21 @@ const canSendQuote = useCallback(() => {
           </motion.div>
 
 
-          {/* SCALABLE DRIVER PICKER MODAL (10k+ drivers) */}
-          <AnimatePresence>
-            {showDriverPicker && (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="fixed inset-0 z-[70] flex items-center justify-center p-0 sm:p-4"
-                role="dialog"
-                aria-modal="true"
-                aria-label="Search & Select Driver"
-              >
-                {/* Backdrop */}
-                <div
-                  className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-                  onClick={() => setShowDriverPicker(false)}
-                  aria-hidden="true"
-                />
-
-                {/* Panel */}
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.96, y: 16 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.96, y: 16 }}
-                  transition={{ type: 'spring', damping: 26, stiffness: 300 }}
-                  className="relative bg-white dark:bg-gray-950 border border-border/60 overflow-hidden flex flex-col w-full h-full sm:h-auto sm:max-h-[90vh] sm:max-w-2xl sm:rounded-2xl shadow-2xl"
-                >
-                  {/* Header */}
-                  <div className="shrink-0 px-5 py-4 border-b border-border/60 flex items-center justify-between bg-white/50 dark:bg-gray-950/50 backdrop-blur-xl">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center">
-                        <UserRound className="w-5 h-5 text-white" strokeWidth={2.5} />
-                      </div>
-                      <div>
-                        <h3 className="text-base font-bold text-text">Search &amp; Select Driver</h3>
-                        <p className="text-xs text-muted mt-0.5">
-                          {pickerTotal > 0 ? `${pickerTotal} drivers` : 'Loading drivers...'} · vehicle auto-assigned
-                        </p>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setShowDriverPicker(false)}
-                      className="h-9 w-9 rounded-xl border border-border/60 flex items-center justify-center hover:bg-hover/60 transition shrink-0"
-                      aria-label="Close"
-                    >
-                      <X className="w-4 h-4" strokeWidth={2} />
-                    </button>
-                  </div>
-
-                  {/* Search + Filters */}
-                  <div className="shrink-0 px-5 py-3 border-b border-border/40 space-y-2.5">
-                    <div className="relative">
-                      <input
-                        ref={pickerSearchRef}
-                        type="text"
-                        value={pickerSearch}
-                        onChange={(e) => setPickerSearch(e.target.value)}
-                        placeholder="Search by name, driver ID, mobile, vehicle number, vehicle type..."
-                        className="w-full px-4 py-2.5 rounded-xl border border-border/60 bg-card/40 text-sm font-medium text-text focus:ring-2 focus:ring-amber-500/40 focus:border-transparent outline-none transition"
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-2.5">
-                      <select
-                        value={pickerStatus}
-                        onChange={(e) => setPickerStatus(e.target.value)}
-                        className="w-full px-3 py-2 rounded-xl border border-border/60 bg-card/40 text-xs font-semibold text-text focus:ring-2 focus:ring-amber-500/40 focus:border-transparent outline-none transition"
-                      >
-                        <option value="">All Status</option>
-                        <option value="available">Available</option>
-                        <option value="on_trip">On Trip</option>
-                        <option value="inactive">Inactive</option>
-                      </select>
-                      <select
-                        value={pickerVehicleType}
-                        onChange={(e) => setPickerVehicleType(e.target.value)}
-                        className="w-full px-3 py-2 rounded-xl border border-border/60 bg-card/40 text-xs font-semibold text-text focus:ring-2 focus:ring-amber-500/40 focus:border-transparent outline-none transition"
-                      >
-                        <option value="">All Vehicle Types</option>
-                        <option value="truck">Truck</option>
-                        <option value="mini_truck">Mini Truck</option>
-                        <option value="pickup">Pickup</option>
-                        <option value="tempo">Tempo</option>
-                        <option value="tata_ace">Tata Ace</option>
-                        <option value="ashok_leyland_dost">Dost</option>
-                        <option value="container">Container</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Results list (infinite scroll) */}
-                  <div
-                    ref={pickerListRef}
-                    onScroll={handlePickerScroll}
-                    className="flex-1 overflow-y-auto px-5 py-3 space-y-2.5 min-h-[200px]"
-                  >
-                    {pickerError && (
-                      <div className="rounded-xl border border-red-200 bg-red-50 dark:bg-red-500/10 dark:border-red-500/20 px-4 py-2.5 flex items-center gap-2">
-                        <AlertCircle className="w-4 h-4 text-red-500 shrink-0" strokeWidth={2} />
-                        <span className="text-sm text-red-700 dark:text-red-400">{pickerError}</span>
-                      </div>
-                    )}
-
-                    {!pickerError && pickerDrivers.length === 0 && !pickerLoading && (
-                      <div className="text-center py-12">
-                        <div className="w-16 h-16 rounded-2xl bg-amber-500/10 flex items-center justify-center mx-auto mb-4">
-                          <UserRound className="w-8 h-8 text-amber-600/70" strokeWidth={1.5} />
-                        </div>
-                        <p className="text-sm font-semibold text-text">No drivers found</p>
-                        <p className="text-xs text-muted mt-1">Try adjusting your search or filters.</p>
-                      </div>
-                    )}
-
-                    {pickerDrivers.map((driver) => {
-                      const dName = driver.driver_name
-                        || `${driver.first_name || ''} ${driver.last_name || ''}`.trim()
-                        || `Driver #${driver.driver_id}`;
-                      const dCode = driver.driver_code || `DRV${String(driver.driver_id).padStart(6, '0')}`;
-                      const dStatus = String(driver.status || 'available').replace(/_/g, ' ');
-                      const v = driver.vehicle;
-                      const chosen = selectedQuoteDriverId === driver.driver_id;
-                      return (
-                        <button
-                          key={driver.driver_id}
-                          type="button"
-                          onClick={() => handleSelectPickerDriver(driver)}
-                          className={`w-full text-left p-4 rounded-2xl border-2 transition-all duration-200 ${
-                            chosen
-                              ? 'border-amber-500 bg-amber-500/5 shadow-lg'
-                              : 'border-border/60 bg-card/40 hover:border-amber-500/40'
-                          }`}
-                        >
-                          <div className="flex items-start gap-3">
-                            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center text-white font-bold text-sm shrink-0">
-                              {dName.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2">
-                                <span className="text-sm font-bold text-text truncate">{dName}</span>
-                                <span className="text-[10px] font-semibold text-muted">{dCode}</span>
-                              </div>
-                              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-1 text-[11px] text-muted">
-                                <span>{driver.mobile || '—'}</span>
-                                <span className="text-border">•</span>
-                                <span className="capitalize">{dStatus}</span>
-                                <span className="text-border">•</span>
-                                <span className="inline-flex items-center gap-0.5">
-                                  <Star className="w-3 h-3 text-amber-600 fill-current" strokeWidth={0} />
-                                  {driver.rating ?? '—'}
-                                </span>
-                                {typeof driver.todayTrips === 'number' && (
-                                  <>
-                                    <span className="text-border">•</span>
-                                    <span>{driver.todayTrips} today</span>
-                                  </>
-                                )}
-                                {typeof driver.total_deliveries === 'number' && (
-                                  <>
-                                    <span className="text-border">•</span>
-                                    <span>{driver.total_deliveries} trips</span>
-                                  </>
-                                )}
-                              </div>
-                              {v ? (
-                                <div className="mt-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 border border-amber-500/20 text-[10px] font-semibold">
-                                  <Truck className="w-3 h-3" strokeWidth={2.5} />
-                                  {v.vehicle_number}
-                                  {v.vehicle_type ? ` · ${String(v.vehicle_type).replace(/_/g, ' ')}` : ''}
-                                  {v.capacity_kg ? ` · ${v.capacity_kg} kg` : ''}
-                                </div>
-                              ) : (
-<div className="mt-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-red-500/10 text-red-600 border border-red-500/20 text-[10px] font-semibold">
-                                  <AlertCircle className="w-3 h-3" strokeWidth={2.5} />
-                                  No vehicle
-                                </div>
-                              )}
-                            </div>
-                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 mt-1 ${
-                              chosen ? 'border-amber-500 bg-amber-500' : 'border-border'
-                            }`}>
-                              {chosen && <CheckCircle2 className="w-3.5 h-3.5 text-white" strokeWidth={3} />}
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
-
-                    {pickerLoading && (
-                      <div className="flex items-center justify-center py-4">
-                        <div className="h-5 w-5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
-                        <span className="ml-3 text-sm text-muted">Loading drivers...</span>
-                      </div>
-                    )}
-                    {!pickerLoading && pickerHasMore && (
-                      <p className="text-center text-[11px] text-muted py-2">Scroll for more drivers...</p>
-                    )}
-                  </div>
-                </motion.div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+          {/* Driver picker — the shared modal used by both the Bookings drawer
+              and the full-page ENQUIRY workspace, so there is exactly one
+              picker talking to GET /api/admin/booking-drivers. */}
+          <DriverPickerModal
+            open={showDriverPicker}
+            onClose={() => setShowDriverPicker(false)}
+            onSelect={handleSelectPickerDriver}
+            selectedDriverId={selectedQuoteDriverId}
+            title={pickerMode === 'assign' ? 'Assign Driver' : 'Search & Select Driver'}
+            subtitle={
+              pickerMode === 'assign'
+                ? 'The driver\u2019s registered vehicle is assigned automatically'
+                : 'Real drivers from your fleet'
+            }
+          />
         </>
       )}
     </AnimatePresence>

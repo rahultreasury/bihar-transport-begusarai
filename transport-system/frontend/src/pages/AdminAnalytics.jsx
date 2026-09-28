@@ -5,6 +5,15 @@ import AdminShell from '../components/admin-premium/layout/AdminShell';
 import SectionCard from '../components/admin-premium/ui/SectionCard';
 import { LoadingSkeleton } from '../components/admin-premium/ui/LoadingSkeleton';
 import EmptyState from '../components/admin-premium/ui/EmptyState';
+import KpiCard from '../components/admin-premium/ui/KpiCard';
+import {
+  PageHeader,
+  CHART_COLORS,
+  CHART_SERIES,
+  CHART_GRID,
+  CHART_TOOLTIP,
+  CHART_AXIS,
+} from '../components/admin-premium/ui/AdminUI';
 import { BarChart3, TrendingUp, PieChart, Activity } from 'lucide-react';
 import {
   BarChart,
@@ -35,7 +44,10 @@ const NAV_ITEMS = [
   { key: 'ai', label: 'AI Insights', icon: '✦' },
 ];
 
-const COLORS = ['#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ef4444', '#06b6d4', '#f97316', '#e11d48'];
+// Categorical series come from the shared chart theme, so this page and every
+// other chart in the console draw from one palette.
+const COLORS = CHART_SERIES;
+
 
 // Mock chart data — in production, these would come from the API
 const revenueData = [
@@ -84,11 +96,14 @@ function AdminAnalytics() {
 
   const stats = useMemo(() => analyticsData?.stats || {}, [analyticsData]);
 
+  // The `color` field these cards used to carry — four arbitrary Tailwind
+  // colours that made the row look like four different products — is gone.
+  // Each tile now declares a semantic `accent` and renders through KpiCard.
   const kpiCards = useMemo(() => [
-    { label: 'Avg Monthly Revenue', value: `₹${(stats.todayRevenue || 42000).toLocaleString('en-IN')}`, icon: TrendingUp, color: 'text-green-500' },
-    { label: 'Growth Rate', value: '+23%', icon: Activity, color: 'text-amber-500' },
-    { label: 'Active Routes', value: routeData.filter(r => r.name !== 'Other').length, icon: BarChart3, color: 'text-sky-500' },
-    { label: 'Conversion Rate', value: '68%', icon: PieChart, color: 'text-purple-500' },
+    { label: 'Avg Monthly Revenue', value: `₹${(stats.todayRevenue || 42000).toLocaleString('en-IN')}`, icon: TrendingUp, accent: 'orange' },
+    { label: 'Growth Rate', value: '+23%', icon: Activity, accent: 'success' },
+    { label: 'Active Routes', value: routeData.filter((r) => r.name !== 'Other').length, icon: BarChart3, accent: 'navy' },
+    { label: 'Conversion Rate', value: '68%', icon: PieChart, accent: 'info' },
   ], [stats]);
 
   if (isLoading) {
@@ -127,57 +142,53 @@ function AdminAnalytics() {
 
   return (
     <AdminShell navItems={NAV_ITEMS} activeKey={activeKey} onNav={(k) => setActiveKey(k)}>
-      <div className="space-y-6" id="admin-main-content">
-        {/* Header */}
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Analytics</h1>
-          <p className="text-sm text-muted mt-1">Business insights and performance metrics</p>
-        </div>
+      <div className="space-y-5 lg:space-y-6" id="admin-main-content">
+        {/* HEADER — the same hierarchy every module uses */}
+        <PageHeader
+          eyebrow="Insights"
+          title="Analytics"
+          description="Business insights and performance metrics across bookings, revenue and routes."
+        />
 
-        {/* KPI Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {kpiCards.map(card => (
-            <div
+        {/* KPI Cards — the shared tile, so a number here looks like a number
+            anywhere else in the console. */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {kpiCards.map((card) => (
+            <KpiCard
               key={card.label}
-              className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-5"
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-xs text-muted font-medium">{card.label}</div>
-                  <div className={`text-2xl font-bold mt-1 ${card.color}`}>{card.value}</div>
-                </div>
-                <card.icon className={`w-8 h-8 ${card.color} opacity-40`} />
-              </div>
-            </div>
+              title={card.label}
+              value={card.value}
+              icon={card.icon}
+              accent={card.accent}
+              ariaLabel={`${card.label}: ${card.value}`}
+            />
           ))}
         </div>
 
         {/* Revenue Trend Chart */}
-        <SectionCard title="Revenue & Bookings Trend (Monthly)">
+        <SectionCard
+          title="Revenue & Bookings Trend"
+          subtitle="Month-by-month freight revenue against booking volume."
+        >
           <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={revenueData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
                 <defs>
                   <linearGradient id="revenueGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
+                    <stop offset="5%" stopColor={CHART_COLORS.orange} stopOpacity={0.28} />
+                    <stop offset="95%" stopColor={CHART_COLORS.orange} stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.2)" />
-                <XAxis dataKey="month" stroke="rgba(148,163,184,0.6)" fontSize={12} />
-                <YAxis stroke="rgba(148,163,184,0.6)" fontSize={12} />
+                <CartesianGrid stroke={CHART_GRID.stroke} strokeDasharray={CHART_GRID.strokeDasharray} />
+                <XAxis dataKey="month" stroke={CHART_AXIS.stroke} fontSize={CHART_AXIS.fontSize} />
+                <YAxis stroke={CHART_AXIS.stroke} fontSize={CHART_AXIS.fontSize} />
                 <Tooltip
-                  contentStyle={{
-                    background: 'rgba(15,23,42,0.9)',
-                    border: '1px solid rgba(51,65,85,0.6)',
-                    borderRadius: '12px',
-                    color: '#e2e8f0',
-                  }}
+                  contentStyle={CHART_TOOLTIP}
                 />
                 <Area
                   type="monotone"
                   dataKey="revenue"
-                  stroke="#f59e0b"
+                  stroke={CHART_COLORS.orange}
                   fill="url(#revenueGradient)"
                   strokeWidth={2}
                   name="Revenue (₹)"
@@ -185,10 +196,10 @@ function AdminAnalytics() {
                 <Line
                   type="monotone"
                   dataKey="bookings"
-                  stroke="#10b981"
+                  stroke={CHART_COLORS.success}
                   strokeWidth={2}
                   name="Bookings"
-                  dot={{ fill: '#10b981', r: 3 }}
+                  dot={{ fill: CHART_COLORS.success, r: 3 }}
                 />
               </AreaChart>
             </ResponsiveContainer>
@@ -196,31 +207,26 @@ function AdminAnalytics() {
         </SectionCard>
 
         {/* Two column charts */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2 lg:gap-6">
           {/* Route Popularity */}
-          <SectionCard title="Popular Routes">
+          <SectionCard title="Popular Routes" subtitle="The lanes carrying the most bookings.">
             <div className="h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={routeData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.2)" />
-                  <XAxis dataKey="name" stroke="rgba(148,163,184,0.6)" fontSize={11} angle={-20} textAnchor="end" height={60} />
-                  <YAxis stroke="rgba(148,163,184,0.6)" fontSize={12} />
+                  <CartesianGrid stroke={CHART_GRID.stroke} strokeDasharray={CHART_GRID.strokeDasharray} />
+                  <XAxis dataKey="name" stroke={CHART_AXIS.stroke} fontSize={11} angle={-20} textAnchor="end" height={60} />
+                  <YAxis stroke={CHART_AXIS.stroke} fontSize={CHART_AXIS.fontSize} />
                   <Tooltip
-                    contentStyle={{
-                      background: 'rgba(15,23,42,0.9)',
-                      border: '1px solid rgba(51,65,85,0.6)',
-                      borderRadius: '12px',
-                      color: '#e2e8f0',
-                    }}
+                    contentStyle={CHART_TOOLTIP}
                   />
-                  <Bar dataKey="value" fill="#f59e0b" radius={[4, 4, 0, 0]} name="Bookings" />
+                  <Bar dataKey="value" fill={CHART_COLORS.navy} radius={[4, 4, 0, 0]} name="Bookings" />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           </SectionCard>
 
           {/* State-wise Distribution */}
-          <SectionCard title="State-wise Bookings">
+          <SectionCard title="State-wise Bookings" subtitle="How bookings are distributed across states.">
             <div className="h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <RePieChart>
@@ -241,12 +247,7 @@ function AdminAnalytics() {
                     ))}
                   </Pie>
                   <Tooltip
-                    contentStyle={{
-                      background: 'rgba(15,23,42,0.9)',
-                      border: '1px solid rgba(51,65,85,0.6)',
-                      borderRadius: '12px',
-                      color: '#e2e8f0',
-                    }}
+                    contentStyle={CHART_TOOLTIP}
                   />
                   <Legend />
                 </RePieChart>
@@ -256,35 +257,30 @@ function AdminAnalytics() {
         </div>
 
         {/* Monthly Growth Chart */}
-        <SectionCard title="Monthly Growth">
+        <SectionCard title="Monthly Growth" subtitle="Revenue and bookings tracked month over month.">
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={revenueData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.2)" />
-                <XAxis dataKey="month" stroke="rgba(148,163,184,0.6)" fontSize={12} />
-                <YAxis stroke="rgba(148,163,184,0.6)" fontSize={12} />
+                <CartesianGrid stroke={CHART_GRID.stroke} strokeDasharray={CHART_GRID.strokeDasharray} />
+                <XAxis dataKey="month" stroke={CHART_AXIS.stroke} fontSize={CHART_AXIS.fontSize} />
+                <YAxis stroke={CHART_AXIS.stroke} fontSize={CHART_AXIS.fontSize} />
                 <Tooltip
-                  contentStyle={{
-                    background: 'rgba(15,23,42,0.9)',
-                    border: '1px solid rgba(51,65,85,0.6)',
-                    borderRadius: '12px',
-                    color: '#e2e8f0',
-                  }}
+                  contentStyle={CHART_TOOLTIP}
                 />
                 <Line
                   type="monotone"
                   dataKey="revenue"
-                  stroke="#8b5cf6"
+                  stroke={CHART_COLORS.navy}
                   strokeWidth={2}
-                  dot={{ fill: '#8b5cf6', r: 4 }}
+                  dot={{ fill: CHART_COLORS.navy, r: 4 }}
                   name="Revenue (₹)"
                 />
                 <Line
                   type="monotone"
                   dataKey="bookings"
-                  stroke="#06b6d4"
+                  stroke={CHART_COLORS.info}
                   strokeWidth={2}
-                  dot={{ fill: '#06b6d4', r: 4 }}
+                  dot={{ fill: CHART_COLORS.info, r: 4 }}
                   name="Bookings"
                 />
               </LineChart>

@@ -108,14 +108,14 @@ export default function AdminPartnerProfile() {
         </button>
 
         {/* Header */}
-        <div className="rounded-3xl border border-border/60 bg-card/40 backdrop-blur-xl p-6">
+        <div className="rounded-[16px] border border-border/60 bg-card/40 p-6">
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 sm:gap-6">
             <div className="h-20 w-20 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center text-white font-bold text-2xl shrink-0">
               {(partner.company_name || partner.partner_name)?.charAt(0) || 'O'}
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-3 flex-wrap">
-                <h1 className="text-2xl font-bold">{partner.company_name || partner.partner_name}</h1>
+                <h1 className="bt-page-title">{partner.company_name || partner.partner_name}</h1>
                 <OwnerStatusBadge status={partner.status} />
               </div>
               <div className="flex items-center gap-4 mt-2 text-sm text-muted flex-wrap">
@@ -363,7 +363,7 @@ function TrucksTab({ partnerId }) {
 
       {showAddModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setShowAddModal(false)} />
+          <div className="absolute inset-0 bg-black/40" onClick={() => setShowAddModal(false)} />
           <div className="relative w-full max-w-md bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-border/60 p-6" role="dialog" aria-modal="true" aria-label="Add Vehicle">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-text">Add Vehicle</h3>

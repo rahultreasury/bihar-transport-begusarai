@@ -494,7 +494,7 @@ function AdminTrips() {
             <span className="text-muted/50">/</span>
             <span className="text-text font-medium">Trips</span>
           </div>
-          <h1 className="text-3xl font-bold text-text tracking-tight">Trips Management</h1>
+          <h1 className="bt-page-title">Trips Management</h1>
           <p className="text-sm text-muted mt-1">Track transport operations, payments, advances and settlements.</p>
         </div>
         <button
@@ -839,7 +839,7 @@ function AdminTrips() {
       {/* Delete Confirmation Dialog */}
       {deleteDialogOpen && deleteTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setDeleteDialogOpen(false)} />
+          <div className="absolute inset-0 bg-black/40" onClick={() => setDeleteDialogOpen(false)} />
           <div className="relative w-full max-w-md bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-border/60 overflow-hidden">
             <div className="p-6">
               <div className="flex items-center gap-3 mb-4">

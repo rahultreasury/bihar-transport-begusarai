@@ -16,6 +16,84 @@ const bookingAssignmentService = new BookingAssignmentService();
 const bookingController = createBookingController();
 const vehicleOwnerService = new VehicleOwnerService();
 
+const VEHICLE_STATUS_FILTERS = {
+  available: {
+    OR: [
+      { current_status: 'available' },
+      { current_status: null, is_available: true },
+      { current_status: '', is_available: true },
+    ],
+  },
+  on_trip: {
+    OR: [{ current_status: 'on_trip' }, { current_status: 'assigned' }],
+  },
+  assigned: { current_status: 'assigned' },
+  maintenance: { current_status: 'maintenance' },
+  inactive: {
+    OR: [
+      { current_status: 'inactive' },
+      { current_status: null, is_available: false },
+      { current_status: '', is_available: false },
+    ],
+  },
+};
+
+const getVehicleStatusWhere = (status) => VEHICLE_STATUS_FILTERS[status] || null;
+
+const getDocumentStatusWhere = (documentStatus) => {
+  const today = new Date();
+  const expiringAt = new Date(today);
+  expiringAt.setDate(today.getDate() + 30);
+  // Expiry fields are stored as strings in TransportVehicle, so use ISO
+  // strings for Prisma's StringFilter comparisons.
+  const todayValue = today.toISOString();
+  const expiringAtValue = expiringAt.toISOString();
+
+  if (documentStatus === 'valid') {
+    return {
+      AND: [
+        { insurance_expiry: { gt: todayValue } },
+        { permit_expiry: { gt: todayValue } },
+      ],
+    };
+  }
+
+  if (documentStatus === 'expiring') {
+    return {
+      OR: [
+        {
+          AND: [
+            { insurance_expiry: { gt: todayValue } },
+            { insurance_expiry: { lte: expiringAtValue } },
+          ],
+        },
+        {
+          AND: [
+            { permit_expiry: { gt: todayValue } },
+            { permit_expiry: { lte: expiringAtValue } },
+          ],
+        },
+      ],
+    };
+  }
+
+  if (documentStatus === 'expired') {
+    return {
+      OR: [
+        { insurance_expiry: { lte: todayValue } },
+        { permit_expiry: { lte: todayValue } },
+      ],
+    };
+  }
+
+  return null;
+};
+
+const parsePositiveInt = (value, fallback = null) => {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+};
+
 const mapDomainErrorToHttp = (err, res) => {
   if (err?.name === 'ValidationError' || err?.code === 'VALIDATION_ERROR') {
     return res.status(400).json({ success: false, message: err?.message || 'Validation failed' });
@@ -245,14 +323,15 @@ router.get('/vehicles/stats', protect, async (req, res) => {
       return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
-    // Count by current_status — each vehicle belongs to exactly one bucket.
-    // Backward-compat: legacy "assigned" is treated as "on_trip".
+    // Count by the canonical vehicle status. Backward-compat: legacy
+    // "assigned" is treated as "on_trip", and nullable legacy rows are
+    // classified using is_available when current_status is absent.
     const [total, available, onTrip, maintenance, inactive] = await Promise.all([
       prisma.transportVehicle.count(),
-      prisma.transportVehicle.count({ where: { current_status: 'available' } }),
-      prisma.transportVehicle.count({ where: { OR: [{ current_status: 'on_trip' }, { current_status: 'assigned' }] } }),
-      prisma.transportVehicle.count({ where: { current_status: 'maintenance' } }),
-      prisma.transportVehicle.count({ where: { current_status: 'inactive' } }),
+      prisma.transportVehicle.count({ where: getVehicleStatusWhere('available') }),
+      prisma.transportVehicle.count({ where: getVehicleStatusWhere('on_trip') }),
+      prisma.transportVehicle.count({ where: getVehicleStatusWhere('maintenance') }),
+      prisma.transportVehicle.count({ where: getVehicleStatusWhere('inactive') }),
     ]);
 
     res.json({
@@ -412,14 +491,68 @@ router.get('/vehicles', protect, async (req, res) => {
       });
     }
 
-    const { page = 1, limit = 20, type = '' } = req.query;
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-    const take = parseInt(limit);
+    const page = parsePositiveInt(req.query.page, 1);
+    const limit = Math.min(parsePositiveInt(req.query.limit, 20) || 20, 100);
+    const skip = (page - 1) * limit;
+    const take = limit;
+    const search = String(req.query.search || '').trim();
+    const status = String(req.query.status || '').trim().toLowerCase();
+    const type = String(req.query.type || '').trim();
+    const ownerId = parsePositiveInt(req.query.owner_id);
+    const driverId = parsePositiveInt(req.query.driver_id);
+    const documentStatus = String(req.query.document_status || req.query.doc_status || '').trim().toLowerCase();
 
-    // Build Prisma where clause
+    const allowedStatuses = ['available', 'on_trip', 'assigned', 'maintenance', 'inactive'];
+    const allowedDocumentStatuses = ['valid', 'expiring', 'expired'];
+    if (status && !allowedStatuses.includes(status)) {
+      return res.status(400).json({ success: false, message: `Invalid vehicle status: ${status}` });
+    }
+    if (documentStatus && !allowedDocumentStatuses.includes(documentStatus)) {
+      return res.status(400).json({ success: false, message: `Invalid document status: ${documentStatus}` });
+    }
+    if (req.query.owner_id && !ownerId) {
+      return res.status(400).json({ success: false, message: 'Invalid owner id' });
+    }
+    if (req.query.driver_id && !driverId) {
+      return res.status(400).json({ success: false, message: 'Invalid driver id' });
+    }
+
+    // Build the Prisma where clause so pagination and totals reflect the
+    // exact filters shown in the admin vehicle table.
     const where = {};
+    const whereConditions = [];
     if (type) {
-      where.vehicle_type = type;
+      whereConditions.push({ vehicle_type: type });
+    }
+    const statusWhere = status ? getVehicleStatusWhere(status) : null;
+    if (statusWhere) {
+      whereConditions.push(statusWhere);
+    }
+    if (ownerId) {
+      whereConditions.push({ owner_id: ownerId });
+    }
+    if (driverId) {
+      whereConditions.push({ driver_id: driverId });
+    }
+    if (search) {
+      whereConditions.push({
+        OR: [
+          { vehicle_number: { contains: search, mode: 'insensitive' } },
+          { vehicle_code: { contains: search, mode: 'insensitive' } },
+          { vehicle_name: { contains: search, mode: 'insensitive' } },
+          { vehicle_type: { contains: search, mode: 'insensitive' } },
+          { base_location: { contains: search, mode: 'insensitive' } },
+          { owner: { owner_name: { contains: search, mode: 'insensitive' } } },
+          { driver: { driver_name: { contains: search, mode: 'insensitive' } } },
+        ],
+      });
+    }
+    const documentWhere = documentStatus ? getDocumentStatusWhere(documentStatus) : null;
+    if (documentWhere) {
+      whereConditions.push(documentWhere);
+    }
+    if (whereConditions.length > 0) {
+      where.AND = whereConditions;
     }
 
     const [vehicles, total] = await Promise.all([
@@ -432,6 +565,17 @@ router.get('/vehicles', protect, async (req, res) => {
               owner_name: true,
               company_name: true,
               mobile: true,
+            },
+          },
+          driver: {
+            include: {
+              user: {
+                select: {
+                  first_name: true,
+                  last_name: true,
+                  phone: true,
+                },
+              },
             },
           },
           sourcePartner: {
@@ -449,30 +593,9 @@ router.get('/vehicles', protect, async (req, res) => {
       prisma.transportVehicle.count({ where }),
     ]);
 
-    // Collect driver_ids that need to be resolved
-    const driverIds = [...new Set(vehicles.filter(v => v.driver_id).map(v => v.driver_id))];
-    const driversMap = new Map();
-    if (driverIds.length > 0) {
-      const drivers = await prisma.driver.findMany({
-        where: { driver_id: { in: driverIds } },
-        include: {
-          user: {
-            select: {
-              first_name: true,
-              last_name: true,
-              phone: true,
-            },
-          },
-        },
-      });
-      drivers.forEach(d => {
-        driversMap.set(d.driver_id, d);
-      });
-    }
-
-    // Flatten Prisma result to match original SQL response format
+    // Flatten Prisma result to match the existing admin API response.
     const flattened = vehicles.map((v) => {
-      const driver = driversMap.get(v.driver_id);
+      const driver = v.driver;
       return {
         vehicle_id: v.vehicle_id,
         driver_id: v.driver_id,
@@ -505,7 +628,7 @@ router.get('/vehicles', protect, async (req, res) => {
         owner_phone: v.owner?.mobile ?? null,
         partner_name: v.sourcePartner?.partner_name ?? null,
         partner_code: v.sourcePartner?.partner_code ?? null,
-        driver_name: driver ? `${driver.user.first_name} ${driver.user.last_name}` : null,
+        driver_name: driver ? `${driver.user?.first_name || ''} ${driver.user?.last_name || ''}`.trim() : null,
         driver_phone: driver?.user?.phone ?? null,
       };
     });
@@ -514,10 +637,10 @@ router.get('/vehicles', protect, async (req, res) => {
       success: true,
       data: flattened,
       pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total: total,
-        pages: Math.ceil(total / parseInt(limit)),
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit),
       },
     });
   } catch (error) {
@@ -673,6 +796,140 @@ router.post('/bookings/:id/quote', protect, async (req, res) => {
   }
 });
 
+/**
+ * ===============================
+ * Enquiry Workflow (6-stage rail)
+ * ===============================
+ *
+ * The admin ENQUIRY workspace is driven by the six stages
+ *   Request Received → Under Review → Quote Prepared → Quote Sent
+ *   → Customer Accepted → Confirmed
+ *
+ * Those stages are a PROJECTION of the columns the booking module already
+ * owns (bookings.quote_status / bookings.status /
+ * bookings.confirmation_source) — there is no second status system. Only the
+ * two operations the existing surface genuinely lacked are added here:
+ *
+ *   POST /bookings/:id/start-review     PENDING → PREPARING
+ *   POST /bookings/:id/prepare-quote    → DRIVER_RESERVED (draft, not sent)
+ *
+ * plus two read helpers the workspace needs. Everything else — send quote,
+ * customer accept/reject, confirmation — is called on the endpoints that
+ * already existed and was not duplicated.
+ */
+
+/** Shared admin gate for the workflow endpoints. */
+function requireBookingAdmin(req, res) {
+  if (req.user?.role !== 'admin' && req.user?.role !== 'super_admin') {
+    res.status(403).json({ success: false, message: 'Access denied' });
+    return false;
+  }
+  return true;
+}
+
+// @route   POST /api/admin/bookings/:id/start-review
+// @desc    STAGE 1 → 2. Move a received enquiry into review.
+// @access  Private (Admin)
+router.post('/bookings/:id/start-review', protect, async (req, res) => {
+  try {
+    if (!requireBookingAdmin(req, res)) return;
+
+    const bookingId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(bookingId)) {
+      return res.status(400).json({ success: false, message: 'Invalid booking id' });
+    }
+
+    const result = await bookingService.startReview(bookingId, { adminId: req.user.user_id });
+
+    return res.json({
+      success: true,
+      message: result.alreadyInReview
+        ? 'This enquiry is already in review.'
+        : 'Enquiry moved to Under Review.',
+      data: result,
+    });
+  } catch (err) {
+    console.error('Start review error:', err);
+    return mapDomainErrorToHttp(err, res);
+  }
+});
+
+// @route   POST /api/admin/bookings/:id/prepare-quote
+// @desc    STAGE 2 → 3. Persist the driver, resolved vehicle, final price,
+//          remarks and validity WITHOUT notifying the customer.
+// @access  Private (Admin)
+router.post('/bookings/:id/prepare-quote', protect, async (req, res) => {
+  try {
+    if (!requireBookingAdmin(req, res)) return;
+
+    const bookingId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(bookingId)) {
+      return res.status(400).json({ success: false, message: 'Invalid booking id' });
+    }
+
+    const { driver_id, vehicle_id, final_price, remarks, quote_validity_hours } = req.body || {};
+
+    const result = await bookingService.prepareQuote(
+      bookingId,
+      { driver_id, vehicle_id, final_price, remarks, quote_validity_hours },
+      { adminId: req.user.user_id }
+    );
+
+    return res.json({
+      success: true,
+      message: 'Quote prepared. Review it, then send it to the customer.',
+      data: result,
+    });
+  } catch (err) {
+    console.error('Prepare quote error:', err);
+    return mapDomainErrorToHttp(err, res);
+  }
+});
+
+// @route   GET /api/admin/bookings/:id/workflow-timeline
+// @desc    The real booking_events audit trail, newest first.
+// @access  Private (Admin)
+router.get('/bookings/:id/workflow-timeline', protect, async (req, res) => {
+  try {
+    if (!requireBookingAdmin(req, res)) return;
+
+    const bookingId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(bookingId)) {
+      return res.status(400).json({ success: false, message: 'Invalid booking id' });
+    }
+
+    const events = await bookingService.getWorkflowTimeline(bookingId, {
+      limit: req.query.limit,
+    });
+
+    return res.json({ success: true, data: events });
+  } catch (err) {
+    console.error('Workflow timeline error:', err);
+    return mapDomainErrorToHttp(err, res);
+  }
+});
+
+// @route   GET /api/admin/bookings/:id/trip-draft
+// @desc    Resolve a confirmed booking into a ready payload for the EXISTING
+//          POST /api/trips. Read-only — it does not create a trip.
+// @access  Private (Admin)
+router.get('/bookings/:id/trip-draft', protect, async (req, res) => {
+  try {
+    if (!requireBookingAdmin(req, res)) return;
+
+    const bookingId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(bookingId)) {
+      return res.status(400).json({ success: false, message: 'Invalid booking id' });
+    }
+
+    const draft = await bookingService.getTripDraft(bookingId);
+    return res.json({ success: true, data: draft });
+  } catch (err) {
+    console.error('Trip draft error:', err);
+    return mapDomainErrorToHttp(err, res);
+  }
+});
+
 // @route   PUT /api/admin/drivers/:id/verify
 // @desc    Verify a driver
 // @access  Private (Admin)
@@ -802,6 +1059,37 @@ router.get('/vehicles/:id', protect, async (req, res) => {
       message: 'Server error',
     });
   }
+});
+
+// @route   POST /api/admin/vehicles
+// @desc    Create a standalone vehicle (without owner)
+// @access  Private (Admin)
+router.post('/vehicles', protect, async (req, res) => {
+try {
+  if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+    return res.status(403).json({
+      success: false,
+      message: 'Access denied'
+    });
+  }
+
+  const vehicle = await vehicleOwnerService.createStandaloneVehicle(req.body);
+
+  res.status(201).json({
+    success: true,
+    message: 'Vehicle created successfully',
+    data: vehicle,
+  });
+} catch (error) {
+  console.error('Create standalone vehicle error:', error);
+  if (error.code === 'VEHICLE_ALREADY_EXISTS') {
+    return res.status(409).json({ success: false, message: error.message, data: error.data });
+  }
+  if (error.message.includes('required') || error.message.includes('Invalid')) {
+    return res.status(400).json({ success: false, message: error.message });
+  }
+  res.status(500).json({ success: false, message: error.message || 'Server error' });
+}
 });
 
 // @route   PUT /api/admin/vehicles/:id
@@ -1160,11 +1448,6 @@ router.get('/audit-logs/entity/:entity_type/:entity_id', protect, async (req, re
     const [logs, total] = await Promise.all([
       prisma.auditLog.findMany({
         where: { entity_type, entity_id: parseInt(entity_id) },
-        include: {
-          user: {
-            select: { first_name: true, last_name: true, email: true, role: true }
-          }
-        },
         orderBy: { created_at: 'desc' },
         take: parseInt(limit),
         skip: parseInt(offset),
@@ -1386,6 +1669,7 @@ user_id: booking.user_id,
       goods_volume: booking.goods_volume,
       number_of_items: booking.number_of_items,
       fragile: booking.fragile,
+      special_instructions: booking.special_instructions,
       vehicle_type_required: booking.vehicle_type_required,
       estimated_distance_km: booking.estimated_distance_km,
       estimated_price: booking.estimated_price,
@@ -1891,6 +2175,60 @@ router.post('/bookings/:id/assign-driver', protect, async (req, res) => {
     const bookingId = parseInt(req.params.id);
     const { driver_id } = req.body || {};
 
+    // ── Explicit CLEAR is checked FIRST ────────────────────────────────
+    // `clear: true` (or an explicit `driver_id: null`) is the ONLY normal way
+    // to remove an assignment. It is handled before the `driver_id is
+    // required` guard below, otherwise a clear request — which carries no
+    // driver by definition — would be rejected as malformed.
+    const wantsClear = req.body?.clear === true || req.body?.driver_id === null;
+    if (wantsClear) {
+      const current = await prisma.booking.findUnique({
+        where: { booking_id: bookingId },
+        select: { driver_id: true },
+      });
+      if (!current) {
+        return res.status(404).json({ success: false, message: 'Booking not found' });
+      }
+
+      await prisma.$transaction(async (tx) => {
+        await tx.booking.update({
+          where: { booking_id: bookingId },
+          data: {
+            driver_id: null,
+            vehicle_id: null,
+            driver_name_snapshot: null,
+            mobile_snapshot: null,
+            truck_number_snapshot: null,
+            partner_name_snapshot: null,
+            driver_assigned_at: null,
+            // A booking with no driver must not stay parked in
+            // `driver_assigned` with nothing assigned.
+            status: 'pending',
+          },
+        });
+        await tx.bookingAssignment.updateMany({
+          where: { booking_id: bookingId, assignment_status: 'active' },
+          data: { assignment_status: 'released' },
+        });
+        await tx.bookingEvent.create({
+          data: {
+            booking_id: bookingId,
+            event_type: 'driver_unassigned',
+            event_payload: JSON.stringify({
+              previous_driver_id: current.driver_id ?? null,
+              cleared_by_admin: req.user.user_id,
+            }),
+          },
+        });
+      });
+
+      return res.json({
+        success: true,
+        message: 'Driver and vehicle assignment cleared.',
+        data: { booking_id: bookingId, driver_id: null, vehicle_id: null, status: 'pending' },
+      });
+    }
+
     if (!driver_id) {
       return res.status(400).json({
         success: false,
@@ -1931,13 +2269,10 @@ router.post('/bookings/:id/assign-driver', protect, async (req, res) => {
       });
     }
 
-    // Prevent reassigning if driver already assigned
-    if (booking.driver_id) {
-      return res.status(400).json({
-        success: false,
-        message: 'Driver already assigned to this booking'
-      });
-    }
+    // Re-assignment (the "Change" button) IS supported. A booking may swap the
+    // driver at any point before it is closed; the previous driver is simply
+    // replaced, and the double-booking guard below still applies.
+    const previousDriverId = booking.driver_id ?? null;
 
 // Validate driver exists and is available
     // Brokerage model: each driver maps to exactly one primary registered
@@ -1955,23 +2290,45 @@ const driver = await prisma.driver.findUnique({
         },
         currentPartner: {
           select: {
+            partner_id: true,
             partner_name: true,
           },
         },
-        // Compatibility: expose the driver's linked TransportVehicle so the
-        // assignment validator can agree with the picker (findAssignable),
-        // which surfaces the vehicle from the TransportVehicle relationship
-        // even when Driver.vehicle_number is not populated.
-        transportVehicles: {
+        // The transport owner the driver belongs to. This is the OWNER half of
+        // the assignment the admin page has to display — without it a driver who
+        // is self-owned (or owned by a VehicleOwner rather than a Partner)
+        // showed "Owner / Partner: —" after the booking was re-read.
+        transportOwner: {
+          select: {
+            owner_id: true,
+            owner_name: true,
+            company_name: true,
+            mobile: true,
+          },
+        },
+        // The driver's registered vehicle (one-driver-one-vehicle). This is the
+        // REAL relation: Driver.current_vehicle_id -> TransportVehicle. The
+        // Driver table has no denormalized vehicle_number/vehicle_type columns,
+        // and there is no `transportVehicles` list relation — including one made
+        // every assignment 500 with "Unknown field `transportVehicles`".
+        currentVehicle: {
           select: {
             vehicle_id: true,
             vehicle_number: true,
             vehicle_type: true,
             vehicle_name: true,
             capacity_kg: true,
+            // The vehicle's owner — the authoritative owner/partner for the
+            // vehicle actually being assigned.
+            owner: {
+              select: {
+                owner_id: true,
+                owner_name: true,
+                company_name: true,
+                mobile: true,
+              },
+            },
           },
-          orderBy: { created_at: 'desc' },
-          take: 1,
         },
       },
     });
@@ -1989,27 +2346,44 @@ const driver = await prisma.driver.findUnique({
     }
 
     // Brokerage validation: a driver MUST have a registered vehicle before
-    // they can be assigned to a booking. A driver is considered to have a
-    // valid vehicle when EITHER the denormalized Driver.vehicle_number exists
-    // OR a linked TransportVehicle exists. This keeps the assignment contract
-    // consistent with the driver picker, which surfaces the vehicle from the
-    // TransportVehicle relationship when Driver.vehicle_number is null.
+    // they can be assigned to a booking. A driver has a valid vehicle when the
+    // real `currentVehicle` relationship resolves one. This keeps the
+    // assignment contract consistent with the driver picker (findAssignable),
+    // which surfaces the same relationship.
     // Rejection happens BEFORE any DB write, so the booking is never
     // partially updated.
-    const linkedVehicle = driver.transportVehicles?.[0] || null;
-    if (!driver.vehicle_number && !linkedVehicle) {
+    const linkedVehicle = driver.currentVehicle || null;
+    if (!linkedVehicle || !linkedVehicle.vehicle_number) {
       return res.status(400).json({
         success: false,
         message: 'Driver has no registered vehicle. Please assign a vehicle to the driver first.'
       });
     }
 
-    // Resolve the authoritative vehicle source for this assignment.
-    // Prefer the denormalized Driver fields (primary registration), falling
-    // back to the linked TransportVehicle when they are not populated.
-    const assignedVehicleNumber = driver.vehicle_number || linkedVehicle?.vehicle_number || null;
-    const assignedVehicleType = driver.vehicle_type || linkedVehicle?.vehicle_type || null;
-    const assignedVehicleCapacity = linkedVehicle?.capacity_kg ?? null;
+    // Resolve the authoritative vehicle for this assignment from the real
+    // driver -> vehicle relationship.
+    const assignedVehicleId = linkedVehicle.vehicle_id;
+    const assignedVehicleNumber = linkedVehicle.vehicle_number;
+    const assignedVehicleType = linkedVehicle.vehicle_type || null;
+    const assignedVehicleCapacity = linkedVehicle.capacity_kg ?? null;
+
+    // The owner/partner shown on the booking. A driver can be linked to a
+    // network Partner OR to a Transport Owner (VehicleOwner) OR to neither.
+    // The vehicle's own owner wins, then the driver's partner, then the
+    // driver's transport owner — previously ONLY the partner was read, which
+    // is why self-owned drivers displayed "Owner / Partner: —".
+    const resolvedOwner = {
+      name:
+        linkedVehicle.owner?.company_name ||
+        linkedVehicle.owner?.owner_name ||
+        driver.currentPartner?.partner_name ||
+        driver.transportOwner?.company_name ||
+        driver.transportOwner?.owner_name ||
+        null,
+      owner_id: linkedVehicle.owner?.owner_id ?? driver.transportOwner?.owner_id ?? null,
+      partner_id: driver.currentPartner?.partner_id ?? null,
+      mobile: linkedVehicle.owner?.mobile ?? driver.transportOwner?.mobile ?? null,
+    };
 
     // Check driver is not already assigned to another active booking.
     // Exclude the current booking so reassigning the same driver is allowed.
@@ -2033,35 +2407,43 @@ const driver = await prisma.driver.findUnique({
     // (stored as immutable snapshots on the booking) in the SAME transaction.
     // If any step fails, the whole transaction rolls back.
     const assigned = await prisma.$transaction(async (tx) => {
-      // 1. Update booking: set driver_id, status, driver_assigned_at, and
-      //    auto-assign the driver's registered vehicle as immutable snapshots.
+      // 1. Persist the assignment ON THE BOOKING ROW.
+      //
+      //    `vehicle_id` is written (not just the snapshot) so that the Booking
+      //    → TransportVehicle relation resolves on EVERY later read. Without
+      //    it, GET /bookings/by-number/:number returned no vehicle at all after
+      //    a refresh, because the mapper reads `booking.vehicle.vehicle_number`
+      //    and that relation was null.
       const updatedBooking = await tx.booking.update({
         where: { booking_id: bookingId },
         data: {
           driver_id: parsedDriverId,
+          vehicle_id: assignedVehicleId,
           status: 'driver_assigned',
           driver_assigned_at: new Date(),
-// Auto-assign driver's registered vehicle (brokerage snapshot model).
-          // Prefer the denormalized Driver.vehicle_number, falling back to the
-          // linked TransportVehicle when it is not populated.
+          // Snapshots of the driver's registered vehicle, resolved from the
+          // real `currentVehicle` relationship.
           driver_name_snapshot: driver.driver_name || `${driver.user.first_name} ${driver.user.last_name}`.trim(),
           mobile_snapshot: driver.mobile || driver.user.phone || null,
           truck_number_snapshot: assignedVehicleNumber,
-          partner_name_snapshot: driver.currentPartner?.partner_name || null,
+          partner_name_snapshot: resolvedOwner.name,
         },
       });
 
-      // 2. Mark driver as unavailable
-      await tx.driver.update({
-        where: { driver_id: parsedDriverId },
-        data: { is_available: false },
+      // 2. Close out any PREVIOUS active assignment so the history stays
+      //    truthful when the admin changes the driver.
+      await tx.bookingAssignment.updateMany({
+        where: { booking_id: bookingId, assignment_status: 'active' },
+        data: { assignment_status: 'replaced' },
       });
 
-      // 3. Record the driver assignment
+      // 3. Record the driver assignment. `assigned_vehicle_id` is written too so
+      //    the assignment history is self-contained.
       await tx.bookingAssignment.create({
         data: {
           booking_id: bookingId,
           assigned_driver_id: parsedDriverId,
+          assigned_vehicle_id: assignedVehicleId,
           assigned_by_admin_id: req.user.user_id,
           assignment_status: 'active',
         },
@@ -2089,9 +2471,14 @@ const driver = await prisma.driver.findUnique({
           booking_id: bookingId,
           event_type: 'driver_assigned',
           event_payload: JSON.stringify({
+            previous_driver_id: previousDriverId,
             driver_id: parsedDriverId,
             driver_name: driver.driver_name || `${driver.user.first_name} ${driver.user.last_name}`.trim(),
             driver_phone: driver.mobile || driver.user.phone || null,
+            vehicle_id: assignedVehicleId,
+            vehicle_number: assignedVehicleNumber,
+            vehicle_type: assignedVehicleType,
+            owner_name: resolvedOwner.name,
           }),
         },
       });
@@ -2121,30 +2508,40 @@ data: {
       return updatedBooking;
     });
 
-    // Fetch the fresh booking to return accurate snapshot data
-    const freshBooking = await prisma.booking.findUnique({
+    // ── The COMPLETE persisted assignment ────────────────────────────────
+    // Re-read from the database rather than echoing the request, so the
+    // response can only ever describe what was actually committed.
+    const persisted = await prisma.booking.findUnique({
       where: { booking_id: bookingId },
-      select: {
-        truck_number_snapshot: true,
-        driver_name_snapshot: true,
-        mobile_snapshot: true,
-        partner_name_snapshot: true,
+      include: {
+        driver: { select: { driver_id: true, driver_name: true, mobile: true } },
+        vehicle: {
+          select: { vehicle_id: true, vehicle_number: true, vehicle_type: true, vehicle_name: true },
+        },
+        vehicleOwner: { select: { owner_id: true, owner_name: true, company_name: true, mobile: true } },
+        partner: { select: { partner_id: true, partner_name: true } },
       },
     });
 
     res.json({
       success: true,
-      message: 'Driver assigned successfully. The driver\'s registered vehicle was auto-assigned.',
+      message: "Driver assigned successfully. The driver's registered vehicle was auto-assigned.",
       data: {
         booking_id: bookingId,
-        driver_id: parsedDriverId,
-driver_name: freshBooking?.driver_name_snapshot || assigned?.driver_name_snapshot || null,
-        driver_phone: freshBooking?.mobile_snapshot || driver.mobile || driver.user.phone || null,
-        vehicle_number: freshBooking?.truck_number_snapshot || assignedVehicleNumber,
-        vehicle_type: assignedVehicleType || null,
+        driver_id: persisted?.driver_id ?? null,
+        driver_name: persisted?.driver_name_snapshot || persisted?.driver?.driver_name || null,
+        driver_phone: persisted?.mobile_snapshot || persisted?.driver?.mobile || null,
+        vehicle_id: persisted?.vehicle_id ?? null,
+        vehicle_number: persisted?.vehicle?.vehicle_number || persisted?.truck_number_snapshot || null,
+        vehicle_type: persisted?.vehicle?.vehicle_type || assignedVehicleType || null,
+        vehicle_name: persisted?.vehicle?.vehicle_name || null,
         vehicle_capacity_kg: assignedVehicleCapacity ?? null,
-        owner_name: freshBooking?.partner_name_snapshot || driver.currentPartner?.partner_name || null,
-        status: 'driver_assigned',
+        owner_id: persisted?.vehicleOwner?.owner_id ?? resolvedOwner.owner_id ?? null,
+        owner_name: persisted?.partner_name_snapshot || persisted?.vehicleOwner?.company_name || persisted?.vehicleOwner?.owner_name || null,
+        partner_id: persisted?.partner?.partner_id ?? null,
+        partner_name: persisted?.partner?.partner_name ?? null,
+        status: persisted?.status || 'driver_assigned',
+        assigned_at: persisted?.driver_assigned_at || null,
       },
     });
 

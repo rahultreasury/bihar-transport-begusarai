@@ -276,7 +276,7 @@ function AdminClientDetail() {
             ← Back
           </button>
           <div>
-            <h1 className="text-2xl font-bold">{client?.company_name || 'Client Detail'}</h1>
+            <h1 className="bt-page-title">{client?.company_name || 'Client Detail'}</h1>
             {client && (
               <p className="text-gray-500">
                 {client.contact_person} • {client.phone}

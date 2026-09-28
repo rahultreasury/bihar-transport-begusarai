@@ -166,7 +166,7 @@ export default function AdminSettlements() {
       <div className="space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">Monthly Settlements</h1>
+            <h1 className="bt-page-title">Monthly Settlements</h1>
             <p className="text-sm text-muted mt-1">
               {pagination.total > 0 ? `${pagination.total} settlement${pagination.total !== 1 ? 's' : ''} generated` : 'Generate and manage partner settlements'}
             </p>

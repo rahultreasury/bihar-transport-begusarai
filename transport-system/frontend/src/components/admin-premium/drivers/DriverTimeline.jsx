@@ -37,7 +37,7 @@ function TimelineEvent({ event, index }) {
       )}
 
       {/* Icon circle */}
-      <div className="relative z-10 flex items-center justify-center w-9 h-9 rounded-full border border-border/60 bg-card/40 backdrop-blur-xl shrink-0 text-sm">
+      <div className="relative z-10 flex items-center justify-center w-9 h-9 rounded-full border border-border/60 bg-card/40 shrink-0 text-sm">
         {icon}
       </div>
 

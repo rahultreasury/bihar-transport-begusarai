@@ -42,6 +42,7 @@ function createBookingController(deps = {}) {
       pickup_date, pickup_time,
       drop_location, drop_address, drop_city, drop_state, drop_pincode,
       goods_description, goods_type, goods_weight_kg, goods_volume, number_of_items, fragile,
+      quantity_unit, weight_unit,
       vehicle_type_required, estimated_distance_km, estimated_price,
     } = req.body;
 
@@ -68,6 +69,8 @@ function createBookingController(deps = {}) {
       goods_volume,
       number_of_items: number_of_items || 1,
       fragile: fragile || false,
+      quantity_unit: quantity_unit || null,
+      weight_unit: weight_unit || null,
       vehicle_type_required,
       estimated_distance_km,
       estimated_price,
@@ -79,7 +82,7 @@ function createBookingController(deps = {}) {
 
     return res.status(201).json({
       success: true,
-      message: 'Booking created successfully',
+      message: 'Enquiry submitted successfully',
       data: {
         booking_id: result.booking_id,
         status: 'pending',

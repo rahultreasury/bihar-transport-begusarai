@@ -16,7 +16,14 @@ export default function TransportResourceRegistrationModal({
   onSuccess,
   // Context for pre-selection
   context = {}, // { ownerId, driverId, vehicleId, sourcePage }
+  // Edit mode reuses the existing vehicle form and calls the update API.
+ mode = 'create',
+ editingVehicle = null,
+ editIntent = 'vehicle', // 'vehicle' | 'owner'
+ initialOwner = null,
+ initialDriver = null,
 }) {
+  const isEdit = mode === 'edit' && Boolean(editingVehicle?.vehicle_id);
   const [selectedResources, setSelectedResources] = useState({
     owner: false,
     driver: false,
@@ -45,18 +52,62 @@ export default function TransportResourceRegistrationModal({
   // Refs for focus management
   const firstInputRef = useRef(null);
 
+  // Initialize an existing vehicle for edit mode
+  useEffect(() => {
+    if (!isOpen || !isEdit || !editingVehicle) return;
+
+    const vehicleData = {
+      vehicle_number: editingVehicle.vehicle_number || '',
+      vehicle_type: editingVehicle.vehicle_type || '',
+      vehicle_name: editingVehicle.vehicle_name || '',
+      capacity_kg: editingVehicle.capacity_kg ?? '',
+      capacity_volume: editingVehicle.capacity_volume ?? '',
+      vehicle_make: editingVehicle.vehicle_make || '',
+      vehicle_model: editingVehicle.vehicle_model || '',
+      manufacturing_year: editingVehicle.manufacturing_year ?? '',
+      registration_date: editingVehicle.registration_date || '',
+      insurance_number: editingVehicle.insurance_number || '',
+      insurance_expiry: editingVehicle.insurance_expiry || '',
+      permit_number: editingVehicle.permit_number || '',
+      permit_expiry: editingVehicle.permit_expiry || '',
+      pollution_certificate: editingVehicle.pollution_certificate || '',
+      pollution_expiry: editingVehicle.pollution_expiry || '',
+      base_location: editingVehicle.base_location || '',
+      hourly_rate: editingVehicle.hourly_rate ?? '',
+      per_km_rate: editingVehicle.per_km_rate ?? '',
+      owner_id: editingVehicle.owner_id ? String(editingVehicle.owner_id) : '',
+      driver_id: editingVehicle.driver_id ? String(editingVehicle.driver_id) : '',
+      current_status: editingVehicle.current_status || (editingVehicle.is_available === false ? 'inactive' : 'available'),
+    };
+
+    setSelectedResources({ owner: false, driver: false, vehicle: true });
+    setFormData({ owner: {}, driver: {}, vehicle: vehicleData });
+    setErrors({ owner: {}, driver: {}, vehicle: {} });
+    setServerError(null);
+    setCreatedEntities({});
+    setStep('form');
+    setTimeout(() => firstInputRef.current?.focus(), 100);
+  }, [isOpen, isEdit, editingVehicle]);
+
   // Initialize from context
   useEffect(() => {
-    if (isOpen && step === 'select') {
+    if (isOpen && step === 'select' && !isEdit) {
       const initialSelection = { owner: false, driver: false, vehicle: false };
       
       // Auto-select based on context
       if (context.ownerId) initialSelection.owner = true;
       if (context.driverId) initialSelection.driver = true;
       if (context.vehicleId) initialSelection.vehicle = true;
+      // Support resourceType for TripWizard integration (pre-select single resource)
+      if (context.resourceType) {
+        initialSelection.owner = false;
+        initialSelection.driver = false;
+        initialSelection.vehicle = false;
+        initialSelection[context.resourceType] = true;
+      }
       
       // If no context, default to all three for flexibility
-      if (!context.ownerId && !context.driverId && !context.vehicleId) {
+      if (!context.ownerId && !context.driverId && !context.vehicleId && !context.resourceType) {
         initialSelection.owner = true;
         initialSelection.driver = true;
         initialSelection.vehicle = true;
@@ -145,10 +196,8 @@ export default function TransportResourceRegistrationModal({
       if (!rawMobile) driverErrors.mobile = 'Mobile number is required';
       else if (!/^[6-9]\d{9}$/.test(rawMobile)) driverErrors.mobile = 'Enter a valid 10-digit mobile number';
       if (!driverForm.license_number?.trim()) driverErrors.license_number = 'License number is required';
-      // transport_owner_id is required unless is_self_owner
-      if (!driverForm.is_self_owner && !driverForm.transport_owner_id) {
-        driverErrors.transport_owner_id = 'Transport Owner is required (or enable "Driver is the vehicle owner")';
-      }
+      // transport_owner_id is OPTIONAL - driver can be created without owner
+      // is_self_owner is an alternative path handled by backend
       
       if (Object.keys(driverErrors).length > 0) {
         newErrors.driver = driverErrors;
@@ -162,8 +211,7 @@ export default function TransportResourceRegistrationModal({
       if (!vehicleForm.vehicle_number?.trim()) vehicleErrors.vehicle_number = 'Vehicle number is required';
       if (!vehicleForm.vehicle_type?.trim()) vehicleErrors.vehicle_type = 'Vehicle type is required';
       if (!vehicleForm.vehicle_name?.trim()) vehicleErrors.vehicle_name = 'Vehicle name is required';
-      if (!vehicleForm.owner_id) vehicleErrors.owner_id = 'Transport Owner is required';
-      if (!vehicleForm.driver_id) vehicleErrors.driver_id = 'Driver is required';
+      // owner_id and driver_id are OPTIONAL - vehicle can be created independently
       if (!vehicleForm.current_status) vehicleErrors.current_status = 'Status is required';
       
       if (Object.keys(vehicleErrors).length > 0) {
@@ -183,8 +231,47 @@ export default function TransportResourceRegistrationModal({
     setSubmitting(true);
     setServerError(null);
     const newEntities = {};
-
+ 
     try {
+      if (isEdit) {
+        const vehicleForm = formData.vehicle;
+        const vehiclePayload = {
+          vehicle_number: vehicleForm.vehicle_number.trim(),
+          vehicle_type: vehicleForm.vehicle_type.trim(),
+          vehicle_name: vehicleForm.vehicle_name.trim(),
+          capacity_kg: vehicleForm.capacity_kg === '' || vehicleForm.capacity_kg == null ? null : Number(vehicleForm.capacity_kg),
+          capacity_volume: vehicleForm.capacity_volume === '' || vehicleForm.capacity_volume == null ? null : Number(vehicleForm.capacity_volume),
+          vehicle_make: vehicleForm.vehicle_make?.trim() || null,
+          vehicle_model: vehicleForm.vehicle_model?.trim() || null,
+          manufacturing_year: vehicleForm.manufacturing_year === '' || vehicleForm.manufacturing_year == null ? null : Number(vehicleForm.manufacturing_year),
+          registration_date: vehicleForm.registration_date?.trim() || null,
+          insurance_number: vehicleForm.insurance_number?.trim() || null,
+          insurance_expiry: vehicleForm.insurance_expiry?.trim() || null,
+          permit_number: vehicleForm.permit_number?.trim() || null,
+          permit_expiry: vehicleForm.permit_expiry?.trim() || null,
+          pollution_certificate: vehicleForm.pollution_certificate?.trim() || null,
+          pollution_expiry: vehicleForm.pollution_expiry?.trim() || null,
+          base_location: vehicleForm.base_location?.trim() || null,
+          hourly_rate: vehicleForm.hourly_rate === '' || vehicleForm.hourly_rate == null ? null : Number(vehicleForm.hourly_rate),
+          per_km_rate: vehicleForm.per_km_rate === '' || vehicleForm.per_km_rate == null ? null : Number(vehicleForm.per_km_rate),
+          owner_id: vehicleForm.owner_id || null,
+          driver_id: vehicleForm.driver_id || null,
+          current_status: vehicleForm.current_status || 'available',
+          is_available: (vehicleForm.current_status || 'available') === 'available',
+        };
+ 
+        const res = await adminAPI.updateVehicle(editingVehicle.vehicle_id, vehiclePayload);
+        if (res.data?.success) {
+          const updatedVehicle = res.data.data || editingVehicle;
+          setCreatedEntities({ vehicle: updatedVehicle });
+          setStep('success');
+          onSuccess?.({ vehicle: updatedVehicle });
+        } else {
+          throw new Error(res.data?.message || 'Failed to update vehicle');
+        }
+        return;
+      }
+ 
       // Create Owner first (if selected)
       if (selectedResources.owner) {
         const ownerPayload = {
@@ -204,7 +291,7 @@ export default function TransportResourceRegistrationModal({
           address: formData.owner.address?.trim() || null,
           alternate_mobile: formData.owner.alternate_mobile?.trim() || null,
         };
-        const res = await adminAPI.createPartner(ownerPayload);
+        const res = await adminAPI.createVehicleOwner(ownerPayload);
         if (res.data?.success) {
           newEntities.owner = res.data.data;
           showToast('✓ Transport Owner registered successfully.');
@@ -215,6 +302,10 @@ export default function TransportResourceRegistrationModal({
 
       // Create Driver (if selected)
       if (selectedResources.driver) {
+        // Auto-enable self-owner if no owner is being created/selected and driver doesn't have explicit owner
+        const hasOwner = selectedResources.owner || formData.driver.transport_owner_id;
+        const useSelfOwner = formData.driver.is_self_owner || (!hasOwner && !selectedResources.owner);
+        
         const driverPayload = {
           driver_name: formData.driver.driver_name.trim(),
           mobile: formData.driver.mobile.trim(),
@@ -227,7 +318,7 @@ export default function TransportResourceRegistrationModal({
           state: formData.driver.state || 'Bihar',
           address: formData.driver.address?.trim() || undefined,
           emergency_contact: formData.driver.emergency_contact?.trim() || undefined,
-          ...(formData.driver.is_self_owner
+          ...(useSelfOwner
             ? { is_self_owner: true }
             : { transport_owner_id: formData.driver.transport_owner_id ? parseInt(formData.driver.transport_owner_id) : (newEntities.owner?.owner_id || undefined) }),
         };
@@ -274,12 +365,16 @@ export default function TransportResourceRegistrationModal({
           current_status: formData.vehicle.current_status,
           assign_owner_driver: formData.vehicle.assign_owner_driver,
         };
-        // Vehicle must be created under an owner
+        // Owner is optional - vehicle can be created independently
         const ownerId = formData.vehicle.owner_id ? parseInt(formData.vehicle.owner_id) : (newEntities.owner?.owner_id);
-        if (!ownerId) {
-          throw new Error('Transport Owner is required to register a vehicle');
+        let res;
+        if (ownerId) {
+          // Create vehicle under a specific owner
+          res = await adminAPI.createVehicleOwnerVehicle(ownerId, vehiclePayload);
+        } else {
+          // Create standalone vehicle (no owner) - use admin vehicle creation endpoint
+          res = await adminAPI.createVehicle(vehiclePayload);
         }
-        const res = await adminAPI.createVehicleOwnerVehicle(ownerId, vehiclePayload);
         if (res.data?.success) {
           newEntities.vehicle = res.data.data;
           showToast('✓ Vehicle registered successfully.');
@@ -299,26 +394,30 @@ export default function TransportResourceRegistrationModal({
     } finally {
       setSubmitting(false);
     }
-  }, [selectedResources, formData, validateAll, showToast]);
+  }, [isEdit, editingVehicle, selectedResources, formData, validateAll, showToast, onSuccess]);
 
-  const handleBack = useCallback(() => {
-    setStep('select');
-    setServerError(null);
-  }, []);
+ const handleClose = useCallback(() => {
+   if (step === 'form' && !submitting) {
+     if (window.confirm('You have unsaved changes. Are you sure you want to close?')) {
+       onClose();
+     }
+   } else {
+     onClose();
+   }
+ }, [step, submitting, onClose]);
 
-  const handleDone = useCallback(() => {
-    onClose();
-  }, [onClose]);
+ const handleBack = useCallback(() => {
+   if (isEdit) {
+     handleClose();
+     return;
+   }
+   setStep('select');
+   setServerError(null);
+ }, [isEdit, handleClose]);
 
-  const handleClose = useCallback(() => {
-    if (step === 'form' && !submitting) {
-      if (window.confirm('You have unsaved changes. Are you sure you want to close?')) {
-        onClose();
-      }
-    } else {
-      onClose();
-    }
-  }, [step, submitting, onClose]);
+   const handleDone = useCallback(() => {
+     onClose();
+   }, [onClose]);
 
   // Render resource selection cards
   const renderSelectionStep = () => (
@@ -396,10 +495,12 @@ export default function TransportResourceRegistrationModal({
           errors={errors.driver}
           onChange={(field, value) => handleFormDataChange('driver', field, value)}
           onErrorsChange={(errs) => handleFormErrorsChange('driver', errs)}
-          context={context}
-          createdOwner={createdEntities.owner}
-          createdDriver={createdEntities.driver}
-        />
+         context={context}
+         createdOwner={createdEntities.owner}
+         createdDriver={createdEntities.driver}
+         initialOwner={initialOwner}
+         initialDriver={initialDriver}
+       />
       )}
       
       {selectedResources.vehicle && (
@@ -439,7 +540,9 @@ export default function TransportResourceRegistrationModal({
               Registering...
             </>
           ) : (
-            `Register ${Object.values(selectedResources).filter(v => v).length} Resource${Object.values(selectedResources).filter(v => v).length > 1 ? 's' : ''}`
+            isEdit
+              ? 'Update Vehicle'
+              : `Register ${Object.values(selectedResources).filter(v => v).length} Resource${Object.values(selectedResources).filter(v => v).length > 1 ? 's' : ''}`
           )}
         </button>
       </div>
@@ -516,7 +619,7 @@ export default function TransportResourceRegistrationModal({
       {toast && (
         <div className="fixed top-6 right-6 z-[100] animate-slide-down">
           <div className={`
-            px-5 py-3.5 rounded-2xl shadow-2xl border text-sm font-semibold flex items-center gap-3 backdrop-blur-sm
+            px-5 py-3.5 rounded-2xl shadow-2xl border text-sm font-semibold flex items-center gap-3
             ${toast.type === 'success'
               ? 'bg-emerald-50 dark:bg-emerald-900/50 border-emerald-200 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300'
               : 'bg-red-50 dark:bg-red-900/50 border-red-200 dark:border-red-700 text-red-700 dark:text-red-300'
@@ -543,22 +646,28 @@ export default function TransportResourceRegistrationModal({
 
       {/* Backdrop */}
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={handleClose} />
+        <div className="fixed inset-0 bg-black/50" onClick={handleClose} />
 
         {/* Modal */}
-        <div className="relative bg-white dark:bg-gray-900 rounded-3xl border border-gray-200 dark:border-gray-700 shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden animate-scale-in flex flex-col">
+        <div className="relative bg-white dark:bg-gray-900rounded-[16px] border border-gray-200 dark:border-gray-700 shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden animate-scale-in flex flex-col">
           {/* Sticky Header */}
           <div className="sticky top-0 z-10 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 px-7 py-5 flex items-center justify-between rounded-t-3xl">
             <div>
               <h2 className="text-xl font-bold tracking-tight text-gray-900 dark:text-white">
-                {step === 'select' ? 'Register Transport Resources' : step === 'form' ? 'Resource Details' : 'Registration Complete'}
+                {isEdit
+                  ? step === 'form' ? 'Edit Vehicle' : 'Vehicle Updated'
+                  : step === 'select' ? 'Register Transport Resources' : step === 'form' ? 'Resource Details' : 'Registration Complete'}
               </h2>
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
-                {step === 'select' 
-                  ? 'Select the resources you want to register. Each is created independently.'
-                  : step === 'form'
-                  ? 'Fill in the details for each selected resource. Required fields marked with *.'
-                  : 'All selected resources have been created successfully.'}
+                {isEdit
+                  ? step === 'form'
+                    ? 'Update the vehicle details below. Required fields are marked with *.'
+                    : 'The vehicle has been updated successfully.'
+                  : step === 'select'
+                    ? 'Select the resources you want to register. Each is created independently.'
+                    : step === 'form'
+                      ? 'Fill in the details for each selected resource. Required fields marked with *.'
+                      : 'All selected resources have been created successfully.'}
               </p>
             </div>
             <button

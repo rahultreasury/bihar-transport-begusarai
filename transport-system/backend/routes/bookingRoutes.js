@@ -103,6 +103,8 @@ router.post('/create', protect, [
       pickup_date, pickup_time,
       drop_location, drop_address, drop_city, drop_state, drop_pincode,
       goods_description, goods_type, goods_weight_kg, goods_volume, number_of_items, fragile,
+      quantity_unit, weight_unit,
+      special_instructions,
       vehicle_type_required
     } = req.body;
 
@@ -128,13 +130,18 @@ router.post('/create', protect, [
       drop_city,
       drop_state: drop_state || 'Bihar',
       drop_pincode: drop_pincode || null,
-      goods_description,
-      goods_type: goods_type || null,
-      goods_weight_kg: goods_weight_kg ? Number(goods_weight_kg) : null,
-      goods_volume: goods_volume ? Number(goods_volume) : null,
-      number_of_items: number_of_items || 1,
-      fragile: fragile ? true : false,
-      vehicle_type_required,
+       goods_description,
+       goods_type: goods_type || null,
+       goods_weight_kg: goods_weight_kg ? Number(goods_weight_kg) : null,
+       goods_volume: goods_volume ? Number(goods_volume) : null,
+       number_of_items: number_of_items || 1,
+       fragile: fragile ? true : false,
+       quantity_unit: quantity_unit || null,
+       weight_unit: weight_unit || null,
+       // Free-text handling/delivery notes from the booking form. Optional;
+       // blank input is stored as NULL rather than an empty string.
+       special_instructions: special_instructions ? String(special_instructions).trim() || null : null,
+       vehicle_type_required,
       estimated_distance_km,
       estimated_price,
       final_price: estimated_price,
@@ -143,7 +150,7 @@ router.post('/create', protect, [
 
     res.status(201).json({
       success: true,
-      message: 'Booking created successfully',
+      message: 'Enquiry submitted successfully',
       data: {
         booking_id: result.booking_id,
         booking_number: result.booking_number,
@@ -429,6 +436,7 @@ booking_number: booking.booking_number,
       goods_volume: booking.goods_volume,
       number_of_items: booking.number_of_items,
       fragile: booking.fragile,
+      special_instructions: booking.special_instructions,
       vehicle_type_required: booking.vehicle_type_required,
       estimated_distance_km: booking.estimated_distance_km,
       estimated_price: booking.estimated_price,

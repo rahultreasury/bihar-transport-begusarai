@@ -67,14 +67,29 @@ const BookingDetails = React.memo(function BookingDetails({ booking }) {
         ? `${Number(booking.estimated_distance_km).toLocaleString('en-IN')} km`
         : '—',
     },
-    { label: 'Goods Type', value: booking.goods_type || '—' },
+    {
+      label: 'Material / Goods',
+      value: booking.goods_description || '—',
+      fullWidth: true,
+    },
+    {
+      label: 'Quantity',
+      value: booking.quantity_unit
+        ? (booking.number_of_items != null
+          ? `${booking.number_of_items} ${booking.quantity_unit}`
+          : booking.quantity_unit)
+        : (booking.number_of_items != null ? `${booking.number_of_items}` : '—'),
+    },
     {
       label: 'Weight',
-      value: booking.goods_weight_kg
-        ? `${Number(booking.goods_weight_kg).toLocaleString('en-IN')} kg`
-        : '—',
+      value: booking.weight_unit
+        ? (booking.goods_weight_kg != null
+          ? `${Number(booking.goods_weight_kg).toLocaleString('en-IN')} ${booking.weight_unit}`
+          : booking.weight_unit)
+        : (booking.goods_weight_kg != null
+          ? `${Number(booking.goods_weight_kg).toLocaleString('en-IN')} kg`
+          : '—'),
     },
-    { label: 'Items', value: booking.number_of_items || '—' },
     { label: 'Fragile', value: booking.fragile ? 'Yes' : 'No' },
   ];
 

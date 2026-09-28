@@ -40,7 +40,7 @@ const InfoRow = React.memo(function InfoRow({ label, value }) {
 
 const SectionCard = React.memo(function SectionCard({ title, children, className = '' }) {
   return (
-    <div className={`rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl overflow-hidden ${className}`}>
+    <div className={`rounded-2xl border border-border/60 bg-card/40 overflow-hidden ${className}`}>
       <div className="px-5 py-3.5 border-b border-border/40">
         <span className="text-sm font-bold tracking-tight">{title}</span>
       </div>
@@ -105,7 +105,7 @@ function AdminBookingDetail() {
 
   return (
     <AdminShell navItems={NAV_ITEMS} activeKey={activeNav.key} onNav={(k) => {}}>
-      <div className="space-y-5 max-w-5xl">
+      <div className="space-y-5 max-w-none">
         {/* Back button */}
         <button
           onClick={() => navigate('/admin/bookings')}
@@ -116,7 +116,7 @@ function AdminBookingDetail() {
         </button>
 
         {/* Header */}
-        <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-5">
+        <div className="rounded-2xl border border-border/60 bg-card/40 p-5">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3 min-w-0">
               <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center text-white font-bold text-lg shrink-0">
@@ -187,7 +187,7 @@ function AdminBookingDetail() {
         {!loading && !error && booking && (
           <div className="space-y-5">
             {/* Route + Summary banner */}
-            <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-5">
+            <div className="rounded-2xl border border-border/60 bg-card/40 p-5">
               <div className="grid md:grid-cols-2 gap-6 items-center">
                 <div className="space-y-4">
                   <div>
@@ -259,11 +259,38 @@ function AdminBookingDetail() {
               <SectionCard title="Cargo / Goods">
                 <div className="grid grid-cols-2 gap-x-4 gap-y-3">
                   <InfoRow label="Goods Type" value={booking.goods_type || '—'} />
-                  <InfoRow label="Description" value={booking.goods_description || '—'} />
-                  <InfoRow label="Weight" value={booking.goods_weight_kg != null ? `${booking.goods_weight_kg} kg` : '—'} />
-                  <InfoRow label="Items" value={booking.number_of_items != null ? String(booking.number_of_items) : '—'} />
+                  <InfoRow label="Material / Goods" value={booking.goods_description || '—'} />
+                  <InfoRow
+                    label="Quantity"
+                    value={booking.quantity_unit
+                      ? (booking.number_of_items != null
+                        ? `${booking.number_of_items} ${booking.quantity_unit}`
+                        : booking.quantity_unit)
+                      : (booking.number_of_items != null ? String(booking.number_of_items) : '—')}
+                  />
+                  <InfoRow
+                    label="Weight"
+                    value={booking.weight_unit
+                      ? (booking.goods_weight_kg != null
+                        ? `${Number(booking.goods_weight_kg).toLocaleString('en-IN')} ${booking.weight_unit}`
+                        : booking.weight_unit)
+                      : (booking.goods_weight_kg != null
+                        ? `${Number(booking.goods_weight_kg).toLocaleString('en-IN')} kg`
+                        : '—')}
+                  />
                   {booking.fragile && <InfoRow label="Fragile" value="Yes" />}
                 </div>
+                {/* Customer-entered handling/delivery notes. Rendered full-width
+                    below the grid because the value is free text and can be
+                    several lines. Hidden entirely when the customer left it
+                    blank, so no empty label is ever shown. `whitespace-pre-line`
+                    preserves the line breaks they typed in the textarea. */}
+                {booking.special_instructions && (
+                  <div className="mt-3 pt-3 border-t border-border/40">
+                    <div className="text-[11px] font-medium text-muted uppercase tracking-wider mb-1">Special Instructions</div>
+                    <div className="text-sm text-text break-words whitespace-pre-line">{booking.special_instructions}</div>
+                  </div>
+                )}
               </SectionCard>
 
               {/* Pricing */}

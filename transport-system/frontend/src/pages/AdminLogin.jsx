@@ -276,7 +276,7 @@ function AdminLogin() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, ease: 'easeOut' }}
           >
-            <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center ring-1 ring-white/20">
+            <div className="w-12 h-12 rounded-xl bg-white/15 flex items-center justify-center ring-1 ring-white/20">
               <Truck size={24} className="text-white" />
             </div>
             <div>
@@ -482,13 +482,12 @@ function AdminLogin() {
                       Remember me
                     </span>
                   </label>
-                  <a
-                    href="#"
-                    onClick={(e) => e.preventDefault()}
+                  <Link
+                    to="/forgot-password"
                     className="text-sm font-medium text-blue-600 hover:text-blue-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/40 rounded-md"
                   >
                     Forgot password?
-                  </a>
+                  </Link>
                 </div>
 
                 {/* Submit button */}

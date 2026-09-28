@@ -115,9 +115,10 @@ class TripService {
    * Create a new trip.
    */
   async createTrip(data, user = null) {
+    const sourceType = data.source_type || 'ONLINE_BOOKING';
+
     // Validate required fields
     const requiredFields = [
-      'user_id',
       'transport_owner_id',
       'vehicle_id',
       'driver_id',
@@ -134,12 +135,31 @@ class TripService {
       }
     }
 
-    // Validate that user exists
-    const userExists = await prisma.user.findUnique({
-      where: { user_id: data.user_id },
-    });
-    if (!userExists) {
-      throw new ValidationError('Client not found');
+    // Validate source-specific fields
+    if (sourceType === 'ONLINE_BOOKING') {
+      if (!data.user_id) {
+        throw new ValidationError('user_id is required for ONLINE_BOOKING trips');
+      }
+      const userExists = await prisma.user.findUnique({
+        where: { user_id: data.user_id },
+      });
+      if (!userExists) {
+        throw new ValidationError('Client not found');
+      }
+    } else if (sourceType === 'OFFLINE_CLIENT') {
+      if (!data.client_id) {
+        throw new ValidationError('client_id is required for OFFLINE_CLIENT trips');
+      }
+      const clientExists = await prisma.client.findUnique({
+        where: { client_id: data.client_id, deleted_at: null },
+      });
+      if (!clientExists) {
+        throw new ValidationError('Offline client not found');
+      }
+    } else if (sourceType === 'DIRECT') {
+      // DIRECT trips don't require user_id or client_id
+    } else {
+      throw new ValidationError(`Invalid source_type: ${sourceType}`);
     }
 
     // Validate that transport owner exists
@@ -199,9 +219,10 @@ class TripService {
     // Generate trip number
     const tripNumber = await this.tripRepo.generateTripNumber();
 
-    // Create trip
+    // Create trip (exclude partner_id - not a Trip model field, used for validation only)
+    const { partner_id: _partnerId, ...tripData } = data;
     const trip = await this.tripRepo.create({
-      ...data,
+      ...tripData,
       trip_number: tripNumber,
       status: data.status || 'PENDING',
     });
@@ -788,6 +809,32 @@ class TripService {
    */
   async getDriversByOwner(ownerId, search = '') {
     return this.tripRepo.getDriversByOwner(ownerId, search);
+  }
+
+  /**
+   * Resolve the VehicleOwner linked to a Partner.
+   * A Partner links to exactly one VehicleOwner via VehicleOwner.partner_link.
+   * @param {number} partnerId
+   * @returns {Promise<Object|null>}
+   */
+  async getOwnerByPartnerId(partnerId) {
+    return this.tripRepo.getOwnerByPartnerId(partnerId);
+  }
+
+  /**
+   * Get trips belonging to a Partner's linked VehicleOwner.
+   *
+   * Scoping: Trip.transport_owner_id → VehicleOwner.partner_link →
+   * Partner.partner_id. This guarantees a Partner can ONLY see trips whose
+   * transport owner is linked to their own partner account — never trips
+   * belonging to another partner.
+   *
+   * @param {number} partnerId
+   * @param {Object} filters - { page, limit, status, search, date_from, date_to, sort_by, sort_order }
+   * @returns {Promise<{ trips: Array, pagination: Object }>}
+   */
+  async getTripsByPartner(partnerId, filters = {}) {
+    return this.tripRepo.getTripsByPartner(partnerId, filters);
   }
 }
 

@@ -4,8 +4,8 @@ import { normalizeQuoteStatus, normalizeStatus, isConfirmedStatus } from '../../
 const STATUS_META = {
   pending: {
     emoji: '📋',
-    label: 'Booking Received',
-    description: 'Your booking request has been received. Our logistics team is finding the best transport price for you.',
+    label: 'Enquiry Received',
+    description: 'Your transport enquiry has been submitted. Our team will review your requirement and contact you regarding the quotation and confirmation.',
     color: 'bg-amber-500',
     textColor: 'text-amber-600',
     bgColor: 'bg-amber-50',

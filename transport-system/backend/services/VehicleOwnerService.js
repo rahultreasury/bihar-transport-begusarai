@@ -396,6 +396,61 @@ class VehicleOwnerService {
     return await this.repo.removeDriverFromVehicle(vehicleId);
   }
 
+  /**
+   * Create a standalone vehicle (without owner).
+   */
+  async createStandaloneVehicle(data) {
+    // Validate required fields
+    const requiredFields = ['vehicle_number', 'vehicle_type', 'vehicle_name'];
+    for (const field of requiredFields) {
+      if (!data[field] || String(data[field]).trim() === '') {
+        throw new Error(`${field.replace(/_/g, ' ')} is required`);
+      }
+    }
+
+    // Normalize vehicle number
+    const vehicleNumber = String(data.vehicle_number).trim().toUpperCase();
+
+    const vehicleData = {
+      vehicle_number: vehicleNumber,
+      vehicle_type: data.vehicle_type,
+      vehicle_name: data.vehicle_name,
+      capacity_kg: data.capacity_kg ? parseFloat(data.capacity_kg) : null,
+      capacity_volume: data.capacity_volume ? parseFloat(data.capacity_volume) : null,
+      body_type: data.body_type || null,
+      vehicle_make: data.vehicle_make || null,
+      vehicle_model: data.vehicle_model || null,
+      manufacturing_year: data.manufacturing_year ? parseInt(data.manufacturing_year) : null,
+      registration_date: data.registration_date || null,
+      insurance_number: data.insurance_number || null,
+      insurance_expiry: data.insurance_expiry || null,
+      permit_number: data.permit_number || null,
+      permit_expiry: data.permit_expiry || null,
+      pollution_certificate: data.pollution_certificate || null,
+      pollution_expiry: data.pollution_expiry || null,
+      base_location: data.base_location || null,
+      hourly_rate: data.hourly_rate ? parseFloat(data.hourly_rate) : null,
+      per_km_rate: data.per_km_rate ? parseFloat(data.per_km_rate) : null,
+      owner_id: null,
+      partner_id: null,
+      driver_id: data.driver_id ? parseInt(data.driver_id) : null,
+      current_status: data.current_status || 'available',
+      is_available: data.current_status === 'available',
+      is_verified: false,
+    };
+
+    // If driver_id is provided, validate driver exists
+    if (vehicleData.driver_id) {
+      const driver = await this.repo.findDriverById(vehicleData.driver_id);
+      if (!driver) {
+        throw new Error('Driver not found');
+      }
+    }
+
+    const vehicle = await this.repo.createStandaloneVehicle(vehicleData);
+    return vehicle;
+  }
+
   async getPartnerVehicles(partnerId, filters = {}) {
     return await this.repo.getPartnerVehicles(partnerId, filters);
   }

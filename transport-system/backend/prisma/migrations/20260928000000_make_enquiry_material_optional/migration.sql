@@ -1,0 +1,27 @@
+-- Allow an enquiry to be raised before the customer knows the load.
+--
+-- WHY
+--   The booking flow asks for material / quantity / weight, but none of them
+--   are needed to coordinate a transport request: a customer routinely books
+--   a vehicle first and tells the team what is going in it on the call. The
+--   frontend already treats them as non-blocking, so this is the only thing
+--   still forcing them to be answered.
+--
+-- WHAT THIS CHANGES
+--   One column: enquiries.material goes from NOT NULL to NULL.
+--
+-- SAFETY
+--   This is purely PERMISSIVE — it only removes a restriction:
+--     * no existing row is read, rewritten or deleted;
+--     * every existing enquiry already has a material value, and it is
+--       preserved exactly as-is;
+--     * readers that expect a string keep working (they already handled
+--       nullable quantity/weight/notes the same way);
+--     * an unanswered field is stored as NULL, never as a placeholder such as
+--       "Not specified" or an empty-string masquerading as an answer.
+--
+--   Rolling this back would only be needed if the requirement to always know
+--   the material at intake time came back; the ALTER is reversible because no
+--   NULLs can be produced until the code that allows them is deployed.
+ALTER TABLE "enquiries"
+  ALTER COLUMN "material" DROP NOT NULL;

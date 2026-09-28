@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { adminAPI } from '../../../services/api';
 
 const BIHAR_CITIES = [
   'Patna', 'Gaya', 'Bhagalpur', 'Muzaffarpur', 'Purnia', 'Darbhanga',
@@ -120,9 +121,34 @@ export default function OwnerRegistrationSection({
       onChange('address', createdOwner.address || '');
       onChange('alternate_mobile', createdOwner.alternate_mobile || '');
     } else if (context.ownerId && Object.keys(formData).length === 0) {
-      // Could fetch owner details here if needed
+      // Fetch owner details to pre-fill the form
+      const fetchOwner = async () => {
+        try {
+          const res = await adminAPI.getVehicleOwner(context.ownerId);
+          if (res.data?.success && res.data.data) {
+            const owner = res.data.data;
+            onChange('owner_name', owner.owner_name || '');
+            onChange('phone', owner.mobile || '');
+            onChange('city', owner.city || '');
+            onChange('company_name', owner.company_name || '');
+            onChange('email', owner.email || '');
+            onChange('state', owner.state || 'Bihar');
+            onChange('gst_number', owner.gst_number || '');
+            onChange('pan_number', owner.pan_number || '');
+            onChange('bank_name', owner.bank_name || '');
+            onChange('account_number', owner.bank_account || '');
+            onChange('ifsc', owner.bank_ifsc || '');
+            onChange('upi_id', owner.upi_id || '');
+            onChange('address', owner.address || '');
+            onChange('alternate_mobile', owner.alternate_mobile || '');
+          }
+        } catch (err) {
+          console.error('Failed to fetch owner details:', err);
+        }
+      };
+      fetchOwner();
     }
-  }, [createdOwner, context.ownerId, formData, onChange]);
+  }, [createdOwner, context.ownerId, formData]);
 
   const inputCls = (f) =>
     `w-full px-4 py-3.5 rounded-xl border text-[15px] leading-relaxed transition duration-150 ${

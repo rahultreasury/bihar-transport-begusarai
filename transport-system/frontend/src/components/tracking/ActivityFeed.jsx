@@ -1,7 +1,7 @@
 import React from 'react';
 
 const EVENT_META = {
-  booking_created: { label: 'Booking Received', icon: '📋' },
+  booking_created: { label: 'Enquiry Received', icon: '📋' },
   quote_sent: { label: 'Quote Ready', icon: '💬' },
   quote_accepted: { label: 'Quote Accepted', icon: '✅' },
   quote_rejected: { label: 'Quote Rejected', icon: '❌' },

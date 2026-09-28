@@ -70,7 +70,7 @@ function TripSettlementModal({ isOpen, onClose, trip, onSaved }) {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
         <div className="p-6 border-b border-border/60">
           <div className="flex items-center justify-between">

@@ -32,9 +32,16 @@ const handleValidation = (req, res, next) => {
 const handleError = (res, error, defaultMsg = 'Server error') => {
   console.error('Partner application route error:', error);
   if (error.code === 'P2002') {
-    return res.status(400).json({ success: false, message: 'A partner with this mobile or email already exists' });
+    const target = error.meta?.target;
+    if (Array.isArray(target) && (target.includes('email') || target.includes('phone'))) {
+      return res.status(400).json({ success: false, message: 'A partner with this mobile or email already exists' });
+    }
+    if (Array.isArray(target) && target.includes('application_code')) {
+      return res.status(409).json({ success: false, message: 'Application code collision. Please try again.' });
+    }
+    return res.status(409).json({ success: false, message: 'A unique constraint was violated. Please try again.' });
   }
-  res.status(500).json({ success: false, message: error.message || defaultMsg });
+  res.status(500).json({ success: false, message: defaultMsg });
 };
 
 // ============================
@@ -98,6 +105,7 @@ router.post('/apply', [
 
     // Generate application code
     const lastApp = await prisma.partnerApplication.findFirst({
+      where: { application_code: { not: null } },
       orderBy: { application_code: 'desc' },
       select: { application_code: true },
     });

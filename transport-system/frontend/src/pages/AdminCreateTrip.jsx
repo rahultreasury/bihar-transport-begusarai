@@ -56,7 +56,7 @@ function AdminCreateTrip() {
         {/* Page Header */}
         <div className="flex items-center justify-between mb-8">
           <div>
-            <h1 className="text-3xl font-bold text-text">Create New Trip</h1>
+            <h1 className="bt-page-title">Create New Trip</h1>
             <p className="text-muted mt-2 text-base">Create and manage a new transport trip</p>
           </div>
           <div className="flex items-center gap-3 text-sm text-muted">

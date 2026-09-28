@@ -3,8 +3,14 @@ import { useQuery } from '@tanstack/react-query';
 import { adminAPI } from '../services/api';
 import AdminShell from '../components/admin-premium/layout/AdminShell';
 import SectionCard from '../components/admin-premium/ui/SectionCard';
-import { LoadingSkeleton } from '../components/admin-premium/ui/LoadingSkeleton';
+import { SkeletonKpis } from '../components/admin-premium/ui/LoadingSkeleton';
 import EmptyState from '../components/admin-premium/ui/EmptyState';
+import {
+  PageHeader,
+  Button,
+  ErrorState,
+  IconTile,
+} from '../components/admin-premium/ui/AdminUI';
 import { FileText, Download, Calendar, TrendingUp, Users, Truck, DollarSign, MapPin } from 'lucide-react';
 
 const NAV_ITEMS = [
@@ -25,6 +31,22 @@ const PERIOD_OPTIONS = [
   { value: 'yearly', label: 'Yearly' },
 ];
 
+/**
+ * Icon tile tone per report card.
+ *
+ * The tiles are all the same size and shape; only the icon's semantic tint
+ * varies. That keeps the grid calm and readable while still letting an
+ * operator tell revenue from fleet at a glance.
+ */
+const CARD_TONE = {
+  'Revenue Report': 'success',
+  'Booking Report': 'orange',
+  'Driver Report': 'info',
+  'Vehicle Report': 'navy',
+  'Top Routes': 'orange',
+  'Customer Report': 'navy',
+};
+
 function AdminReports() {
   const [activeKey, setActiveKey] = useState('reports');
   const [period, setPeriod] = useState('monthly');
@@ -44,43 +66,31 @@ function AdminReports() {
       title: 'Revenue Report',
       icon: DollarSign,
       description: `Total revenue: ₹${(stats.todayRevenue || 0).toLocaleString('en-IN')}`,
-      color: 'from-green-500/20 to-green-500',
-      accent: 'text-green-500',
     },
     {
       title: 'Booking Report',
       icon: FileText,
       description: `${stats.todayBookings || 0} bookings today, ${stats.totalBookings || 0} total`,
-      color: 'from-amber-500/20 to-amber-500',
-      accent: 'text-amber-500',
     },
     {
       title: 'Driver Report',
       icon: Users,
       description: `${stats.activeTrips || 0} active drivers, ${stats.completedDeliveries || 0} completed trips`,
-      color: 'from-sky-500/20 to-sky-500',
-      accent: 'text-sky-500',
     },
     {
       title: 'Vehicle Report',
       icon: Truck,
       description: 'Vehicle utilization and fleet performance',
-      color: 'from-purple-500/20 to-purple-500',
-      accent: 'text-purple-500',
     },
     {
       title: 'Top Routes',
       icon: MapPin,
       description: 'Most popular transport routes this period',
-      color: 'from-orange-500/20 to-orange-500',
-      accent: 'text-orange-500',
     },
     {
       title: 'Customer Report',
       icon: Users,
       description: `${stats.totalUsers || 0} registered customers`,
-      color: 'from-indigo-500/20 to-indigo-500',
-      accent: 'text-indigo-500',
     },
   ], [stats]);
 
@@ -116,76 +126,69 @@ function AdminReports() {
 
   return (
     <AdminShell navItems={NAV_ITEMS} activeKey={activeKey} onNav={(k) => setActiveKey(k)}>
-      <div className="space-y-6" id="admin-main-content">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">Reports</h1>
-            <p className="text-sm text-muted mt-1">Export and analyze business performance</p>
-          </div>
-          <div className="flex items-center gap-2">
-            {/* Period Selector */}
-            <div className="flex items-center rounded-xl border border-border/60 bg-card/40 p-1">
-              {PERIOD_OPTIONS.map(opt => (
-                <button
-                  key={opt.value}
-                  onClick={() => setPeriod(opt.value)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-                    period === opt.value
-                      ? 'bg-amber-500 text-white shadow-sm'
-                      : 'text-muted hover:text-text'
-                  }`}
-                  aria-pressed={period === opt.value}
-                >
-                  {opt.label}
-                </button>
-              ))}
+      <div className="space-y-5 lg:space-y-6" id="admin-main-content">
+        {/* HEADER — shared hierarchy, with the period control and export
+            promoted into the actions slot. */}
+        <PageHeader
+          eyebrow="Insights"
+          title="Reports"
+          description="Export and analyse business performance for any period."
+          actions={
+            <div className="flex flex-wrap items-center gap-2.5">
+              {/* Period selector — the active segment is the brand accent. */}
+              <div
+                className="flex items-center rounded-[12px] border border-bt-border bg-white p-1"
+                role="group"
+                aria-label="Reporting period"
+              >
+                {PERIOD_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setPeriod(opt.value)}
+                    aria-pressed={period === opt.value}
+                    className={`rounded-[9px] px-3.5 py-1.5 text-[12.5px] font-semibold transition-colors duration-150 ${
+                      period === opt.value
+                        ? 'bg-bt-orange text-bt-navy-dark shadow-[0_1px_2px_rgba(217,137,0,0.28)]'
+                        : 'text-bt-ink-2 hover:bg-bt-orange-light hover:text-bt-navy'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+
+              <Button variant="primary" icon={Download} onClick={() => handleExport('csv')}>
+                Export CSV
+              </Button>
             </div>
-            {/* Export buttons */}
-            <button
-              onClick={() => handleExport('csv')}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition"
-              aria-label="Export report as CSV"
-            >
-              <Download className="w-4 h-4" />
-              Export CSV
-            </button>
-          </div>
-        </div>
+          }
+        />
 
         {/* Loading */}
-        {isLoading && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <LoadingSkeleton key={i} className="h-32 w-full" />
-            ))}
-          </div>
-        )}
+        {isLoading && <SkeletonKpis count={6} />}
 
         {/* Error */}
         {error && !isLoading && (
-          <div className="rounded-2xl border border-red-500/30 bg-red-500/5 p-6 text-center">
-            <div className="text-red-500 font-semibold mb-2">Failed to load report data</div>
-            <div className="text-sm text-muted">{error.message}</div>
-          </div>
+          <ErrorState
+            title="Failed to load report data"
+            message={error.message}
+            onRetry={() => window.location.reload()}
+          />
         )}
 
-        {/* Report Cards */}
+        {/* Report Cards — a single card treatment with a semantic icon tile.
+            The per-card gradients are gone: six different colour washes is
+            exactly the colourful-template look the console should not have. */}
         {!isLoading && !error && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {reportCards.map(card => (
-              <div
-                key={card.title}
-                className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-5 hover:shadow-md transition-shadow"
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold">{card.title}</div>
-                    <div className="text-xs text-muted mt-2">{card.description}</div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {reportCards.map((card) => (
+              <div key={card.title} className="bt-card bt-card-hover p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <h3 className="text-[15px] font-bold text-bt-navy">{card.title}</h3>
+                    <p className="mt-1.5 text-[13px] leading-relaxed text-bt-ink-2">{card.description}</p>
                   </div>
-                  <div className={`h-10 w-10 rounded-2xl bg-gradient-to-br ${card.color} flex items-center justify-center shrink-0 ml-3`}>
-                    <card.icon className="w-5 h-5 text-white" />
-                  </div>
+                  <IconTile icon={card.icon} tone={CARD_TONE[card.title] || 'navy'} size="lg" />
                 </div>
               </div>
             ))}
@@ -194,14 +197,19 @@ function AdminReports() {
 
         {/* Summary Table */}
         {!isLoading && !error && (
-          <SectionCard title={`${period.charAt(0).toUpperCase() + period.slice(1)} Summary`}>
+          <SectionCard
+            title={`${period.charAt(0).toUpperCase() + period.slice(1)} Summary`}
+            subtitle="Headline business metrics for the selected period."
+            padded={false}
+            bodyClass="p-0"
+          >
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-border/60">
-                    <th className="text-left py-3 px-4 font-semibold text-muted text-xs uppercase tracking-wider">Metric</th>
-                    <th className="text-right py-3 px-4 font-semibold text-muted text-xs uppercase tracking-wider">Value</th>
-                    <th className="text-right py-3 px-4 font-semibold text-muted text-xs uppercase tracking-wider">Trend</th>
+                  <tr className="border-b border-bt-border">
+                    <th className="text-left py-3.5 px-5 font-bold text-bt-ink-3 text-[11px] uppercase tracking-[0.1em]">Metric</th>
+                    <th className="text-right py-3.5 px-5 font-bold text-bt-ink-3 text-[11px] uppercase tracking-[0.1em]">Value</th>
+                    <th className="text-right py-3.5 px-5 font-bold text-bt-ink-3 text-[11px] uppercase tracking-[0.1em]">Trend</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -215,12 +223,12 @@ function AdminReports() {
                     { label: 'Total Bookings (All Time)', value: stats.totalBookings || 0, trend: 'up' },
                     { label: 'Registered Customers', value: stats.totalUsers || 0, trend: 'up' },
                   ].map(row => (
-                    <tr key={row.label} className="border-b border-border/40 hover:bg-hover/30 transition">
-                      <td className="py-3 px-4 font-medium">{row.label}</td>
-                      <td className="py-3 px-4 text-right font-semibold">{row.value}</td>
-                      <td className="py-3 px-4 text-right">
-                        <span className={`inline-flex items-center gap-1 text-xs font-medium ${
-                          row.trend === 'up' ? 'text-green-500' : row.trend === 'down' ? 'text-red-500' : 'text-muted'
+                    <tr key={row.label} className="border-b border-[#EFF2F7] transition-colors hover:bg-bt-surface-soft">
+                      <td className="py-4 px-5 text-[14px] font-medium text-bt-navy">{row.label}</td>
+                      <td className="py-4 px-5 text-right text-[14px] font-semibold text-bt-navy tabular-nums">{row.value}</td>
+                      <td className="py-4 px-5 text-right">
+                        <span className={`inline-flex items-center gap-1 text-[12.5px] font-semibold ${
+                          row.trend === 'up' ? 'text-emerald-600' : row.trend === 'down' ? 'text-bt-danger' : 'text-bt-ink-3'
                         }`}>
                           {row.trend === 'up' ? '↑' : row.trend === 'down' ? '↓' : '→'}
                           {row.trend === 'up' ? ' +12%' : row.trend === 'down' ? ' -5%' : ' 0%'}

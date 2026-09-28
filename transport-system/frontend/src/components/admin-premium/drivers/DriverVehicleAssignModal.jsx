@@ -65,7 +65,7 @@ export default function DriverVehicleAssignModal({ isOpen, onClose, onSuccess, d
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={handleClose} />
+      <div className="absolute inset-0 bg-black/40" onClick={handleClose} />
       <div className="relative w-full max-w-lg bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-border/60 overflow-hidden" role="dialog" aria-modal="true" aria-label="Assign Vehicle">
         <div className="p-5 border-b border-border/60">
           <div className="flex items-center justify-between">

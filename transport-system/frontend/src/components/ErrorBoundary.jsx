@@ -1,4 +1,4 @@
-import { Component, createContext, useContext, useState, useCallback } from 'react';
+import React, { Component, createContext, useContext } from 'react';
 
 const ErrorContext = createContext(null);
 
@@ -25,35 +25,7 @@ export class ErrorBoundary extends Component {
 
   componentDidCatch(error, errorInfo) {
     this.setState({ errorInfo });
-
-    // Always log the actual error for debugging.
-    console.error('ACTUAL PAGE ERROR:', error.message);
-    console.error('Error stack:', error.stack);
-    console.error('Component stack:', errorInfo.componentStack);
-
-    // Log in development only. Never log secrets/tokens/API keys.
-    if (import.meta.env.DEV) {
-      console.error('[ErrorBoundary] Caught rendering error:', error.message);
-      console.error('[ErrorBoundary] Component stack:', errorInfo.componentStack);
-    }
-
-    // In production, send to a logging service if available.
-    if (!import.meta.env.DEV && typeof window !== 'undefined') {
-      try {
-        const report = {
-          message: error.message,
-          name: error.name,
-          stack: error.stack,
-          componentStack: errorInfo.componentStack,
-          url: window.location.href,
-          timestamp: new Date().toISOString(),
-        };
-        // Replace with your production logging endpoint.
-        // navigator.sendBeacon('/api/errors', JSON.stringify(report));
-      } catch {
-        // Ignore logging failures.
-      }
-    }
+    this.reportError(error, errorInfo);
   }
 
   handleRetry = () => {
@@ -61,6 +33,16 @@ export class ErrorBoundary extends Component {
       this.retryCount += 1;
       this.setState((prev) => ({ hasError: false, error: null, errorInfo: null, retryKey: prev.retryKey + 1 }));
     }
+  };
+
+  /**
+   * Only log the real error in development. Production keeps its console clean;
+   * a failed report must never throw.
+   */
+  reportError = (error, errorInfo) => {
+    if (!import.meta.env.DEV) return;
+    console.error('[ErrorBoundary] Caught rendering error:', error.message);
+    console.error('[ErrorBoundary] Component stack:', errorInfo?.componentStack);
   };
 
   handleRefresh = () => {
@@ -124,7 +106,11 @@ export class ErrorBoundary extends Component {
       );
     }
 
-    return this.props.children;
+    // Keyed on `retryKey` so "Try Again" genuinely REMOUNTS the subtree. Without
+    // it, resetting `hasError` only re-renders the same element identity, which
+    // cannot recover from a failed lazy-chunk import or any other mount-time
+    // error — the button would appear to do nothing.
+    return <React.Fragment key={this.state.retryKey}>{this.props.children}</React.Fragment>;
   }
 }
 

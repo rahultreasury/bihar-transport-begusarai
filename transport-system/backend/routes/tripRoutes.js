@@ -699,4 +699,35 @@ router.get('/lookup/drivers-by-owner/:ownerId', protect, async (req, res) => {
   }
 });
 
+/**
+ * GET /api/trips/lookup/owner-by-partner/:partnerId
+ * Resolve the VehicleOwner linked to a Partner (via VehicleOwner.partner_link).
+ * Used by the Admin trip-creation wizard to select a Partner and then load
+ * that Partner's linked transport owner, vehicles, and drivers.
+ */
+router.get('/lookup/owner-by-partner/:partnerId', protect, async (req, res) => {
+  try {
+    const partnerId = parseInt(req.params.partnerId);
+    if (isNaN(partnerId)) {
+      return res.status(400).json({ success: false, message: 'Invalid partner ID' });
+    }
+
+    const owner = await tripService.getOwnerByPartnerId(partnerId);
+    if (!owner) {
+      return res.status(404).json({
+        success: false,
+        message: 'No transport owner is linked to this partner',
+      });
+    }
+
+    res.json({
+      success: true,
+      data: owner,
+    });
+  } catch (error) {
+    console.error('Get owner by partner error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Server error' });
+  }
+});
+
 module.exports = router;

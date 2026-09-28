@@ -437,7 +437,7 @@ function AdminFinancials() {
       <div className="space-y-6">
         {/* Header */}
         <div>
-          <h1 className="text-2xl font-bold">Financials</h1>
+          <h1 className="bt-page-title">Financials</h1>
           <p className="text-gray-500">Track client receivables, provider payables, advances, payments and commission.</p>
         </div>
 

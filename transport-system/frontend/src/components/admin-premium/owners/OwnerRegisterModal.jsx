@@ -236,7 +236,7 @@ export default function OwnerRegisterModal({ isOpen, onClose, onSuccess }) {
       {toast && (
         <div className="fixed top-6 right-6 z-[100] animate-slide-down">
           <div className={`
-            px-5 py-3.5 rounded-2xl shadow-2xl border text-sm font-semibold flex items-center gap-3 backdrop-blur-sm
+            px-5 py-3.5 rounded-2xl shadow-2xl border text-sm font-semibold flex items-center gap-3
             ${toast.type === 'success'
               ? 'bg-emerald-50 dark:bg-emerald-900/50 border-emerald-200 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300'
               : 'bg-red-50 dark:bg-red-900/50 border-red-200 dark:border-red-700 text-red-700 dark:text-red-300'
@@ -263,10 +263,10 @@ export default function OwnerRegisterModal({ isOpen, onClose, onSuccess }) {
 
       {/* Backdrop */}
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={handleClose} />
+        <div className="fixed inset-0 bg-black/50" onClick={handleClose} />
 
         {/* Modal */}
-        <div className="relative bg-white dark:bg-gray-900 rounded-3xl border border-gray-200 dark:border-gray-700 shadow-2xl w-full max-w-[560px] max-h-[90vh] overflow-y-auto animate-scale-in">
+        <div className="relative bg-white dark:bg-gray-900rounded-[16px] border border-gray-200 dark:border-gray-700 shadow-2xl w-full max-w-[560px] max-h-[90vh] overflow-y-auto animate-scale-in">
           {/* Sticky Header */}
           <div className="sticky top-0 z-10 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 px-7 py-5 flex items-center justify-between rounded-t-3xl">
             <div>

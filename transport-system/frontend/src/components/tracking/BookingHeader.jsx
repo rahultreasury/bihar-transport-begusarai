@@ -71,7 +71,7 @@ const vehicleIcon = VEHICLE_ICONS[booking.vehicle_type_required] || '🚛';
           </p>
         </div>
         <div className="flex items-center gap-2 text-sm">
-          <span className="text-amber-100">Booking Date:</span>
+          <span className="text-amber-100">{isConfirmed ? 'Booking Date:' : 'Enquiry Date:'}</span>
           <span className="font-medium">{formatDate(booking.created_at)}</span>
         </div>
       </div>

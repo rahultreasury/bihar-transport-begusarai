@@ -67,7 +67,7 @@ function ActionsDropdown({ owner, onViewProfile, onEdit, onDeactivate, onDelete 
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 z-20 mt-1 w-52 rounded-2xl border border-border/60 bg-card shadow-xl backdrop-blur-xl py-1.5">
+          <div className="absolute right-0 z-20 mt-1 w-52 rounded-2xl border border-border/60 bg-card shadow-xl py-1.5">
             <button onClick={() => { setOpen(false); onViewProfile(owner); }} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm hover:bg-hover/60 transition">
               <svg className="w-4 h-4 text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
               View Profile
@@ -307,14 +307,14 @@ export default function AdminVehicleOwners() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-text">Vehicle Owners</h1>
+            <h1 className="bt-page-title">Vehicle Owners</h1>
             <p className="text-muted text-sm mt-1">Manage vehicle owners and their fleet</p>
           </div>
           <button
-            onClick={() => { setRegisterContext({ sourcePage: 'owners' }); setShowRegisterModal(true); }}
+            onClick={() => { setRegisterContext({ sourcePage: 'owners', resourceType: 'owner' }); setShowRegisterModal(true); }}
             className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-medium transition"
           >
-            + Register Resource
+            + Register Owner
           </button>
         </div>
 

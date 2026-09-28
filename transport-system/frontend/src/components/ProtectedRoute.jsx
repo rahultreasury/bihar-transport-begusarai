@@ -16,7 +16,12 @@ const ADMIN_ROLES = ['admin', 'super_admin'];
  *
  * Never renders the protected page first and redirects afterward.
  */
-export default function ProtectedRoute({ children, roles = ADMIN_ROLES }) {
+export default function ProtectedRoute({
+  children,
+  roles = ADMIN_ROLES,
+  loginPath = '/login',
+  unauthorizedPath,
+}) {
   const { user, authLoading } = useContext(AuthContext);
   const location = useLocation();
 
@@ -32,14 +37,17 @@ export default function ProtectedRoute({ children, roles = ADMIN_ROLES }) {
   }
 
   if (!user) {
-    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+    return <Navigate to={loginPath} replace state={{ from: location.pathname }} />;
   }
 
   if (roles && roles.length > 0 && !roles.includes(user.role)) {
-    // Authenticated but wrong role — send to an appropriate place.
+    if (unauthorizedPath) {
+      return <Navigate to={unauthorizedPath} replace />;
+    }
+    // Preserve the existing role-aware redirects for shared protected routes.
     if (user.role === 'customer') return <Navigate to="/dashboard" replace />;
     if (user.role === 'driver') return <Navigate to="/driver-dashboard" replace />;
-    return <Navigate to="/login" replace />;
+    return <Navigate to={loginPath} replace />;
   }
 
   return children;

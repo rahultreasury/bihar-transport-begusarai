@@ -1,4 +1,4 @@
-import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, Link, useLocation, useParams } from 'react-router-dom';
 import { useState, useEffect, useContext, lazy, Suspense, useMemo, useCallback, useRef } from 'react';
 
 // Context — defined in a separate module so React Fast Refresh does not
@@ -32,6 +32,13 @@ const Dashboard = lazy(() => import('./pages/Dashboard'));
 const DriverDashboard = lazy(() => import('./pages/DriverDashboard'));
 const TrackBooking = lazy(() => import('./pages/TrackBooking'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
+// ORDER / TRIP MASTER (spec: turn Bookings into the central operational workspace).
+// AdminOrders       → the list  (/admin/bookings)
+// AdminOrderMaster  → the detail (/admin/bookings/:bookingNumber)
+// AdminBookings / AdminBookingDetail are retained, not deleted, and still serve
+// the legacy booking screens the Order pages link out to.
+const AdminOrders = lazy(() => import('./pages/AdminOrders'));
+const AdminOrderMaster = lazy(() => import('./pages/AdminOrderMaster'));
 const AdminBookings = lazy(() => import('./pages/AdminBookings'));
 const AdminBookingDetail = lazy(() => import('./pages/AdminBookingDetail'));
 const AdminAssignDriver = lazy(() => import('./pages/AdminAssignDriver'));
@@ -43,6 +50,7 @@ const AdminVehicles = lazy(() => import('./pages/AdminVehicles'));
 const AdminVehicleProfile = lazy(() => import('./pages/AdminVehicleProfile'));
 const AdminVehicleOwners = lazy(() => import('./pages/AdminVehicleOwners'));
 const AdminVehicleOwnerProfile = lazy(() => import('./pages/AdminVehicleOwnerProfile'));
+const AdminVehicleOwnerEdit = lazy(() => import('./pages/AdminVehicleOwnerEdit'));
 const AdminReports = lazy(() => import('./pages/AdminReports'));
 const AdminAnalytics = lazy(() => import('./pages/AdminAnalytics'));
 const AdminPartners = lazy(() => import('./pages/AdminPartners'));
@@ -61,6 +69,26 @@ const LicenseSearch = lazy(() => import('./pages/LicenseSearch'));
 const ChallanSearch = lazy(() => import('./pages/ChallanSearch'));
 const Appointment = lazy(() => import('./pages/Appointment'));
 
+// Enquiry module — customer confirmation + admin workspace
+const EnquiryConfirmation = lazy(() => import('./pages/EnquiryConfirmation'));
+const AdminEnquiryQueue = lazy(() => import('./pages/AdminEnquiryQueue'));
+const AdminEnquiryDetail = lazy(() => import('./pages/AdminEnquiryDetail'));
+const AdminEnquiries = lazy(() => import('./pages/AdminEnquiries'));
+const AdminEnquiryWorkspace = lazy(() => import('./pages/AdminEnquiryWorkspace'));
+
+/**
+ * Old bookmark compatibility: /admin/intake-enquiries/:id → /admin/enquiries/:id.
+ * Keeps the canonical enquiry number/id in the URL so the workspace still loads.
+ */
+function LegacyEnquiryRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/admin/enquiries/${id}`} replace />;
+}
+
+// Auth pages
+const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
+const ResetPassword = lazy(() => import('./pages/ResetPassword'));
+
 // SEO Resource Pages
 const ServicesListing = lazy(() => import('./pages/resources/ServicesListing'));
 const StatePage = lazy(() => import('./pages/resources/StatePage'));
@@ -71,6 +99,13 @@ const RoutePage = lazy(() => import('./pages/resources/RoutePage'));
 const Blog = lazy(() => import('./pages/Blog'));
 const Partner = lazy(() => import('./pages/Partner'));
 const PartnerLogin = lazy(() => import('./pages/PartnerLogin'));
+const PartnerDashboard = lazy(() => import('./pages/PartnerDashboard'));
+const PartnerTrips = lazy(() => import('./pages/PartnerTrips'));
+const PartnerVehicles = lazy(() => import('./pages/PartnerVehicles'));
+const PartnerDrivers = lazy(() => import('./pages/PartnerDrivers'));
+const PartnerFinancials = lazy(() => import('./pages/PartnerFinancials'));
+const PartnerProfile = lazy(() => import('./pages/PartnerProfile'));
+const PartnerTripDetail = lazy(() => import('./pages/PartnerTripDetail'));
 const VehicleOwnerRegistration = lazy(() => import('./pages/VehicleOwnerRegistration'));
 const TransportOwnerRegistration = lazy(() => import('./pages/TransportOwnerRegistration'));
 const RoutesListing = lazy(() => import('./pages/RoutesListing'));
@@ -88,15 +123,73 @@ function isAdminRoute(pathname) {
 }
 
 /**
+ * Determines if current path uses its own authenticated shell.
+ * @param {string} pathname - Current URL pathname
+ * @returns {boolean}
+ */
+function isPartnerDashboardRoute(pathname) {
+  return pathname.startsWith('/partner/dashboard');
+}
+
+/**
+ * Route-scoped fallback for /booking/enquiry/:enquiryNumber.
+ *
+ * The enquiry itself is safe — it is already committed and the customer can
+ * always reach it. So this says exactly that, and offers a way forward, instead
+ * of the app-wide "We couldn't load this page" screen that made a recoverable
+ * moment look like a dead end.
+ */
+function EnquiryRouteErrorState({ canRetry, onRetry }) {
+  return (
+    <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 bg-[#F7F8FA] px-4 text-center">
+      <div className="flex h-14 w-14 items-center justify-center rounded-full bg-amber-50">
+        <svg className="h-7 w-7 text-[#B26A00]" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7h11v9H3zM14 10h4l3 3v3h-7z" />
+          <circle cx="7" cy="18" r="1.6" />
+          <circle cx="17.5" cy="18" r="1.6" />
+        </svg>
+      </div>
+      <div>
+        <h1 className="text-lg font-bold text-[#172B4D]">We couldn't display your request</h1>
+        <p className="mt-2 max-w-md text-sm leading-relaxed text-slate-600">
+          Your request is saved and safe. This page just failed to display — please try once
+          more, or call customer care and we will read it out to you.
+        </p>
+      </div>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        {canRetry && (
+          <button
+            type="button"
+            onClick={onRetry}
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#172B4D] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#172B4D]/90"
+          >
+            Try again
+          </button>
+        )}
+        <Link
+          to="/book-transport"
+          className="inline-flex items-center justify-center rounded-xl border border-[#172B4D]/20 px-5 py-2.5 text-sm font-semibold text-[#172B4D] transition hover:bg-[#172B4D]/5"
+        >
+          Book another transport
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Layout wrapper that conditionally renders public Navbar/Footer
- * based on whether the current route is an admin route.
+ * based on whether the current route has its own shell.
  */
 function PublicLayout({ children }) {
   const { pathname } = useLocation();
-  const isAdmin = useMemo(() => isAdminRoute(pathname), [pathname]);
+  const hasDedicatedShell = useMemo(
+    () => isAdminRoute(pathname) || isPartnerDashboardRoute(pathname),
+    [pathname]
+  );
 
-if (isAdmin) {
-    // Render only children (admin pages have their own layout via AdminShell)
+  if (hasDedicatedShell) {
+    // Admin and partner pages render their own authenticated shells.
     return children;
   }
 
@@ -128,6 +221,10 @@ function AppContent() {
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
 
+        {/* Password Reset Routes (public, no auth required) */}
+        <Route path="/forgot-password" element={<Suspense fallback={<PageLoader label="Loading..." />}><ForgotPassword /></Suspense>} />
+        <Route path="/reset-password" element={<Suspense fallback={<PageLoader label="Loading..." />}><ResetPassword /></Suspense>} />
+
         {/* Public Routes (lazy) */}
         <Route path="/about" element={<Suspense fallback={<PageLoader label="Loading About..." />}><About /></Suspense>} />
         <Route path="/contact" element={<Suspense fallback={<PageLoader label="Loading Contact..." />}><Contact /></Suspense>} />
@@ -136,10 +233,34 @@ function AppContent() {
         <Route path="/vehicle-search" element={<Suspense fallback={<PageLoader label="Loading..." />}><VehicleSearch /></Suspense>} />
         <Route path="/license-search" element={<Suspense fallback={<PageLoader label="Loading..." />}><LicenseSearch /></Suspense>} />
         <Route path="/challan-search" element={<Suspense fallback={<PageLoader label="Loading..." />}><ChallanSearch /></Suspense>} />
-        <Route path="/appointment" element={<Suspense fallback={<PageLoader label="Loading..." />}><Appointment /></Suspense>} />
-        
-        {/* Book Transport - Available to all */}
+// Book Transport - Available to all
         <Route path="/book-transport" element={<Suspense fallback={<PageLoader label="Loading Booking..." />}><BookTransport /></Suspense>} />
+        <Route path="/appointment" element={<Suspense fallback={<PageLoader label="Loading..." />}><Appointment /></Suspense>} />
+
+        {/* Enquiry Confirmation - reached straight from "Submit Booking".
+            Public: the scoped enquiry token issued at submit time authorises it,
+            so the customer is never bounced through a login wall.
+
+            The ErrorBoundary here is ROUTE-SCOPED on purpose. The app-level
+            boundary wraps the whole Router, so any render error here replaced
+            the entire page with the generic "Something went wrong. We couldn't
+            load this page." — including for a page that is still perfectly
+            loadable. Scoping it keeps the failure message specific to this page
+            and leaves the navbar and the rest of the site intact. */}
+        <Route
+          path="/booking/enquiry/:enquiryNumber"
+          element={
+            <ErrorBoundary
+              fallback={({ retry, canRetry }) => (
+                <EnquiryRouteErrorState canRetry={canRetry} onRetry={retry} />
+              )}
+            >
+              <Suspense fallback={<PageLoader label="Finding your transport..." />}>
+                <EnquiryConfirmation />
+              </Suspense>
+            </ErrorBoundary>
+          }
+        />
         
         {/* Customer Routes */}
         <Route 
@@ -161,8 +282,90 @@ function AppContent() {
           } 
         />
         
-        {/* Admin Routes */}
+// Admin Routes
         <Route path="/admin/login" element={<Suspense fallback={<PageLoader label="Loading..." />}><AdminLogin /></Suspense>} />
+
+        {/* ENQUIRY — THE canonical workflow, backed by the `enquiries` table.
+
+            This is the same store the customer writes to on submit
+            (POST /api/enquiries) and the same store /booking/enquiry/:enquiryNumber
+            reads back. The Enquiry is the source of truth from request receipt
+            until the customer accepts the quote; the Booking is only linked at
+            confirmation (Enquiry.booking_id). Backed by
+            GET /api/admin/enquiries and GET /api/admin/enquiries/:idOrNumber.
+
+            :id accepts EITHER the numeric enquiry_id (what the list links to)
+            or the canonical enquiry_number — adminEnquiryController.resolveEnquiry
+            resolves both. */}
+        <Route
+          path="/admin/enquiries"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading enquiries..." />}>
+                <AdminEnquiries />
+              </Suspense>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/enquiries/:id"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading enquiry..." />}>
+                <AdminEnquiryWorkspace />
+              </Suspense>
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Legacy booking-backed quote queue.
+
+            This view reads the `bookings` table (GET /api/admin/bookings) and is
+            NOT the enquiry workflow. It is retained — not deleted, no data
+            touched — at its own path so existing links keep working, but it is
+            deliberately NOT mounted at /admin/enquiries any more: doing so was
+            the reason customer enquiries never appeared in the admin queue. */}
+        <Route
+          path="/admin/enquiries-bookings"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading enquiries..." />}>
+                <AdminEnquiryQueue />
+              </Suspense>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/enquiries-bookings/:bookingNumber"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading enquiry..." />}>
+                <AdminEnquiryDetail />
+              </Suspense>
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Backwards-compatible aliases. /admin/intake-enquiries used to hold the
+            canonical enquiry screens before the booking queue took over the
+            /admin/enquiries path. Both now redirect to the single canonical
+            route so there is exactly ONE admin enquiry screen, not two. */}
+        <Route
+          path="/admin/intake-enquiries"
+          element={
+            <ProtectedRoute>
+              <Navigate to="/admin/enquiries" replace />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/intake-enquiries/:id"
+          element={
+            <ProtectedRoute>
+              <LegacyEnquiryRedirect />
+            </ProtectedRoute>
+          }
+        />
         <Route
           path="/admin"
           element={
@@ -180,11 +383,13 @@ function AppContent() {
             </ProtectedRoute>
           }
         />
+        {/* ORDER / TRIP MASTER — list. Reads the same GET /api/admin/bookings the
+            old Bookings page used; only the presentation is new. */}
         <Route
           path="/admin/bookings"
           element={
             <ProtectedRoute>
-              <Suspense fallback={<PageLoader label="Loading Bookings..." />}><AdminBookings /></Suspense>
+              <Suspense fallback={<PageLoader label="Loading orders..." />}><AdminOrders /></Suspense>
             </ProtectedRoute>
           }
         />
@@ -237,11 +442,13 @@ function AppContent() {
           }
         />
         {/* Admin booking detail (read-only) + dedicated assignment workflows */}
-        <Route 
-          path="/admin/bookings/:bookingNumber" 
+        {/* ORDER / TRIP MASTER — detail. The unified view over Booking + Trip +
+            Delivery + the canonical financial ledger. */}
+        <Route
+          path="/admin/bookings/:bookingNumber"
           element={
             <ProtectedRoute>
-              <Suspense fallback={<PageLoader label="Loading Booking..." />}><AdminBookingDetail /></Suspense>
+              <Suspense fallback={<PageLoader label="Loading order..." />}><AdminOrderMaster /></Suspense>
             </ProtectedRoute>
           } 
         />
@@ -310,6 +517,14 @@ function AppContent() {
           }
         />
         <Route
+          path="/admin/vehicle-owners/:id/edit"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading Vehicle Owner Edit..." />}><AdminVehicleOwnerEdit /></Suspense>
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/admin/reports"
           element={
             <ProtectedRoute>
@@ -359,6 +574,104 @@ function AppContent() {
         <Route path="/blog" element={<Suspense fallback={<PageLoader label="Loading..." />}><Blog /></Suspense>} />
         <Route path="/partner" element={<Suspense fallback={<PageLoader label="Loading..." />}><Partner /></Suspense>} />
         <Route path="/partner/login" element={<Suspense fallback={<PageLoader label="Loading..." />}><PartnerLogin /></Suspense>} />
+        <Route
+          path="/partner/dashboard"
+          element={
+            <ProtectedRoute
+              roles={['partner']}
+              loginPath="/partner/login"
+              unauthorizedPath="/partner/login"
+            >
+              <Suspense fallback={<PageLoader label="Loading Partner Dashboard..." />}>
+                <PartnerDashboard />
+              </Suspense>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/partner/trips"
+          element={
+            <ProtectedRoute
+              roles={['partner']}
+              loginPath="/partner/login"
+              unauthorizedPath="/partner/login"
+            >
+              <Suspense fallback={<PageLoader label="Loading Trips..." />}>
+                <PartnerTrips />
+              </Suspense>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/partner/trips/:id"
+          element={
+            <ProtectedRoute
+              roles={['partner']}
+              loginPath="/partner/login"
+              unauthorizedPath="/partner/login"
+            >
+              <Suspense fallback={<PageLoader label="Loading Trip..." />}>
+                <PartnerTripDetail />
+              </Suspense>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/partner/vehicles"
+          element={
+            <ProtectedRoute
+              roles={['partner']}
+              loginPath="/partner/login"
+              unauthorizedPath="/partner/login"
+            >
+              <Suspense fallback={<PageLoader label="Loading Vehicles..." />}>
+                <PartnerVehicles />
+              </Suspense>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/partner/drivers"
+          element={
+            <ProtectedRoute
+              roles={['partner']}
+              loginPath="/partner/login"
+              unauthorizedPath="/partner/login"
+            >
+              <Suspense fallback={<PageLoader label="Loading Drivers..." />}>
+                <PartnerDrivers />
+              </Suspense>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/partner/financials"
+          element={
+            <ProtectedRoute
+              roles={['partner']}
+              loginPath="/partner/login"
+              unauthorizedPath="/partner/login"
+            >
+              <Suspense fallback={<PageLoader label="Loading Financials..." />}>
+                <PartnerFinancials />
+              </Suspense>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/partner/profile"
+          element={
+            <ProtectedRoute
+              roles={['partner']}
+              loginPath="/partner/login"
+              unauthorizedPath="/partner/login"
+            >
+              <Suspense fallback={<PageLoader label="Loading Profile..." />}>
+                <PartnerProfile />
+              </Suspense>
+            </ProtectedRoute>
+          }
+        />
         <Route path="/partner/vehicle-owner" element={<Suspense fallback={<PageLoader label="Loading..." />}><VehicleOwnerRegistration /></Suspense>} />
         <Route path="/partner/transport-owner" element={<Suspense fallback={<PageLoader label="Loading..." />}><TransportOwnerRegistration /></Suspense>} />
         <Route path="/privacy-policy" element={<Suspense fallback={<PageLoader label="Loading..." />}><PrivacyPolicy /></Suspense>} />

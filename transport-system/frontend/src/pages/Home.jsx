@@ -1,8 +1,29 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { bookingAPI } from '../services/api';
 import { Link, useNavigate } from 'react-router-dom';
-import { LoadScript, Autocomplete } from '@react-google-maps/api';
+// One Maps script configuration for the whole app. The loader is a per-document
+// singleton that throws if a second call uses different `libraries`, so Home must
+// go through the shared `useGoogleMapsApi()` — the exact same path as
+// /book-transport and the enquiry page.
+//
+// Home deliberately does NOT mount <LoadScript>/<Autocomplete> any more. In
+// @react-google-maps/api@2.20.8 `LoadScript.render()` returns
+// `this.state.loaded ? children : <div>Loading…</div>`, so a child <input> only
+// exists while the Maps script reports success — and it never does when the
+// script is already in the document (`componentDidMount` early-returns) or when
+// it 404s / the key is invalid (the `.catch` branch never sets `loaded: true`).
+// That is what made the Pickup and Drop boxes disappear. The inputs now render
+// unconditionally and Google Places is attached to the live DOM node by
+// `usePlacesAutocomplete`, so the field is always visible AND still autocompletes.
+import LocationField from '../components/home/LocationField';
+// Shared voice-search system — the exact same hook used by /book-transport, so
+// there is a single Web Speech API implementation in the app.
+import useVoiceSearch from '../hooks/useVoiceSearch';
 import SEO from '../components/seo/SEO';
+// Shared customer-care contact — SINGLE SOURCE OF TRUTH.
+// The same config feeds the enquiry page's Support card, so the number dialled
+// from the Home page can never differ from the one shown on the enquiry page.
+import { FALLBACK_CUSTOMER_CARE, buildCallUrl } from '../config/customerCare';
 import PanIndiaCoverage from '../components/home/PanIndiaCoverage';
 import TrustedClients from '../components/home/TrustedClients';
 
@@ -48,12 +69,26 @@ const trustItems = [
   { icon: '📞', title: '24/7 Customer Support', description: 'Round the clock assistance for all your needs' }
 ];
 
-const WHATSAPP_NUMBER = '8210931799';
+/**
+ * Customer-care contact for the Home page.
+ *
+ * The number is NOT hardcoded here any more. It comes from the shared
+ * customer-care config (config/customerCare.js), which is itself fed by
+ * GET /api/enquiries/config/customer-care → the backend's
+ * CUSTOMER_CARE_PHONE / CUSTOMER_CARE_WHATSAPP env vars. The enquiry page's
+ * Support card already read from that source; this is what makes the Home page
+ * and the Support card impossible to disagree.
+ *
+ * The rendered value is unchanged — it is the same 8210931799 — it is simply
+ * now resolved from one place instead of a literal that could drift.
+ */
+const HOME_WHATSAPP_DIGITS = (FALLBACK_CUSTOMER_CARE.phoneDigits || '').replace(/\D/g, '');
+const WHATSAPP_NUMBER =
+  HOME_WHATSAPP_DIGITS.length === 10 ? `91${HOME_WHATSAPP_DIGITS}` : HOME_WHATSAPP_DIGITS;
+const HOME_CALL_URL = buildCallUrl(FALLBACK_CUSTOMER_CARE);
 
-const pickupAutocompleteOptions = {
-  componentRestrictions: { country: 'in' },
-  types: ['geocode']
-};
+// (The Google Places options now live with the field that uses them — see
+//  `PLACES_OPTIONS` in components/home/LocationField.jsx.)
 
 function Home() {
   const navigate = useNavigate();
@@ -80,8 +115,118 @@ function Home() {
     vehicleType: DEFAULT_VEHICLE_ID
   });
 
-  const pickupAutocompleteRef = useRef(null);
-  const dropAutocompleteRef = useRef(null);
+  // Live DOM nodes for the hero pickup / drop inputs. `LocationField` writes the
+  // mounted node into these refs; the voice hook reads them to inject a
+  // transcript exactly as if it had been typed.
+  const pickupInputRef = useRef(null);
+  const dropInputRef = useRef(null);
+
+  // ─── Voice search (shared Web Speech API hook) ───────────────────────
+  // Writes the transcript into the real input node via the native value setter
+  // and dispatches a native `input` event, so React's onChange runs AND the
+  // existing Google Places Autocomplete re-queries — identical to typing. The
+  // customer still has to choose a suggestion; this never sets coordinates,
+  // never selects a place, and never touches navigation.
+  const handleVoiceResult = (field, transcript) => {
+    const node = field === 'pickup' ? pickupInputRef.current : dropInputRef.current;
+    if (!node) return;
+    const nativeSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value'
+    )?.set;
+    if (nativeSetter) nativeSetter.call(node, transcript);
+    else node.value = transcript;
+    // Replaces (never appends to) any half-typed text already present.
+    node.dispatchEvent(new Event('input', { bubbles: true }));
+    node.focus();
+  };
+
+  const {
+    supported: voiceSupported,
+    listeningField,
+    interimText: voiceInterimText,
+    message: voiceMessage,
+    messageField: voiceMessageField,
+    clearMessage: clearVoiceMessage,
+    toggle: toggleVoice
+  } = useVoiceSearch({ onResult: handleVoiceResult });
+
+  // One mic button, reused for both hero fields so the listening / error UI
+  // matches /book-transport exactly. Rendered outside <Autocomplete> so that
+  // component keeps the <input> as its direct child.
+  const renderVoiceButton = (field) => {
+    if (!voiceSupported) return null;
+    const isListening = listeningField === field;
+    const isOtherFieldListening = !!listeningField && listeningField !== field;
+    return (
+      <button
+        type="button"
+        onClick={() => toggleVoice(field)}
+        disabled={isOtherFieldListening}
+        aria-label={`Search ${field} location by voice`}
+        title={isListening ? 'Stop listening' : 'Search by voice'}
+        aria-pressed={isListening}
+        // 36px square inside the 54px field — still a comfortable touch target
+        // on mobile, and it never crowds the placeholder text.
+        className={`absolute right-1.5 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-40 ${
+          isListening ? 'bg-red-50 text-red-600' : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'
+        }`}
+      >
+        <span className="relative flex items-center justify-center">
+          {isListening && (
+            <span className="absolute h-4 w-4 animate-ping rounded-full bg-red-400/50" aria-hidden="true" />
+          )}
+          <svg
+            className="relative h-4 w-4"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 15a3 3 0 003-3V6a3 3 0 00-6 0v6a3 3 0 003 3z" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-14 0" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 18v3" />
+          </svg>
+        </span>
+      </button>
+    );
+  };
+
+  // Listening preview / inline error. Interim speech is preview only and is
+  // never written into the field.
+  const renderVoiceStatus = (field) => {
+    const isListening = listeningField === field;
+    const message = !isListening && voiceMessageField === field ? voiceMessage : '';
+    if (!isListening && !message) return null;
+    return (
+      <div className="absolute left-0 top-full z-30 mt-1 flex items-center gap-1.5 rounded-md bg-slate-900/95 px-2 py-1 text-[11px] font-medium text-white shadow-lg">
+        {isListening ? (
+          <>
+            <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-red-400" aria-hidden="true" />
+            <span className="max-w-[160px] truncate sm:max-w-none">
+              {voiceInterimText ? `Listening… “${voiceInterimText}”` : 'Listening… tap to stop'}
+            </span>
+            <span className="sr-only" role="status" aria-live="polite">Listening for a location</span>
+          </>
+        ) : (
+          <>
+            <span>{message}</span>
+            <button
+              type="button"
+              onClick={clearVoiceMessage}
+              aria-label="Dismiss voice search message"
+              className="ml-0.5 rounded p-0.5 text-white/70 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white"
+            >
+              <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </>
+        )}
+      </div>
+    );
+  };
 
   const [calcDistance, setCalcDistance] = useState(0);
   const [calcDuration, setCalcDuration] = useState('');
@@ -359,72 +504,64 @@ function Home() {
     setQuickBooking((prev) => ({ ...prev, vehicleType: vehicle.id }));
   };
 
-  // ===== Price Calculator (Distance Matrix API + Google Autocomplete inputs) =====
-  const handleCheckPrice = async () => {
-    if (!priceCalc.pickupLat || !priceCalc.pickupLng || !priceCalc.dropLat || !priceCalc.dropLng) {
+  // ===== Hero Pickup / Drop field handlers =====
+  // Free typing. Coordinates are deliberately left alone so an already-resolved
+  // place is not thrown away mid-edit — a fresh selection overwrites them.
+  const handleLocationChange = (field, rawValue) => {
+    setPriceCalc((prev) => ({ ...prev, [field]: rawValue }));
+    setShowPriceResult(false);
+    // Dismiss a stale voice error once the customer carries on by typing.
+    clearVoiceMessage();
+  };
+
+  // A suggestion was chosen — Google Places or the local fallback. Both hand
+  // back the same shape, so one writer handles both sources.
+  const handleLocationSelected = (field, selection) => {
+    if (!selection?.label) return;
+    setPriceCalc((prev) =>
+      field === 'pickup'
+        ? {
+            ...prev,
+            pickup: selection.label,
+            pickupPlaceId: selection.placeId || '',
+            pickupFormattedAddress: selection.label,
+            pickupLat: selection.lat ?? null,
+            pickupLng: selection.lng ?? null
+          }
+        : {
+            ...prev,
+            drop: selection.label,
+            dropPlaceId: selection.placeId || '',
+            dropFormattedAddress: selection.label,
+            dropLat: selection.lat ?? null,
+            dropLng: selection.lng ?? null
+          }
+    );
+    setShowPriceResult(false);
+    clearVoiceMessage();
+  };
+
+  // Continue is gated on a complete, non-blank route: Pickup + Drop + Vehicle.
+  // `vehicleType` always carries DEFAULT_VEHICLE_ID, but it is still checked so
+  // the gate cannot silently open if that default is ever cleared.
+  const hasCompleteRoute = Boolean(
+    String(priceCalc.pickup || '').trim() &&
+    String(priceCalc.drop || '').trim() &&
+    String(priceCalc.vehicleType || '').trim()
+  );
+
+  // ===== Continue to Booking Page =====
+  const handleContinue = () => {
+    if (!hasCompleteRoute) {
       return;
     }
 
-    setIsCalculating(true);
-    setShowPriceResult(false);
-    setCalcWarning('');
-
-    try {
-      const url = `${import.meta.env.VITE_API_URL || 'http://localhost:3000/api'}/calculate-price`;
-
-      const payload = {
-        pickup: {
-          address: priceCalc.pickupFormattedAddress || priceCalc.pickup,
-          lat: priceCalc.pickupLat,
-          lng: priceCalc.pickupLng
-        },
-        drop: {
-          address: priceCalc.dropFormattedAddress || priceCalc.drop,
-          lat: priceCalc.dropLat,
-          lng: priceCalc.dropLng
-        },
-        vehicleType: priceCalc.vehicleType
-      };
-
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      const data = await res.json();
-
-      if (!res.ok || !data?.success) {
-        throw new Error(data?.message || 'Failed to calculate price');
-      }
-
-      setCalcDistance(data.distanceKm);
-      setCalcDuration(data.duration);
-      setCalcPrice(data.price);
-      setCalcWarning(data.warning || '');
-
-      setLatestQuote({
-        pickupLocation: priceCalc.pickup,
-        pickupAddress: priceCalc.pickupFormattedAddress || priceCalc.pickup,
-        pickupCity: priceCalc.pickup || 'Begusarai',
-        dropLocation: priceCalc.drop,
-        dropAddress: priceCalc.dropFormattedAddress || priceCalc.drop,
-        dropCity: priceCalc.drop || 'Patna',
-        vehicleType: priceCalc.vehicleType,
-        vehicleName:
-          vehicleTypes.find((v) => v.id === priceCalc.vehicleType)?.name ||
-          priceCalc.vehicleType,
-        distanceKm: data.distanceKm,
-        price: data.price
-      });
-
-      setIsCalculating(false);
-      setShowPriceResult(true);
-    } catch (e) {
-      setIsCalculating(false);
-      setCalcWarning(e?.message || 'Network/Google API error');
-      setShowPriceResult(true);
-    }
+    const params = new URLSearchParams({
+      vehicle: priceCalc.vehicleType,
+      pickup: priceCalc.pickup,
+      drop: priceCalc.drop
+    });
+    navigate(`/book-transport?${params.toString()}`);
   };
 
   // ===== Book Now modal state (from latest price calc) =====
@@ -611,134 +748,240 @@ function Home() {
           <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-blue-500/20 rounded-full blur-3xl"></div>
         </div>
 
-        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 md:py-12 relative z-10">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-12 items-center">
-            <div className="text-white order-2 lg:order-1">
+        {/* RESPONSIVE CONTENT CONTAINER.
+
+            The hero image is a full-bleed `background-size: cover` layer on the
+            <section> itself, so the truck is unaffected by anything in here —
+            only the content column is constrained. This is a genuine fluid
+            container (`min(100% - 2×gutter, 1280px)` + `margin-inline:auto`),
+            never a set of absolute pixel coordinates tuned for one 1440px
+            screen, so the left content edge is identical in proportion on a
+            1366px laptop, a 1440px Air and a 1920px monitor.
+
+            Vertical padding is stepped rather than fixed: `md:py-8 lg:py-10`
+            replaces the old `md:py-12` so the headline → booking bar → CTA
+            stack still lands inside the first viewport on SHORT laptop screens
+            (1280×720, 1366×768) without the composition being crushed. There is
+            deliberately NO `min-height: 100vh` anywhere — the hero is sized by
+            its own content, so it never becomes letterboxed or over-tall. */}
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 md:py-8 lg:py-10 relative z-10">
+          {/* Hero grid. The second column is deliberately left empty; the booking
+              bar below spans both of them (see the note on that card).
+
+              `lg:gap-y-[22px]` is the BASE rhythm of the left column, and the
+              booking card adds `lg:mt-2` on top of it, which produces the
+              intended spacing ladder:
+                  headline → 16px → subtitle → 30px → card → 22px → CTAs
+              The CTAs therefore sit closer to the card than the card sits to
+              the subtitle, which keeps the bar grouped with the headline
+              instead of floating in the middle of the hero. */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-x-12 lg:gap-y-[22px] items-center">
+            <div className="text-white lg:col-start-1 lg:row-start-1">
               <h1 className="text-xl md:text-3xl lg:text-4xl xl:text-5xl font-bold mb-2 md:mb-4 animate-slide-in-left">
                 Reliable Truck &amp; Goods Transport Across India | Bihar Transport
               </h1>
               <p
-                className="text-base md:text-xl mb-3 md:mb-6 animate-slide-in-left delay-100"
+                className="text-base md:text-xl animate-slide-in-left delay-100"
                 style={{ color: '#FFFFFF' }}
               >
                 Converting Loads Into Trust Since 1998.
               </p>
+            </div>
 
-              {/* Price Calculator Form */}
-              <div
-                className="bg-white rounded-xl shadow-2xl p-3 md:p-5 animate-slide-in-left delay-200"
-                style={{ borderRadius: '12px' }}
-              >
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3">
-                  <div className="col-span-2 md:col-span-1">
-                    <label className="block text-xs font-semibold text-gray-600 mb-1">Pickup</label>
-                    <LoadScript
-                      googleMapsApiKey={import.meta.env.VITE_GOOGLE_MAPS_API_KEY}
-                      libraries={['places']}
-                      onError={(e) => console.error('Google Maps LoadScript error (Pickup):', e)}
+            {/* Booking bar: Pickup → Drop → Vehicle → Continue.
+
+                A COMPACT, LEFT-ALIGNED widget — never a full-width white band.
+                It occupies both hero grid columns (the second column is empty),
+                but it is sized INDEPENDENTLY of the hero container:
+
+                  < 640px  : one column, fully stacked, fluid width.
+                  640–1023 : two columns (Pickup | Drop / Vehicle | Continue),
+                             capped at 620px so it never looks oversized.
+                  1024–1279: two columns, clamp floor 660px.
+                  ≥ 1280px : ONE ROW of four, clamp(660px, 48vw, 720px).
+                  ≥ 1536px : 720px ceiling — the bar stops growing so the
+                             photograph stays the hero.
+
+                `justify-self-start` pins it to the left-hand hero content so it
+                never centres, and `relative z-20` gives it its own stacking
+                context so the autocomplete dropdown can never be painted under
+                the hero decorations or the hero image. */}
+
+            {/* ============================ WIDTH ============================
+                ROOT CAUSE OF THE "TOO BIG" COMPLAINT:
+                the old card chained FIVE hard pixel ceilings —
+                    max-w-[540] sm:max-w-[620] lg/xl:max-w-[700]
+                    min-[1400px]:max-w-[720] min-[1536px]:max-w-[720]
+                — so it jumped 540 → 620 → 700 → 720 at arbitrary breakpoints
+                and then sat at a flat 700–720px everywhere above 1400px. On a
+                1024px laptop that 700px ceiling was 73% of the 960px hero
+                column, which is exactly why the bar read as "a big form
+                dropped on a photo" instead of a widget floating on the truck.
+
+                It is now a single continuous clamp, i.e. the card tracks the
+                VIEWPORT rather than a lookup table:
+                    lg:w-[clamp(660px, 45vw, 700px)]
+                      1024px →  660px (floor)
+                      1280px →  660px
+                      1366px →  660px
+                      1440px →  660px
+                      1536px →  691px  ← 45vw
+                      1600px →  700px  (ceiling)
+                      1920px →  700px  (ceiling — the bar does NOT keep growing
+                                         on a wide monitor; that restraint is
+                                         what keeps the truck dominant)
+
+                45vw with a 700px ceiling is 20px NARROWER than the previous
+                48vw/720px at every width — deliberate, because the bar was
+                still reading a touch heavy against the photograph.
+
+                The floor stays at 660px for ONE concrete reason: that is the
+                narrowest card where the four tracks below still render
+                "Enter pickup location" (plus its 42px mic reservation),
+                "Enter drop location" and "17 ft Truck" UNCLIPPED on a 1280px
+                laptop. Below ~660px every placeholder clips mid-word.
+
+                Because the container is centred, the bar's RIGHT edge lands
+                progressively earlier in the frame as the screen grows — so the
+                photograph is LESS covered on a big monitor, never more.
+
+                SURFACE — 20px radius (modern, not a pill), a `p-4` inset, and
+                `.btb-booking-glow` for the slow warm-amber breath defined in
+                `index.css`. The class replaces the Tailwind `shadow-*` utility
+                on purpose: it owns the whole `box-shadow` property so the
+                keyframes can animate the resting shadow instead of fighting
+                it, and it keeps a real static shadow for reduced-motion.
+
+                The border is `border-white/75` per the design direction, with
+                the card's `inset 0 1px 0 rgba(255,255,255,.9)` highlight in
+                the same shadow stack doing the actual edge definition — a
+                literal white hairline on a white card would vanish against the
+                photograph and cost the bar its silhouette. */}
+            <div className="lg:col-start-1 lg:col-span-2 lg:row-start-2 relative z-20 w-full max-w-[620px] lg:w-[clamp(660px,45vw,700px)] lg:max-w-[700px] lg:mt-2 justify-self-start rounded-[20px] border border-white/75 bg-white btb-booking-glow p-4 animate-slide-in-left delay-200">
+              {/* GEOMETRY — the desktop card is ~108px tall:
+                     1 (border) + 16 (padding) + 16 (label) + 6 (label gap)
+                     + 52 (control) + 16 (padding) + 1 (border) = 108, on a
+                 20px radius. Down from the previous 54px controls / 18px
+                 padding / 112px, i.e. genuinely smaller rather than merely
+                 re-styled. 52px is still a comfortable, comfortably clickable
+                 desktop control, and mobile keeps its own roomier treatment
+                 through the responsive padding.
+
+                  PROPORTION SYSTEM — 31 / 31 / 20 / 18 % of the inner width,
+                  expressed as FRACTIONS so the row re-balances itself at every
+                  card width instead of relying on hardcoded pixels. Resolved
+                  tracks: ~204/204/132/118 at the 720px ceiling, ~195/195/126/
+                  113 at 1440px, ~185/185/120/108 at the 660px floor:
+                    • Pickup & Drop at 31% each are the dominant pair — wide
+                      enough for the full "Enter pickup location" placeholder
+                      AND its microphone button, never a stub. Their 44px
+                      right padding (`pr-11`) is reserved INSIDE the track, so
+                      the mic never eats into the text.
+                    • Vehicle at 20% and Continue at 18% are the narrow pair.
+                      This is the single most important rule here: it is what
+                      stops Vehicle re-expanding into the row's dominant block
+                      and what keeps Continue compact. Vehicle sits a point
+                      above Continue only because "17 ft Truck" is a longer
+                      string than "Continue →" and was clipping without it.
+                    • `minmax(0, …fr)` (not a bare `fr`) so a long address or a
+                      long vehicle name shrinks inside its track instead of
+                      forcing the row wider than the card.
+                    • 8px gaps at xl keep the four fields visually separate
+                      without wasting the bar's width.
+
+                  Every control is `h-[54px]`, so Pickup, Drop, the Vehicle
+                  select and the Continue button share one baseline. Combined
+                  with the 16px label line, the 6px label gap and the 18px
+                  card padding, that is a 114px bar — a compact floating
+                  widget, not a form. */}
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-3.5 xl:gap-2 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1.35fr)_minmax(0,0.9fr)_minmax(0,0.8fr)]">
+                <div className="min-w-0">
+                  {/* 13px / 600 — small and elegant. The old 12px + `mb-2`
+                      shrank the label so much that the control below it read as
+                      an unlabelled box. */}
+                  <label
+                    htmlFor="home-pickup"
+                    className="block text-[13px] leading-4 font-semibold text-gray-500 mb-1.5"
+                  >
+                    Pickup
+                  </label>
+                  <LocationField
+                    id="home-pickup"
+                    label="Pickup"
+                    placeholder="Enter pickup location"
+                    value={priceCalc.pickup}
+                    onChange={(value) => handleLocationChange('pickup', value)}
+                    onSelectPlace={(selection) => handleLocationSelected('pickup', selection)}
+                    inputRef={pickupInputRef}
+                    hasMic={voiceSupported}
+                    micSlot={renderVoiceButton('pickup')}
+                    statusSlot={renderVoiceStatus('pickup')}
+                  />
+                </div>
+
+                <div className="min-w-0">
+                  <label
+                    htmlFor="home-drop"
+                    className="block text-[13px] leading-4 font-semibold text-gray-500 mb-1.5"
+                  >
+                    Drop
+                  </label>
+                  <LocationField
+                    id="home-drop"
+                    label="Drop"
+                    placeholder="Enter drop location"
+                    value={priceCalc.drop}
+                    onChange={(value) => handleLocationChange('drop', value)}
+                    onSelectPlace={(selection) => handleLocationSelected('drop', selection)}
+                    inputRef={dropInputRef}
+                    hasMic={voiceSupported}
+                    micSlot={renderVoiceButton('drop')}
+                    statusSlot={renderVoiceStatus('drop')}
+                  />
+                </div>
+
+                {/* The two actions are wrapped so that BELOW the desktop row
+                    they read as one left-aligned group on the second line
+                    (Vehicle ▾ | Continue →) with a single clean block of
+                    whitespace to their right — instead of the two separate
+                    mid-cell voids a plain 2×2 grid leaves behind.
+
+                    `sm:col-span-2 sm:flex` produces that tablet/mobile
+                    grouping; `xl:contents` dissolves the wrapper at ≥1280px
+                    so Vehicle and Continue become direct grid items of the
+                    four-track desktop row again (DOM order is unchanged, so
+                    they land in slots 3 and 4). `display:contents` is a layout
+                    no-op otherwise — it holds no box, adds no spacing and
+                    leaves the sticky/absolute positioning of the children
+                    (mic tooltips, suggestion menus) untouched. */}
+                <div className="sm:col-span-2 sm:flex sm:items-start sm:gap-3.5 xl:contents">
+                  {/* `sm:max-w-[160px]` holds the select at its desktop cap while
+                      the tablet action group hands it a much wider cell;
+                      `xl:max-w-none` releases it once the four-track desktop row
+                      takes over and sizes the track itself. */}
+                  <div className="min-w-0 sm:max-w-[150px] xl:max-w-none">
+                    <label
+                      htmlFor="home-vehicle"
+                      className="block text-[13px] leading-4 font-semibold text-gray-500 mb-1.5"
                     >
-                      <Autocomplete
-                        options={pickupAutocompleteOptions}
-                        onLoad={(ac) => {
-                          pickupAutocompleteRef.current = ac;
-                        }}
-                        onPlaceChanged={() => {
-                          try {
-                            const ac = pickupAutocompleteRef.current;
-                            const place = ac?.getPlace?.();
-                            if (!place?.geometry?.location) return;
-
-                            const lat = place.geometry.location.lat();
-                            const lng = place.geometry.location.lng();
-                            const formatted_address = place.formatted_address || place.name || '';
-
-                            setPriceCalc((prev) => ({
-                              ...prev,
-                              pickup: formatted_address || prev.pickup,
-                              pickupPlaceId: place.place_id || prev.pickupPlaceId,
-                              pickupFormattedAddress: formatted_address,
-                              pickupLat: lat,
-                              pickupLng: lng
-                            }));
-                            setShowPriceResult(false);
-                          } catch (e) {
-                            console.error('Google Autocomplete onPlaceChanged error (Pickup):', e);
-                          }
-                        }}
-                      >
-                        <input
-                          type="text"
-                          value={priceCalc.pickup}
-                          onChange={(e) => {
-                            setPriceCalc({ ...priceCalc, pickup: e.target.value });
-                            setShowPriceResult(false);
-                          }}
-                          placeholder="Enter pickup location"
-                          className="w-full px-2 py-2 md:py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition-all bg-white text-gray-700 text-sm"
-                        />
-                      </Autocomplete>
-                    </LoadScript>
-                  </div>
-
-                  <div className="col-span-2 md:col-span-1">
-                    <label className="block text-xs font-semibold text-gray-600 mb-1">Drop</label>
-                    <LoadScript
-                      googleMapsApiKey={import.meta.env.VITE_GOOGLE_MAPS_API_KEY}
-                      libraries={['places']}
-                      onError={(e) => console.error('Google Maps LoadScript error (Drop):', e)}
-                    >
-                      <Autocomplete
-                        options={pickupAutocompleteOptions}
-                        onLoad={(ac) => {
-                          dropAutocompleteRef.current = ac;
-                        }}
-                        onPlaceChanged={() => {
-                          try {
-                            const ac = dropAutocompleteRef.current;
-                            const place = ac?.getPlace?.();
-                            if (!place?.geometry?.location) return;
-
-                            const lat = place.geometry.location.lat();
-                            const lng = place.geometry.location.lng();
-                            const formatted_address = place.formatted_address || place.name || '';
-
-                            setPriceCalc((prev) => ({
-                              ...prev,
-                              drop: formatted_address || prev.drop,
-                              dropPlaceId: place.place_id || prev.dropPlaceId,
-                              dropFormattedAddress: formatted_address,
-                              dropLat: lat,
-                              dropLng: lng
-                            }));
-                            setShowPriceResult(false);
-                          } catch (e) {
-                            console.error('Google Autocomplete onPlaceChanged error (Drop):', e);
-                          }
-                        }}
-                      >
-                        <input
-                          type="text"
-                          value={priceCalc.drop}
-                          onChange={(e) => {
-                            setPriceCalc({ ...priceCalc, drop: e.target.value });
-                            setShowPriceResult(false);
-                          }}
-                          placeholder="Enter drop location"
-                          className="w-full px-2 py-2 md:py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition-all bg-white text-gray-700 text-sm"
-                        />
-                      </Autocomplete>
-                    </LoadScript>
-                  </div>
-
-                  <div className="col-span-2 md:col-span-1">
-                    <label className="block text-xs font-semibold text-gray-600 mb-1">Vehicle</label>
+                      Vehicle
+                    </label>
+                    {/* `pl-2 pr-6` is the tightest padding that still clears the
+                        native chevron. Chrome adds a few px of its own inset to a
+                        <select>, so the previous `pl-2.5 pr-8` was clipping
+                        "17 ft Truck" to "17 ft Truc" — this trims 8px back out
+                        of the name's way. `h-[52px]` + `rounded-[10px]` match
+                        the two location inputs exactly, so the select can never
+                        read as taller, heavier or differently-cornered than
+                        them. */}
                     <select
+                      id="home-vehicle"
                       value={priceCalc.vehicleType}
                       onChange={(e) => {
-                        setPriceCalc({ ...priceCalc, vehicleType: e.target.value });
+                        setPriceCalc((prev) => ({ ...prev, vehicleType: e.target.value }));
                         setShowPriceResult(false);
                       }}
-                      className="w-full px-2 py-2 md:py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition-all cursor-pointer bg-white text-gray-700 text-sm"
+                      className="block h-[52px] w-full min-w-0 pl-2 pr-6 border border-gray-300 rounded-[10px] focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition-all cursor-pointer bg-white text-gray-900 text-[13px]"
                     >
                       {vehicleTypes.map((v) => (
                         <option key={v.id} value={v.id}>
@@ -747,43 +990,50 @@ function Home() {
                       ))}
                     </select>
                   </div>
-
-                  <div className="col-span-2 md:col-span-1 flex items-end">
-                    <button
-                      onClick={handleCheckPrice}
-                      disabled={!priceCalc.pickup || !priceCalc.drop}
-                      className="w-full py-2 md:py-2.5 px-2 md:px-4 bg-amber-500 text-white rounded-lg font-semibold hover:bg-amber-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer text-sm"
-                      style={{ backgroundColor: '#F5A623' }}
+  
+                  <div className="flex min-w-0 flex-col sm:max-w-[165px] xl:max-w-none">
+                    {/* Invisible twin of the labels above. Same classes → same box
+                        height, so the button lines up with the three controls
+                        instead of floating up beside them. */}
+                    <span
+                      aria-hidden="true"
+                      className="block text-[13px] leading-4 font-semibold text-transparent mb-1.5 select-none"
                     >
-                      Check Price
+                      Continue
+                    </span>
+                    {/* `px-2` + a 13px label + a 14px arrow is what lets
+                        "Continue →" sit comfortably inside the 18% track
+                        (~108–118px) instead of overflowing or wrapping. */}
+                    <button
+                      type="button"
+                      onClick={handleContinue}
+                      disabled={!hasCompleteRoute}
+                      className="w-full h-[52px] px-2 flex items-center justify-center gap-1.5 bg-amber-500 text-white rounded-xl font-semibold hover:bg-amber-600 hover:shadow-lg active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-none cursor-pointer text-[13px]"
+                      style={{ backgroundColor: '#F5A000' }}
+                    >
+                      Continue
+                      <svg
+                        className="w-3.5 h-3.5 shrink-0"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.5"
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M13 6l6 6-6 6" />
+                      </svg>
                     </button>
                   </div>
                 </div>
-
-                {showPriceResult && !isCalculating && (
-                  <div>
-                    <div className="mt-2 md:mt-3 bg-green-50 rounded-lg p-2 md:p-3 border border-green-200">
-                      <div className="flex justify-between items-center text-sm">
-                        <span className="text-gray-600">{calcDistance} km</span>
-                        <span className="font-bold text-green-600 text-lg">₹{calcPrice}</span>
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={openBookNow}
-                      disabled={!latestQuote || bookNowLoading}
-                      className="mt-2 w-full py-2 md:py-2.5 px-2 md:px-4 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer text-sm"
-                    >
-                      {bookNowLoading ? 'Processing...' : 'Book Now'}
-                    </button>
-
-                    {calcWarning && <div className="mt-2 text-xs text-amber-700">{calcWarning}</div>}
-                  </div>
-                )}
               </div>
 
-              <div className="grid grid-cols-1 sm:flex sm:flex-wrap gap-2 md:gap-3 mt-3 md:mt-4 animate-slide-in-left delay-300">
+              {calcWarning && <div className="mt-2 text-xs text-amber-700">{calcWarning}</div>}
+            </div>
+
+            {/* CTAs — back in the left column, same width and same buttons as
+                before the bar was widened. */}
+            <div className="lg:col-start-1 lg:row-start-3">
+              <div className="grid grid-cols-1 sm:flex sm:flex-wrap gap-2 md:gap-3 animate-slide-in-left delay-300">
                 <Link
                   to="/book-transport"
                   className="w-full sm:w-auto flex-1 md:flex-none px-4 md:px-6 py-3 bg-amber-500 text-white rounded-xl font-semibold hover:bg-amber-600 transition-all shadow-lg text-center btn-hover-scale cursor-pointer"
@@ -797,7 +1047,7 @@ function Home() {
                   Become a Partner
                 </Link>
                 <a
-                  href="tel:+918210931799"
+                  href={HOME_CALL_URL}
                   className="w-full sm:w-auto flex-1 md:flex-none px-4 md:px-6 py-3 bg-green-500 text-white rounded-xl font-semibold hover:bg-green-600 transition-all shadow-lg text-center btn-hover-scale cursor-pointer flex items-center justify-center gap-2"
                 >
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -812,7 +1062,6 @@ function Home() {
                 </a>
               </div>
             </div>
-
           </div>
         </div>
 
@@ -1337,7 +1586,7 @@ function Home() {
       {/* Sticky bottom action bar (Mobile only) */}
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-3 z-50 md:hidden flex items-center gap-2 shadow-lg">
         <a
-          href="tel:+918210931799"
+          href={HOME_CALL_URL}
           className="flex-1 flex items-center justify-center gap-2 py-3 bg-green-500 text-white rounded-xl font-semibold hover:bg-green-600 transition-colors cursor-pointer"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

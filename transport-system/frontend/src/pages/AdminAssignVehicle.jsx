@@ -154,7 +154,7 @@ const quote = (booking?.quote_status || 'PENDING').toUpperCase();
         </button>
 
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Assign Vehicle</h1>
+          <h1 className="bt-page-title">Assign Vehicle</h1>
           <p className="text-sm text-muted mt-1">
             Assign an available fleet vehicle to this booking.
           </p>
@@ -162,7 +162,7 @@ const quote = (booking?.quote_status || 'PENDING').toUpperCase();
 
         {/* Booking summary */}
         {booking && (
-          <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-5">
+          <div className="rounded-2xl border border-border/60 bg-card/40 p-5">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -197,7 +197,7 @@ const quote = (booking?.quote_status || 'PENDING').toUpperCase();
 
         {/* Confirmation panel */}
         {confirmOpen && selectedVehicle && (
-          <div className="rounded-2xl border border-blue-500/40 bg-blue-500/5 backdrop-blur-xl overflow-hidden">
+          <div className="rounded-2xl border border-blue-500/40 bg-blue-500/5 overflow-hidden">
             <div className="px-5 py-3.5 border-b border-border/40">
               <span className="text-sm font-bold tracking-tight">ASSIGN VEHICLE</span>
             </div>
@@ -309,7 +309,7 @@ const quote = (booking?.quote_status || 'PENDING').toUpperCase();
               {vehicles.map((vehicle) => {
                 const isAvail = String(vehicle.current_status || 'available') === 'available' && (vehicle.is_available ?? true);
                 return (
-                  <div key={vehicle.vehicle_id} className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-4">
+                  <div key={vehicle.vehicle_id} className="rounded-2xl border border-border/60 bg-card/40 p-4">
                     <div className="flex items-start gap-3">
                       <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-lg shrink-0">
                         🚚
@@ -370,7 +370,7 @@ const quote = (booking?.quote_status || 'PENDING').toUpperCase();
         )}
 
 {!isVehicleAssigned && !canAssign && !assignSuccess && (
-          <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl p-8 text-center">
+          <div className="rounded-2xl border border-border/60 bg-card/40 p-8 text-center">
             <div className="text-sm text-muted">
               This booking cannot accept a vehicle assignment in its current state.
             </div>

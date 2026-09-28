@@ -234,6 +234,114 @@ async function sendBookingNotification(booking) {
 }
 
 /**
+ * sendPasswordResetEmail — sends a password reset email to the user.
+ *
+ * @param {Object} params
+ * @param {string} params.email — Recipient email
+ * @param {string} params.resetUrl — Full reset URL with token
+ * @param {string} params.userName — User's name for personalization
+ * @returns {Promise<{success: boolean, message: string, messageId?: string, error?: string}>}
+ */
+async function sendPasswordResetEmail({ email, resetUrl, userName }) {
+  const fromEmail = process.env.FROM_EMAIL;
+
+  if (!fromEmail) {
+    console.warn('[email] FROM_EMAIL not set — skipping password reset email');
+    return { success: false, message: 'FROM_EMAIL not configured' };
+  }
+  if (!process.env.BREVO_SMTP_USER || !process.env.BREVO_SMTP_PASSWORD) {
+    console.warn('[email] SMTP credentials not set — skipping password reset email');
+    return { success: false, message: 'SMTP not configured' };
+  }
+
+  const subject = 'Reset your Bihar Transport password';
+
+  // Professional HTML email template
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #f3f4f6; margin: 0; padding: 20px; }
+    .container { max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
+    .header { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); padding: 28px 24px; text-align: center; }
+    .header h1 { color: #fff; margin: 0 0 4px; font-size: 24px; font-weight: 700; letter-spacing: -0.5px; }
+    .header p { color: rgba(255,255,255,0.85); margin: 0; font-size: 15px; }
+    .body { padding: 24px; }
+    .greeting { font-size: 15px; color: #374151; margin-bottom: 20px; }
+    .card { background: #f9fafb; border-radius: 12px; padding: 16px; margin-bottom: 16px; border: 1px solid #e5e7eb; }
+    .card-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #9ca3af; margin-bottom: 12px; }
+    .row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f3f4f6; }
+    .row:last-child { border-bottom: none; }
+    .label { font-size: 13px; color: #6b7280; }
+    .value { font-size: 13px; font-weight: 600; color: #111827; text-align: right; }
+    .button { display: inline-block; padding: 14px 28px; background: #f59e0b; color: #fff; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px; text-align: center; }
+    .button:hover { background: #d97706; }
+    .footer { text-align: center; padding: 20px; color: #9ca3af; font-size: 12px; background: #f9fafb; border-top: 1px solid #e5e7eb; }
+    .footer a { color: #f59e0b; text-decoration: none; font-weight: 600; }
+    .security-note { font-size: 13px; color: #6b7280; background: #fef3c7; border: 1px solid #fcd34d; border-radius: 8px; padding: 12px; margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🔐 Password Reset Request</h1>
+      <p>Bihar Transport Begusarai</p>
+    </div>
+    <div class="body">
+      <p class="greeting">Hello ${escapeHtml(userName || 'there')},</p>
+      <p style="font-size: 15px; color: #374151; margin-bottom: 20px;">
+        We received a request to reset the password for your Bihar Transport account.
+        If you didn't make this request, you can safely ignore this email.
+      </p>
+
+      <div class="card">
+        <div class="card-title">Reset Details</div>
+        <div class="row"><span class="label">Account</span><span class="value">${escapeHtml(email)}</span></div>
+        <div class="row"><span class="label">Expires</span><span class="value">30 minutes</span></div>
+      </div>
+
+      <p style="text-align: center; margin-top: 24px;">
+        <a href="${escapeHtml(resetUrl)}" class="button">Reset Password</a>
+      </p>
+
+      <p style="font-size: 13px; color: #6b7280; text-align: center; margin-top: 16px;">
+        Or copy this link into your browser:<br>
+        <span style="word-break: break-all; color: #9ca3af;">${escapeHtml(resetUrl)}</span>
+      </p>
+
+      <div class="security-note">
+        <strong>Security Note:</strong> This link will expire in 30 minutes and can only be used once.
+        If you didn't request a password reset, please contact support immediately.
+      </div>
+    </div>
+    <div class="footer">
+      <p>Bihar Transport Begusarai &bull; Enterprise Logistics</p>
+      <p>📍 Begusarai, Bihar</p>
+    </div>
+  </div>
+</body>
+</html>`;
+
+  const transporter = createTransporter();
+
+  try {
+    const info = await transporter.sendMail({
+      from: `"Bihar Transport" <${fromEmail}>`,
+      to: email,
+      subject,
+      html,
+    });
+
+    console.log(`[email] Password reset email sent — to=${email} messageId=${info.messageId}`);
+    return { success: true, message: 'Password reset email sent', messageId: info.messageId };
+  } catch (err) {
+    console.error(`[email] Password reset email failed — to=${email} error="${err.message}"`);
+    return { success: false, message: `SMTP error: ${err.message}`, error: err.message };
+  }
+}
+
+/**
  * Escape HTML special characters to prevent injection.
  */
 function escapeHtml(str) {
@@ -250,5 +358,6 @@ module.exports = {
   verifyConnection,
   sendTestEmail,
   sendBookingNotification,
+  sendPasswordResetEmail,
 };
 

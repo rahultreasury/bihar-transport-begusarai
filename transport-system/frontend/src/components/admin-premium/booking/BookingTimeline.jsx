@@ -144,8 +144,21 @@ return TIMELINE_STEPS.map((step, idx) => {
 
   return (
     <div className="py-4" role="list" aria-label="Booking Timeline">
+      {/* TimelineStep reads step.key / step.icon / step.label off a NESTED
+          `step` prop, while isActive / isCompleted / timestamp / isLast are
+          flat. Spreading `{...step}` flattened everything, so `step` arrived
+          undefined and every step.* access threw. Pass `step` nested and the
+          four state props explicitly — and drop the spread, which React also
+          warns about because the spread object carries `key`. */}
       {steps.map((step) => (
-        <TimelineStep key={step.key} {...step} />
+        <TimelineStep
+          key={step.key}
+          step={step}
+          isActive={step.isActive}
+          isCompleted={step.isCompleted}
+          timestamp={step.timestamp}
+          isLast={step.isLast}
+        />
       ))}
     </div>
   );

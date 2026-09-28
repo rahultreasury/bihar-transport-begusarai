@@ -103,13 +103,15 @@ function SearchableSelect({ value, onChange, options, placeholder, inputClass, e
 }
 
 export default function VehicleRegistrationSection({
-  formData,
-  errors,
-  onChange,
-  onErrorsChange,
-  context,
-  createdOwner,
-  createdDriver,
+ formData,
+ errors,
+ onChange,
+ onErrorsChange,
+ context,
+ createdOwner,
+ createdDriver,
+ initialOwner = null,
+ initialDriver = null,
 }) {
   const [owners, setOwners] = useState([]);
   const [ownersLoading, setOwnersLoading] = useState(false);
@@ -185,29 +187,25 @@ export default function VehicleRegistrationSection({
   }, []);
 
   // Pre-select owner from context or created owner
-  useEffect(() => {
-    if (createdOwner) {
-      setSelectedOwner(createdOwner);
-      onChange('owner_id', String(createdOwner.owner_id));
-      setOwnerType(createdOwner.owner_type || '');
-    } else if (context.ownerId && !selectedOwner) {
-      const owner = owners.find(o => String(o.owner_id) === String(context.ownerId));
-      if (owner) {
-        setSelectedOwner(owner);
-        onChange('owner_id', String(owner.owner_id));
-        setOwnerType(owner.owner_type || '');
-      }
-    }
-  }, [createdOwner, context.ownerId, owners, onChange]);
+ useEffect(() => {
+   if (createdOwner || context.ownerId || selectedOwner) return;
+   if (!initialOwner?.owner_id) return;
 
-  // Pre-select driver from context or created driver
-  useEffect(() => {
-    if (createdDriver) {
-      onChange('driver_id', String(createdDriver.driver_id));
-    } else if (context.driverId) {
-      onChange('driver_id', String(context.driverId));
-    }
-  }, [createdDriver, context.driverId, onChange]);
+   setSelectedOwner(initialOwner);
+   onChange('owner_id', String(initialOwner.owner_id));
+   setOwnerType(initialOwner.owner_type || '');
+ }, [createdOwner, context.ownerId, initialOwner, onChange, selectedOwner]);
+
+ // Pre-select driver from context or created driver
+ useEffect(() => {
+   if (createdDriver) {
+     onChange('driver_id', String(createdDriver.driver_id));
+   } else if (context.driverId) {
+     onChange('driver_id', String(context.driverId));
+   } else if (!formData.driver_id && initialDriver?.driver_id) {
+     onChange('driver_id', String(initialDriver.driver_id));
+   }
+ }, [createdDriver, context.driverId, formData.driver_id, initialDriver, onChange]);
 
   const handleChange = useCallback((e) => {
     const { name, value, type } = e.target;
@@ -539,23 +537,24 @@ export default function VehicleRegistrationSection({
         </div>
       </div>
 
-      {/* Transport Owner & Driver Assignment */}
+      {/* Transport Owner & Driver Assignment (Optional) */}
       <div className="border-t border-border/40 pt-4 space-y-5">
         <div className="flex items-center gap-2">
           <div className="h-1.5 w-1.5 rounded-full bg-purple-500" />
           <span className="text-xs font-semibold text-muted uppercase tracking-wider">Transport Owner & Driver Assignment</span>
+          <span className="text-xs text-muted font-normal">(optional)</span>
         </div>
 
         {/* Transport Owner Selection */}
         <div className="space-y-3" ref={ownerWrapperRef}>
           <label className={labelCls}>
-            Transport Owner <span className="text-red-500">*</span>
+            Transport Owner
           </label>
           <SearchableSelect
             value={selectedOwner ? `${selectedOwner.owner_name} (${selectedOwner.owner_code || selectedOwner.owner_id})` : ''}
             onChange={handleOwnerSelect}
             options={owners}
-            placeholder="Search transport owner by name or code..."
+            placeholder="Search transport owner by name or code... (optional)"
             inputClass={`w-full px-3 py-2.5 rounded-xl border text-sm bg-card/40 focus:outline-none focus:ring-2 focus:ring-amber-500/30 transition ${errors.owner_id ? 'border-red-500/50' : 'border-border/60'}`}
             error={errors.owner_id}
             displayRenderer={(o) => `${o.owner_name} (${o.owner_code || o.owner_id}) • ${o.city || ''}`}
@@ -584,7 +583,7 @@ export default function VehicleRegistrationSection({
         {/* Driver Selection */}
         <div className="space-y-3">
           <label className={labelCls}>
-            Driver <span className="text-red-500">*</span>
+            Driver
           </label>
           <SearchableSelect
             value={drivers.find(d => String(d.driver_id) === String(formData.driver_id)) 
@@ -597,7 +596,7 @@ export default function VehicleRegistrationSection({
               }
             }}
             options={drivers}
-            placeholder="Search driver by name or mobile..."
+            placeholder="Search driver by name or mobile... (optional)"
             inputClass={`w-full px-3 py-2.5 rounded-xl border text-sm bg-card/40 focus:outline-none focus:ring-2 focus:ring-amber-500/30 transition ${errors.driver_id ? 'border-red-500/50' : 'border-border/60'}`}
             error={errors.driver_id}
             displayRenderer={(d) => `${d.driver_name} (${d.driver_code || d.driver_id}) • ${d.mobile}`}

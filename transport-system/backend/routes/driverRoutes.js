@@ -4,11 +4,14 @@ const { prisma } = require('../config/prisma');
 const { protect } = require('../middleware/auth');
 const { body, validationResult } = require('express-validator');
 const { validateTransition } = require('../utils/BookingStateMachine');
+const { flattenTripForDriver } = require('../utils/BookingMapper');
 const BookingTimelineRepository = require('../repositories/BookingTimelineRepository');
+const TripService = require('../services/TripService');
 const TripFinancialService = require('../services/TripFinancialService');
 const ResourceAvailabilityService = require('../services/ResourceAvailabilityService');
 
 const timelineRepo = new BookingTimelineRepository();
+const tripService = new TripService();
 const tripFinancialService = new TripFinancialService();
 const resourceAvailabilityService = new ResourceAvailabilityService();
 
@@ -845,6 +848,207 @@ router.get('/stats', protect, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error'
+    });
+  }
+});
+
+// @route   GET /api/drivers/me/trips
+// @desc    Get authenticated Driver's assigned standalone Trip records.
+//          Uses the SAME Trip table that Admin and Partner use — no duplicate
+//          trip representation exists. Driver identity is derived from the
+//          authenticated JWT (req.user.user_id → Driver.user_id), NOT from
+//          query params or request body.
+// @access  Private (Driver)
+router.get('/me/trips', protect, async (req, res) => {
+  try {
+    // Resolve driver identity from authenticated user — NEVER from query/body
+    const driver = await prisma.driver.findFirst({
+      where: { user_id: req.user.user_id },
+      select: { driver_id: true, driver_name: true },
+    });
+
+    if (!driver) {
+      return res.status(403).json({
+        success: false,
+        message: 'Driver profile not found',
+      });
+    }
+
+    // Reuse existing TripService.getTripsByDriverId → TripRepository.findByDriverId
+    const result = await tripService.getTripsByDriverId(driver.driver_id, {
+      page: req.query.page,
+      limit: req.query.limit,
+      sort_by: req.query.sort_by,
+      sort_order: req.query.sort_order,
+      status: req.query.status,
+    });
+
+    const trips = (result.trips || []).map(flattenTripForDriver);
+
+    res.json({
+      success: true,
+      data: trips,
+      pagination: result.pagination,
+    });
+  } catch (error) {
+    console.error('Driver trips error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching driver trips',
+    });
+  }
+});
+
+// @route   GET /api/drivers/me/trips/:id
+// @desc    Get a single Trip detail for the authenticated driver.
+//          Enforces that the trip.driver_id matches the authenticated driver.
+// @access  Private (Driver)
+router.get('/me/trips/:id', protect, async (req, res) => {
+  try {
+    const tripId = parseInt(req.params.id);
+    if (isNaN(tripId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid trip ID',
+      });
+    }
+
+    // Resolve driver identity from authenticated user
+    const driver = await prisma.driver.findFirst({
+      where: { user_id: req.user.user_id },
+      select: { driver_id: true },
+    });
+
+    if (!driver) {
+      return res.status(403).json({
+        success: false,
+        message: 'Driver profile not found',
+      });
+    }
+
+    // Fetch the trip — ownership enforced below
+    let trip;
+    try {
+      trip = await tripService.getTripById(tripId);
+    } catch (e) {
+      // Trip not found — 404
+      return res.status(404).json({
+        success: false,
+        message: 'Trip not found',
+      });
+    }
+
+    // SECURITY: Driver may only view trips assigned to them.
+    // This uses the SAME trip record that Admin and Partner see.
+    if (trip.driver_id !== driver.driver_id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied: This trip is not assigned to you',
+      });
+    }
+
+    const data = flattenTripForDriver(trip);
+    res.json({
+      success: true,
+      data,
+    });
+  } catch (error) {
+    console.error('Driver trip detail error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching trip details',
+    });
+  }
+});
+
+// @route   PATCH /api/drivers/me/trips/:id/status
+// @desc    Update Trip status for the authenticated driver.
+//          Uses the SAME Trip record that Admin and Partner use.
+//          Driver identity is derived from the authenticated JWT.
+// @access  Private (Driver)
+router.patch('/me/trips/:id/status', protect, [
+  body('status').isIn(['PENDING', 'ASSIGNED', 'IN_TRANSIT', 'DELIVERED', 'COMPLETED', 'CANCELLED']).withMessage('Invalid status')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        errors: errors.array()
+      });
+    }
+
+    const tripId = parseInt(req.params.id);
+    if (isNaN(tripId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid trip ID'
+      });
+    }
+
+    const { status } = req.body;
+
+    // Resolve driver identity from authenticated user — NEVER from request body/params
+    const driver = await prisma.driver.findFirst({
+      where: { user_id: req.user.user_id },
+      select: { driver_id: true },
+    });
+
+    if (!driver) {
+      return res.status(403).json({
+        success: false,
+        message: 'Driver profile not found'
+      });
+    }
+
+    // Fetch the trip — ownership enforced below
+    let trip;
+    try {
+      trip = await tripService.getTripById(tripId);
+    } catch (e) {
+      // Trip not found — 404
+      return res.status(404).json({
+        success: false,
+        message: 'Trip not found'
+      });
+    }
+
+    // SECURITY: Driver may only update trips assigned to them.
+    // This uses the SAME trip record that Admin and Partner see.
+    if (trip.driver_id !== driver.driver_id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied: This trip is not assigned to you'
+      });
+    }
+
+    // Use existing TripService.updateTripStatus() which enforces:
+    // - Valid status values
+    // - COMPLETION RULE: Cannot complete trip while Customer Due > 0
+    // - Valid status transitions (implicit via status validation)
+    // - Audit logging
+    const updatedTrip = await tripService.updateTripStatus(tripId, status, {
+      user_id: driver.driver_id,
+      role: 'driver'
+    });
+
+    // Return driver-safe Trip DTO
+    const data = flattenTripForDriver(updatedTrip);
+    res.json({
+      success: true,
+      data,
+    });
+  } catch (error) {
+    console.error('Driver trip status update error:', error);
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+    res.status(500).json({
+      success: false,
+      message: 'Server error while updating trip status'
     });
   }
 });

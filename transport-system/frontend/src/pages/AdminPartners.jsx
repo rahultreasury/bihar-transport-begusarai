@@ -1,13 +1,13 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { adminAPI } from '../services/api';
+import { adminAPI, financialAPI } from '../services/api';
 
 import AdminShell from '../components/admin-premium/layout/AdminShell';
 import KpiCard from '../components/admin-premium/ui/KpiCard';
 import PremiumTable from '../components/admin-premium/ui/PremiumTable';
 import EmptyState from '../components/admin-premium/ui/EmptyState';
 import { LoadingSkeleton } from '../components/admin-premium/ui/LoadingSkeleton';
-import VehicleOwnerRegisterModal from '../components/admin-premium/owners/VehicleOwnerRegisterModal';
+import TransportResourceRegistrationModal from '../components/admin-premium/transport/TransportResourceRegistrationModal';
 
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: '▦' },
@@ -39,13 +39,27 @@ function getInitials(name) {
 }
 
 function OwnerStatusBadge({ status }) {
-  const colors = {
-    active: 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400',
-    inactive: 'bg-gray-100 text-gray-600 dark:bg-gray-500/20 dark:text-gray-400',
-    suspended: 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400',
+  const config = {
+    active: {
+      dot: 'bg-green-500',
+      text: 'text-green-700 dark:text-green-400',
+      bg: 'bg-green-50 dark:bg-green-500/10',
+    },
+    inactive: {
+      dot: 'bg-gray-400',
+      text: 'text-gray-600 dark:text-gray-400',
+      bg: 'bg-gray-50 dark:bg-gray-500/10',
+    },
+    suspended: {
+      dot: 'bg-red-500',
+      text: 'text-red-700 dark:text-red-400',
+      bg: 'bg-red-50 dark:bg-red-500/10',
+    },
   };
+  const c = config[status] || config.inactive;
   return (
-    <span className={`px-2.5 py-1 rounded-lg text-xs font-semibold ${colors[status] || colors.inactive}`}>
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${c.bg} ${c.text}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${c.dot} flex-shrink-0`} />
       {status ? status.charAt(0).toUpperCase() + status.slice(1) : 'Unknown'}
     </span>
   );
@@ -58,30 +72,31 @@ function ActionsDropdown({ owner, onViewProfile, onEdit, onDeactivate, onDelete 
     <div className="relative">
       <button
         onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
-        className="p-1.5 rounded-lg hover:bg-hover/60 transition"
+        className="w-9 h-9 rounded-lg flex items-center justify-center text-muted hover:text-text hover:bg-gray-100 dark:hover:bg-gray-800/60 transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:ring-offset-1"
+        aria-label="More actions"
       >
-        <svg className="w-5 h-5 text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01" />
         </svg>
       </button>
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 z-20 mt-1 w-52 rounded-2xl border border-border/60 bg-card shadow-xl backdrop-blur-xl py-1.5">
-            <button onClick={() => { setOpen(false); onViewProfile(owner); }} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm hover:bg-hover/60 transition">
+          <div className="absolute right-0 z-20 mt-1.5 w-48 rounded-xl border border-border/60 bg-white dark:bg-gray-900 shadow-[0_4px_16px_rgba(0,0,0,0.08)] dark:shadow-none py-1.5">
+            <button onClick={() => { setOpen(false); onViewProfile(owner); }} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-text hover:bg-gray-50 dark:hover:bg-gray-800/60 transition">
               <svg className="w-4 h-4 text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
               View Profile
             </button>
-            <button onClick={() => { setOpen(false); onEdit(owner); }} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm hover:bg-hover/60 transition">
+            <button onClick={() => { setOpen(false); onEdit(owner); }} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-text hover:bg-gray-50 dark:hover:bg-gray-800/60 transition">
               <svg className="w-4 h-4 text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
               Edit
             </button>
-<div className="border-t border-border/40 my-1" />
-            <button onClick={() => { setOpen(false); onDeactivate(owner); }} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-red-500 hover:bg-red-500/5 transition">
+            <div className="border-t border-border/40 my-1" />
+            <button onClick={() => { setOpen(false); onDeactivate(owner); }} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-500/5 transition">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" /></svg>
               {owner.status === 'active' ? 'Deactivate' : 'Activate'}
             </button>
-            <button onClick={() => { setOpen(false); onDelete(owner); }} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-red-600 hover:bg-red-500/10 transition">
+            <button onClick={() => { setOpen(false); onDelete(owner); }} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-500/5 transition">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
               Delete Owner
             </button>
@@ -96,6 +111,8 @@ export default function AdminPartners() {
   const navigate = useNavigate();
   const [owners, setOwners] = useState([]);
   const [stats, setStats] = useState(null);
+  const [tripSummary, setTripSummary] = useState(null);
+  const [financialSummary, setFinancialSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [pagination, setPagination] = useState({ page: 1, limit: ITEMS_PER_PAGE, total: 0, pages: 0 });
@@ -104,6 +121,7 @@ export default function AdminPartners() {
   const [sortField, setSortField] = useState('created_at');
   const [sortDirection, setSortDirection] = useState('desc');
   const [showRegisterModal, setShowRegisterModal] = useState(false);
+  const [registerContext, setRegisterContext] = useState({});
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deletingOwner, setDeletingOwner] = useState(false);
   const [deleteOwnerError, setDeleteOwnerError] = useState(null);
@@ -159,7 +177,21 @@ export default function AdminPartners() {
     } catch (err) { console.error('Error fetching owner stats:', err); }
   }, []);
 
-  useEffect(() => { fetchOwners(1); fetchStats(); }, []);
+  const fetchTripSummary = useCallback(async () => {
+    try {
+      const response = await adminAPI.getTripSummary();
+      if (response.data?.success) setTripSummary(response.data.data);
+    } catch (err) { console.error('Error fetching trip summary:', err); }
+  }, []);
+
+  const fetchFinancialSummary = useCallback(async () => {
+    try {
+      const response = await financialAPI.getSummary();
+      if (response.data?.success) setFinancialSummary(response.data.data);
+    } catch (err) { console.error('Error fetching financial summary:', err); }
+  }, []);
+
+  useEffect(() => { fetchOwners(1); fetchStats(); fetchTripSummary(); fetchFinancialSummary(); }, []);
   useEffect(() => { fetchOwners(1); }, [debouncedSearch, statusFilter, sortField, sortDirection]);
 
   // Applications fetch
@@ -257,16 +289,70 @@ export default function AdminPartners() {
     fetchStats();
   }, [fetchOwners, fetchStats]);
 
+  const formatCurrency = (amount) => {
+    if (amount === null || amount === undefined) return '₹0';
+    return new Intl.NumberFormat('en-IN', {
+      style: 'currency',
+      currency: 'INR',
+      maximumFractionDigits: 0,
+    }).format(amount);
+  };
+
   const kpis = useMemo(() => {
     if (!stats) return [];
     return [
-      { key: 'total', title: 'Total Owners', value: stats.totalOwners ?? 0, sub: 'Registered owners', accent: 'amber', loading: false },
-      { key: 'active', title: 'Active Owners', value: stats.activeOwners ?? 0, sub: 'Currently active', accent: 'green', loading: false },
-      { key: 'inactive', title: 'Inactive Owners', value: stats.inactiveOwners ?? 0, sub: 'Currently inactive', accent: 'purple', loading: false },
-      { key: 'totalVehicles', title: 'Total Vehicles', value: stats.totalVehicles ?? 0, sub: 'Across all owners', accent: 'sky', loading: false },
-      { key: 'totalBookings', title: 'Total Bookings', value: stats.totalBookings ?? 0, sub: 'Total bookings', accent: 'green', loading: false },
+      {
+        key: 'active',
+        title: 'Active Owners',
+        value: stats.activeOwners ?? 0,
+        sub: 'Currently active',
+        accent: 'green',
+        loading: false,
+        onClick: () => { setStatusFilter('active'); setSearch(''); },
+        ariaLabel: 'Filter owners by Active status',
+      },
+      {
+        key: 'totalVehicles',
+        title: 'Total Vehicles',
+        value: stats.totalVehicles ?? 0,
+        sub: 'Across all owners',
+        accent: 'blue',
+        loading: false,
+        onClick: () => navigate('/admin/vehicles'),
+        ariaLabel: 'View all vehicles',
+      },
+      {
+        key: 'totalDrivers',
+        title: 'Total Drivers',
+        value: stats.totalDrivers ?? 0,
+        sub: 'Across all owners',
+        accent: 'amber',
+        loading: false,
+        onClick: () => navigate('/admin/drivers'),
+        ariaLabel: 'View all drivers',
+      },
+      {
+        key: 'activeTrips',
+        title: 'Active Trips',
+        value: tripSummary?.inTransit ?? 0,
+        sub: 'Currently in progress',
+        accent: 'purple',
+        loading: false,
+        onClick: () => navigate('/admin/trips'),
+        ariaLabel: 'View active trips',
+      },
+      {
+        key: 'pendingSettlements',
+        title: 'Pending Settlements',
+        value: formatCurrency(financialSummary?.totalPayable ?? 0),
+        sub: 'Needs attention',
+        accent: 'rose',
+        loading: false,
+        onClick: () => navigate('/admin/settlements'),
+        ariaLabel: 'View pending settlements',
+      },
     ];
-  }, [stats]);
+  }, [stats, tripSummary, financialSummary, navigate, setStatusFilter, setSearch]);
 
   const columns = useMemo(() => [
     {
@@ -346,16 +432,19 @@ export default function AdminPartners() {
 
   return (
 <AdminShell navItems={NAV_ITEMS} activeKey="owners" onNav={(k) => {}}>
-      <VehicleOwnerRegisterModal
-        isOpen={showRegisterModal}
-        onClose={() => setShowRegisterModal(false)}
-        onSuccess={handleRegisterSuccess}
-      />
+      {showRegisterModal && (
+        <TransportResourceRegistrationModal
+          isOpen={showRegisterModal}
+          onClose={() => { setShowRegisterModal(false); setRegisterContext({}); }}
+          onSuccess={handleRegisterSuccess}
+          context={registerContext}
+        />
+      )}
 
       {/* Toast notification */}
       {toast && (
         <div className="fixed top-6 right-6 z-[100] animate-slide-down">
-          <div className={`px-5 py-3.5 rounded-2xl shadow-2xl border text-sm font-semibold flex items-center gap-3 backdrop-blur-sm ${
+          <div className={`px-5 py-3.5 rounded-2xl shadow-2xl border text-sm font-semibold flex items-center gap-3 ${
             toast.type === 'success'
               ? 'bg-emerald-50 dark:bg-emerald-900/50 border-emerald-200 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300'
               : 'bg-red-50 dark:bg-red-900/50 border-red-200 dark:border-red-700 text-red-700 dark:text-red-300'
@@ -380,7 +469,7 @@ export default function AdminPartners() {
       {/* Delete Owner Confirmation Modal */}
       {deleteTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setDeleteTarget(null)} />
+          <div className="absolute inset-0 bg-black/40" onClick={() => setDeleteTarget(null)} />
           <div className="relative w-full max-w-md bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-border/60 p-6" role="dialog" aria-modal="true" aria-label="Delete Transport Owner">
             <div className="text-center">
               <div className="w-14 h-14 rounded-full bg-red-500/10 flex items-center justify-center mx-auto mb-4">
@@ -436,13 +525,13 @@ export default function AdminPartners() {
 
       <div className="space-y-5">
         {/* Tabs */}
-        <div className="flex items-center gap-1 p-1 bg-[#1e3a5f]/5 rounded-xl w-fit">
+        <div className="flex items-center gap-1 p-1 bg-[#15345B]/5 rounded-xl w-fit">
           <button
             onClick={() => setActiveTab('owners')}
             className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
               activeTab === 'owners'
-                ? 'bg-white text-[#0F2B55] shadow-sm'
-                : 'text-[#1e3a5f]/60 hover:text-[#1e3a5f]'
+                ? 'bg-white text-[#15345B] shadow-sm'
+                : 'text-[#15345B]/60 hover:text-[#15345B]'
             }`}
           >
             Transport Owners
@@ -451,8 +540,8 @@ export default function AdminPartners() {
             onClick={() => setActiveTab('applications')}
             className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
               activeTab === 'applications'
-                ? 'bg-white text-[#0F2B55] shadow-sm'
-                : 'text-[#1e3a5f]/60 hover:text-[#1e3a5f]'
+                ? 'bg-white text-[#15345B] shadow-sm'
+                : 'text-[#15345B]/60 hover:text-[#15345B]'
             }`}
           >
             Applications
@@ -463,7 +552,7 @@ export default function AdminPartners() {
           <>
             <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
               <div>
-                <h1 className="text-3xl font-bold tracking-tight">Transport Owners</h1>
+                <h1 className="bt-page-title">Transport Owners</h1>
                 <p className="text-sm text-muted mt-1">
                   {pagination.total > 0 ? `${pagination.total} owner${pagination.total !== 1 ? 's' : ''} registered` : 'Manage all transport owners'}
                 </p>
@@ -476,7 +565,7 @@ export default function AdminPartners() {
                   Settlements
                 </button>
                 <button
-                  onClick={() => setShowRegisterModal(true)}
+                  onClick={() => { setRegisterContext({ sourcePage: 'owners', resourceType: 'owner' }); setShowRegisterModal(true); }}
                   className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition shadow-sm shadow-amber-500/20"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -490,7 +579,17 @@ export default function AdminPartners() {
         {stats && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
             {kpis.map(k => (
-              <KpiCard key={k.key} title={k.title} value={k.value} sub={k.sub} accent={k.accent} loading={false} />
+              <KpiCard
+                key={k.key}
+                title={k.title}
+                value={k.value}
+                sub={k.sub}
+                accent={k.accent}
+                loading={false}
+                onClick={k.onClick}
+                active={k.key === 'active' && statusFilter === 'active'}
+                ariaLabel={k.ariaLabel}
+              />
             ))}
           </div>
         )}
@@ -568,7 +667,7 @@ export default function AdminPartners() {
         <div className="space-y-5">
           <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
             <div>
-              <h1 className="text-3xl font-bold tracking-tight">Partner Applications</h1>
+              <h1 className="bt-page-title">Partner Applications</h1>
               <p className="text-sm text-muted mt-1">
                 {applicationsPagination.total > 0 ? `${applicationsPagination.total} application${applicationsPagination.total !== 1 ? 's' : ''} found` : 'Review partner applications'}
               </p>
@@ -618,29 +717,29 @@ export default function AdminPartners() {
 
           {!applicationsLoading && !applicationsError && applications.length > 0 && (
             <>
-              <div className="bg-white rounded-2xl border border-[#1e3a5f]/8 shadow-sm overflow-hidden">
+              <div className="bg-white rounded-2xl border border-[#15345B]/8 shadow-sm overflow-hidden">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="border-b border-[#1e3a5f]/10">
-                      <th className="text-left px-6 py-4 font-semibold text-[#1e3a5f]/70">Application</th>
-                      <th className="text-left px-6 py-4 font-semibold text-[#1e3a5f]/70">Applicant</th>
-                      <th className="text-left px-6 py-4 font-semibold text-[#1e3a5f]/70">Type</th>
-                      <th className="text-left px-6 py-4 font-semibold text-[#1e3a5f]/70">City</th>
-                      <th className="text-left px-6 py-4 font-semibold text-[#1e3a5f]/70">Status</th>
-                      <th className="text-left px-6 py-4 font-semibold text-[#1e3a5f]/70">Date</th>
-                      <th className="text-right px-6 py-4 font-semibold text-[#1e3a5f]/70">Actions</th>
+                    <tr className="border-b border-[#15345B]/10">
+                      <th className="text-left px-6 py-4 font-semibold text-[#15345B]/70">Application</th>
+                      <th className="text-left px-6 py-4 font-semibold text-[#15345B]/70">Applicant</th>
+                      <th className="text-left px-6 py-4 font-semibold text-[#15345B]/70">Type</th>
+                      <th className="text-left px-6 py-4 font-semibold text-[#15345B]/70">City</th>
+                      <th className="text-left px-6 py-4 font-semibold text-[#15345B]/70">Status</th>
+                      <th className="text-left px-6 py-4 font-semibold text-[#15345B]/70">Date</th>
+                      <th className="text-right px-6 py-4 font-semibold text-[#15345B]/70">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {applications.map((app) => (
-                      <tr key={app.application_id} className="border-b border-[#1e3a5f]/5 hover:bg-[#F4F7FB]/50 transition">
+                      <tr key={app.application_id} className="border-b border-[#15345B]/5 hover:bg-[#F4F7FB]/50 transition">
                         <td className="px-6 py-4">
                           <div className="font-mono text-xs font-bold text-amber-600">{app.application_code}</div>
                         </td>
                         <td className="px-6 py-4">
-                          <div className="font-semibold text-[#0F2B55]">{app.first_name} {app.last_name}</div>
-                          <div className="text-xs text-[#1e3a5f]/50">{app.email}</div>
-                          <div className="text-xs text-[#1e3a5f]/50">{app.phone}</div>
+                          <div className="font-semibold text-[#15345B]">{app.first_name} {app.last_name}</div>
+                          <div className="text-xs text-[#15345B]/50">{app.email}</div>
+                          <div className="text-xs text-[#15345B]/50">{app.phone}</div>
                         </td>
                         <td className="px-6 py-4">
                           <span className={`px-2.5 py-1 rounded-lg text-xs font-semibold ${
@@ -651,7 +750,7 @@ export default function AdminPartners() {
                             {app.partnership_type === 'vehicle_owner' ? 'Vehicle Owner' : 'Transport Owner'}
                           </span>
                         </td>
-                        <td className="px-6 py-4 text-[#1e3a5f]/70">{app.city}</td>
+                        <td className="px-6 py-4 text-[#15345B]/70">{app.city}</td>
                         <td className="px-6 py-4">
                           <span className={`px-2.5 py-1 rounded-lg text-xs font-semibold ${
                             app.status === 'pending' ? 'bg-amber-100 text-amber-700' :
@@ -661,7 +760,7 @@ export default function AdminPartners() {
                             {app.status.charAt(0).toUpperCase() + app.status.slice(1)}
                           </span>
                         </td>
-                        <td className="px-6 py-4 text-[#1e3a5f]/50 text-xs">
+                        <td className="px-6 py-4 text-[#15345B]/50 text-xs">
                           {new Date(app.created_at).toLocaleDateString('en-IN')}
                         </td>
                         <td className="px-6 py-4 text-right">
@@ -682,7 +781,7 @@ export default function AdminPartners() {
                             </div>
                           )}
                           {app.status !== 'pending' && (
-                            <span className="text-xs text-[#1e3a5f]/40">—</span>
+                            <span className="text-xs text-[#15345B]/40">—</span>
                           )}
                         </td>
                       </tr>
@@ -713,7 +812,7 @@ export default function AdminPartners() {
       {/* Review Modal */}
       {reviewTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => { setReviewTarget(null); setReviewAction(null); setReviewNotes(''); }} />
+          <div className="absolute inset-0 bg-black/40" onClick={() => { setReviewTarget(null); setReviewAction(null); setReviewNotes(''); }} />
           <div className="relative w-full max-w-md bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-border/60 p-6" role="dialog" aria-modal="true">
             <div className="text-center">
               <div className={`w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4 ${
@@ -745,7 +844,7 @@ export default function AdminPartners() {
                 </div>
               </div>
               <div className="mb-4">
-                <label className="block text-sm font-semibold text-[#1e3a5f] mb-1.5 text-left">
+                <label className="block text-sm font-semibold text-[#15345B] mb-1.5 text-left">
                   {reviewAction === 'approve' ? 'Admin Notes (optional)' : 'Rejection Reason *'}
                 </label>
                 <textarea
@@ -753,7 +852,7 @@ export default function AdminPartners() {
                   onChange={(e) => setReviewNotes(e.target.value)}
                   rows={3}
                   required={reviewAction === 'reject'}
-                  className="w-full px-4 py-2.5 rounded-xl border border-[#1e3a5f]/15 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#F5A623]/30 focus:border-[#F5A623]"
+                  className="w-full px-4 py-2.5 rounded-xl border border-[#15345B]/15 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#F5A000]/30 focus:border-[#F5A000]"
                   placeholder={reviewAction === 'approve' ? 'Optional notes for the applicant...' : 'Please provide a reason for rejection...'}
                 />
               </div>

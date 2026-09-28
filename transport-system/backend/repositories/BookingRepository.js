@@ -11,6 +11,41 @@ const { NotFoundError } = require('../utils/AppError');
 const { flattenBooking, flattenBookingAdminDetail, flattenBookingForDriver } = require('../utils/BookingMapper');
 
 /**
+ * Quote lifecycle values accepted by the `bookings.quote_status` column.
+ *
+ * `Booking.quote_status` is a nullable String (default "PENDING") rather than
+ * the Prisma `QuoteStatus` enum, so the write side of the codebase has always
+ * used these string literals. The list is kept in one place so the admin
+ * ENQUIRY queue filters on exactly the values the services actually persist.
+ */
+const QUOTE_STATUS_VALUES = [
+  'PENDING',
+  'PREPARING',
+  'DRIVER_RESERVED',
+  'VEHICLE_RESERVED',
+  'SENT',
+  'QUOTE_SENT',
+  'WAITING_CUSTOMER_APPROVAL',
+  'ACCEPTED',
+  'REJECTED',
+  'EXPIRED',
+];
+
+/**
+ * Statuses that still need an admin to act. `ACTIONABLE` is a UI-facing alias
+ * that the admin ENQUIRY queue can request instead of listing them all. It
+ * deliberately excludes terminal/closed states so "Awaiting Quote" never shows
+ * a customer who already accepted or rejected.
+ */
+const ACTIONABLE_QUOTE_STATUSES = [
+  'PENDING',
+  'PREPARING',
+  'DRIVER_RESERVED',
+  'VEHICLE_RESERVED',
+  'WAITING_CUSTOMER_APPROVAL',
+];
+
+/**
  * Shared Prisma `include` shape for fetching a booking with its relations.
  */
 const BookingInclude = {
@@ -141,6 +176,9 @@ class BookingRepository {
         goods_volume: data.goods_volume != null ? Number(data.goods_volume) : null,
         number_of_items: data.number_of_items != null ? Number(data.number_of_items) : 1,
         fragile: data.fragile == null ? false : Boolean(data.fragile),
+        quantity_unit: data.quantity_unit || null,
+        weight_unit: data.weight_unit || null,
+        special_instructions: data.special_instructions || null,
         vehicle_type_required: data.vehicle_type_required,
         estimated_distance_km: data.estimated_distance_km != null ? Number(data.estimated_distance_km) : null,
         estimated_price: data.estimated_price != null ? Number(data.estimated_price) : null,
@@ -226,6 +264,7 @@ class BookingRepository {
       'goods_volume',
       'number_of_items',
       'fragile',
+      'special_instructions',
       'vehicle_type_required',
       'estimated_distance_km',
       'estimated_price',
@@ -352,6 +391,27 @@ class BookingRepository {
     if (filters.status) {
       where.status = filters.status;
     }
+    // Admin ENQUIRY queue filter.
+    // Accepts a comma-separated list of quote_status values so one request can
+    // pull every actionable state. `ACTIONABLE` is a UI-level alias resolved
+    // here to the concrete statuses that still need admin attention.
+    if (filters.quote_status) {
+      const requested = String(filters.quote_status)
+        .split(',')
+        .map((v) => v.trim().toUpperCase())
+        .filter(Boolean);
+
+      const expand = (v) => (v === 'ACTIONABLE' ? ACTIONABLE_QUOTE_STATUSES : [v]);
+      const statuses = [...new Set(requested.flatMap(expand))]
+        .filter((v) => QUOTE_STATUS_VALUES.includes(v));
+
+      if (statuses.length > 0) {
+        where.quote_status = { in: statuses };
+      }
+    }
+    if (filters.partner_id) {
+      where.partner_id = Number(filters.partner_id);
+    }
     if (filters.driver_id) {
       where.driver_id = Number(filters.driver_id);
     }
@@ -368,12 +428,37 @@ class BookingRepository {
       where.drop_city = { contains: String(filters.drop_city), mode: 'insensitive' };
     }
     if (filters.search) {
-      const term = String(filters.search);
+      // Free-text search for the admin ENQUIRY queue. This is an EXTENSION of
+      // the existing filter (same endpoint, same contract) so an operator can
+      // find a request by anything they can actually read off the row:
+      // enquiry/booking id, customer name, mobile, pickup, drop, goods or
+      // vehicle. It is still a real database filter — nothing is matched in
+      // the browser and no results are invented client-side.
+      const term = String(filters.search).trim();
+      const contains = { contains: term, mode: 'insensitive' };
       where.OR = [
-        { booking_reference: { contains: term, mode: 'insensitive' } },
-        { pickup_city: { contains: term, mode: 'insensitive' } },
-        { drop_city: { contains: term, mode: 'insensitive' } },
-        { goods_description: { contains: term, mode: 'insensitive' } },
+        { booking_number: contains },
+        { booking_reference: contains },
+        { pickup_city: contains },
+        { pickup_location: contains },
+        { drop_city: contains },
+        { drop_location: contains },
+        { goods_description: contains },
+        { goods_type: contains },
+        { vehicle_type_required: contains },
+        { driver_name_snapshot: contains },
+        { truck_number_snapshot: contains },
+        {
+          user: {
+            is: {
+              OR: [
+                { first_name: contains },
+                { last_name: contains },
+                { phone: { contains: term } },
+              ],
+            },
+          },
+        },
       ];
     }
     if (filters.date_from || filters.date_to) {
@@ -467,6 +552,68 @@ class BookingRepository {
   }
 
   /**
+   * Get a booking by id with relations needed for Partner view.
+   * Includes vehicle, driver, delivery, and partner commission fields.
+   * @param {number} bookingId
+   * @returns {Promise<Object|null>} Raw Prisma booking with relations
+   */
+  async findByIdWithPartnerRelations(bookingId) {
+    const booking = await prisma.booking.findUnique({
+      where: { booking_id: bookingId },
+      include: {
+        user: {
+          select: {
+            first_name: true,
+            last_name: true,
+            email: true,
+            phone: true,
+            address: true,
+          },
+        },
+        driver: {
+          select: {
+            driver_id: true,
+            user_id: true,
+            driver_name: true,
+            mobile: true,
+            user: {
+              select: {
+                first_name: true,
+                last_name: true,
+                phone: true,
+              },
+            },
+          },
+        },
+        vehicle: {
+          select: {
+            vehicle_id: true,
+            vehicle_number: true,
+            vehicle_name: true,
+            vehicle_type: true,
+          },
+        },
+        delivery: {
+          select: {
+            current_status: true,
+            status_description: true,
+            estimated_pickup_time: true,
+            estimated_delivery_time: true,
+            actual_pickup_time: true,
+            actual_delivery_time: true,
+            delivery_otp: true,
+            otp_verified: true,
+            recipient_name: true,
+            delivery_notes: true,
+          },
+        },
+      },
+    });
+
+    return booking;
+  }
+
+  /**
    * Get bookings for a user.
    * @param {number} userId
    * @returns {Promise<Object[]>}
@@ -524,6 +671,7 @@ class BookingRepository {
       goods_volume: b.goods_volume,
       number_of_items: b.number_of_items,
       fragile: b.fragile,
+      special_instructions: b.special_instructions,
       vehicle_type_required: b.vehicle_type_required,
       estimated_distance_km: b.estimated_distance_km,
       estimated_price: b.estimated_price,
@@ -590,6 +738,7 @@ class BookingRepository {
       goods_volume: b.goods_volume,
       number_of_items: b.number_of_items,
       fragile: b.fragile,
+      special_instructions: b.special_instructions,
       vehicle_type_required: b.vehicle_type_required,
       estimated_distance_km: b.estimated_distance_km,
       estimated_price: b.estimated_price,

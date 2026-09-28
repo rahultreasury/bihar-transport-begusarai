@@ -42,6 +42,20 @@ class ReservationRepository {
 
   /**
    * Get current ACTIVE reservation for a booking.
+   *
+   * The reserved driver is returned with their REAL registered vehicle
+   * resolved through the one-driver-one-vehicle relation
+   * (Driver.current_vehicle_id → TransportVehicle).
+   *
+   * WHY THE FLATTENING BELOW
+   *   `Driver` has no denormalized `vehicle_number` / `vehicle_type` columns.
+   *   Selecting them made Prisma reject the query with "Unknown argument", so
+   *   EVERY customer accept/reject 500'd at this line. The registered vehicle
+   *   is fetched through the relation and then surfaced under the same
+   *   `driver.vehicle_number` / `driver.vehicle_type` keys that
+   *   BookingService.getBookingForTracking already reads, so the consumer
+   *   contract is unchanged.
+   *
    * @param {number} bookingId
    * @param {object=} tx - Prisma transaction client
    * @returns {Promise<Object|null>}
@@ -49,7 +63,7 @@ class ReservationRepository {
   async getActiveByBooking(bookingId, tx = null) {
     const client = tx || prisma;
     try {
-      return await client.reservation.findFirst({
+      const reservation = await client.reservation.findFirst({
         where: { booking_id: bookingId, status: 'ACTIVE' },
         orderBy: [
           { created_at: 'desc' },
@@ -64,8 +78,15 @@ class ReservationRepository {
               rating: true,
               total_deliveries: true,
               profile_image: true,
-              vehicle_number: true,
-              vehicle_type: true,
+              currentVehicle: {
+                select: {
+                  vehicle_id: true,
+                  vehicle_number: true,
+                  vehicle_name: true,
+                  vehicle_type: true,
+                  capacity_kg: true,
+                },
+              },
               user: {
                 select: { first_name: true, last_name: true, phone: true },
               },
@@ -82,6 +103,21 @@ class ReservationRepository {
           },
         },
       });
+
+      if (!reservation?.driver) return reservation;
+
+      // Present the driver's registered vehicle under the flat keys consumers
+      // expect, without pretending the Driver table owns those columns.
+      return {
+        ...reservation,
+        driver: {
+          ...reservation.driver,
+          vehicle_id: reservation.driver.currentVehicle?.vehicle_id ?? null,
+          vehicle_number: reservation.driver.currentVehicle?.vehicle_number ?? null,
+          vehicle_name: reservation.driver.currentVehicle?.vehicle_name ?? null,
+          vehicle_type: reservation.driver.currentVehicle?.vehicle_type ?? null,
+        },
+      };
     } catch (err) {
       throw err;
     }

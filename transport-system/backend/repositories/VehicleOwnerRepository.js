@@ -76,6 +76,7 @@ class VehicleOwnerRepository {
     return await prisma.vehicleOwner.findUnique({
       where: { owner_id: ownerId },
       include: {
+        linkedPartner: true,
         vehicles: {
           orderBy: { created_at: 'desc' },
         },
@@ -841,6 +842,34 @@ class VehicleOwnerRepository {
         },
       },
     });
+  }
+
+  /**
+   * Create a standalone vehicle (without owner).
+   */
+  async createStandaloneVehicle(data, tx = null) {
+    const client = tx || prisma;
+
+    // Check for duplicate vehicle number
+    const existing = await client.transportVehicle.findFirst({
+      where: { vehicle_number: data.vehicle_number },
+    });
+    if (existing) {
+      const err = new Error('A vehicle with this number already exists');
+      err.code = 'VEHICLE_ALREADY_EXISTS';
+      err.data = { vehicle_id: existing.vehicle_id };
+      throw err;
+    }
+
+    // Create vehicle without owner
+    const vehicle = await client.transportVehicle.create({
+      data: {
+        ...data,
+        owner_id: null,
+      },
+    });
+
+    return vehicle;
   }
 
   /**

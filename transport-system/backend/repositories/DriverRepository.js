@@ -180,6 +180,8 @@ class DriverRepository {
       sort_order = 'desc',
       sortBy,
       sortOrder,
+      partner_id,
+      transport_owner_id,
     } = filters;
 
     // Support both camelCase (internal) and snake_case (query params)
@@ -191,6 +193,18 @@ class DriverRepository {
     const skip = (parsedPage - 1) * take;
 
     const where = {};
+
+    // Filter by partner_id (for Partner self-service scoping)
+    if (partner_id) {
+      where.partner_id = parseInt(partner_id);
+    }
+
+    // Filter by transport_owner_id (for Partner self-service scoping via
+    // the partner's linked VehicleOwner — ensures only drivers belonging
+    // to the same transport owner as the trip are returned)
+    if (transport_owner_id) {
+      where.transport_owner_id = parseInt(transport_owner_id);
+    }
 
     // Search across multiple fields
     if (search) {
@@ -476,9 +490,15 @@ return {
       },
     };
 
-    // Filter by vehicle type
+    // Filter by vehicle type — the driver's registered vehicle lives on the
+    // real one-driver-one-vehicle relation `Driver.currentVehicle`
+    // (TransportVehicle via Driver.current_vehicle_id). The Driver table has
+    // NO denormalized vehicle_type/vehicle_number columns, so this MUST be a
+    // relation filter or Prisma throws "Unknown argument `vehicle_type`".
     if (vehicle_type) {
-      where.vehicle_type = { contains: String(vehicle_type).trim(), mode: 'insensitive' };
+      where.currentVehicle = {
+        vehicle_type: { contains: String(vehicle_type).trim(), mode: 'insensitive' },
+      };
     }
 
     // Filter by minimum rating (drivers with rating >= min_rating)
@@ -486,21 +506,21 @@ return {
       where.rating = { gte: Number(min_rating) };
     }
 
-// Server-side search across identity + vehicle fields (indexed on
-    // driver_code, mobile, vehicle_number, vehicle_type, driver_name).
-    // The driver's permanent vehicle is stored directly on the Driver
-    // (vehicle_type / vehicle_number at registration), so we search the
-    // denormalized driver fields — no separate assignment-table join.
-    if (search) {
-      const searchTerm = String(search).trim();
-      where.OR = [
-        { driver_code: { contains: searchTerm, mode: 'insensitive' } },
-        { driver_name: { contains: searchTerm, mode: 'insensitive' } },
-        { mobile: { contains: searchTerm } },
-        { vehicle_number: { contains: searchTerm, mode: 'insensitive' } },
-        { vehicle_type: { contains: searchTerm, mode: 'insensitive' } },
-      ];
-    }
+// Server-side search across identity + the driver's registered vehicle.
+// Indexed on driver_code, mobile and driver_name; vehicle number/type are
+// reached through the real `currentVehicle` relation.
+if (search) {
+  const searchTerm = String(search).trim();
+  where.OR = [
+    { driver_code: { contains: searchTerm, mode: 'insensitive' } },
+    { driver_name: { contains: searchTerm, mode: 'insensitive' } },
+    { mobile: { contains: searchTerm } },
+    { alternate_mobile: { contains: searchTerm } },
+    { currentVehicle: { vehicle_number: { contains: searchTerm, mode: 'insensitive' } } },
+    { currentVehicle: { vehicle_type: { contains: searchTerm, mode: 'insensitive' } } },
+    { transportOwner: { owner_name: { contains: searchTerm, mode: 'insensitive' } } },
+  ];
+}
 
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
@@ -523,6 +543,14 @@ db().driver.findMany({
                 owner_name: true,
                 company_name: true,
                 owner_type: true,
+                mobile: true,
+              },
+            },
+            currentPartner: {
+              select: {
+                partner_id: true,
+                partner_name: true,
+                company_name: true,
               },
             },
             // Today's trips: bookings created today for this driver.
@@ -535,18 +563,22 @@ db().driver.findMany({
                 },
               },
             },
-            // Linked TransportVehicle (one-driver-one-vehicle) so the picker
-            // can surface a real vehicle_id when one exists.
-            transportVehicles: {
+            // The driver's registered vehicle (one-driver-one-vehicle).
+            // This is the REAL relation: Driver.current_vehicle_id →
+            // TransportVehicle. There is no `transportVehicles` list relation
+            // on Driver — including one made every call throw
+            // "Unknown field `transportVehicles`" and 500 to the picker.
+            currentVehicle: {
               select: {
                 vehicle_id: true,
                 vehicle_number: true,
                 vehicle_type: true,
                 capacity_kg: true,
                 capacity_volume: true,
+                body_type: true,
+                current_status: true,
+                is_available: true,
               },
-              orderBy: { created_at: 'desc' },
-              take: 1,
             },
           },
           orderBy: { created_at: 'desc' },
@@ -558,69 +590,64 @@ db().driver.findMany({
       return { drivers, total };
     }, 'findAssignable drivers');
 
-// Flatten the shape for the picker: expose `vehicle` built from the
-    // driver's OWN registered vehicle (vehicle_type / vehicle_number stored at
-    // registration — one-driver-one-vehicle). If a TransportVehicle is linked
-    // to the driver, we also expose its vehicle_id (so reservations can still
-    // hold a real vehicle when available); otherwise vehicle_id is null.
-    // No separate assignment-table lookup is consulted.
-// `todayTrips` comes from _count.bookings; lifetime trips from total_deliveries.
-    const drivers = result.drivers.map((d) => {
-      const tv = d.transportVehicles?.[0] || null;
-      if (d.vehicle_number) {
-        return {
-          driver_id: d.driver_id,
-          driver_code: d.driver_code,
-          driver_name: d.driver_name,
-          mobile: d.mobile,
-          status: d.status,
-          is_available: d.is_available,
-          rating: d.rating,
-          total_deliveries: d.total_deliveries || 0,
-          todayTrips: d._count?.bookings ?? 0,
-          vehicle: {
-            vehicle_id: tv?.vehicle_id ?? null,
-            vehicle_number: d.vehicle_number,
-            vehicle_type: d.vehicle_type || tv?.vehicle_type || null,
-            capacity_kg: tv?.capacity_kg ?? null,
-            capacity_volume: tv?.capacity_volume ?? null,
-          },
-        };
-      }
-      // No driver vehicle_number — but a linked TransportVehicle may still exist.
-      if (tv) {
-        return {
-          driver_id: d.driver_id,
-          driver_code: d.driver_code,
-          driver_name: d.driver_name,
-          mobile: d.mobile,
-          status: d.status,
-          is_available: d.is_available,
-          rating: d.rating,
-          total_deliveries: d.total_deliveries || 0,
-          todayTrips: d._count?.bookings ?? 0,
-          vehicle: {
-            vehicle_id: tv.vehicle_id,
-            vehicle_number: tv.vehicle_number,
-            vehicle_type: tv.vehicle_type || null,
-            capacity_kg: tv.capacity_kg ?? null,
-            capacity_volume: tv.capacity_volume ?? null,
-          },
-        };
-      }
-      return {
-        driver_id: d.driver_id,
-        driver_code: d.driver_code,
-        driver_name: d.driver_name,
-        mobile: d.mobile,
-        status: d.status,
-        is_available: d.is_available,
-        rating: d.rating,
-        total_deliveries: d.total_deliveries || 0,
-        todayTrips: d._count?.bookings ?? 0,
-        vehicle: null,
-      };
-    });
+// Flatten the shape for the picker.
+//
+// The driver's registered vehicle is the REAL one-driver-one-vehicle
+// relation `currentVehicle` (Driver.current_vehicle_id → TransportVehicle).
+// It is resolved in the SAME query as the driver, so the UI never needs a
+// second request just to show who drives which truck.
+//
+// `vehicle` is null when the driver has no vehicle registered — the UI
+// renders a clear "no vehicle" state instead of a fabricated one.
+// `todayTrips` comes from _count.bookings; lifetime trips from
+// total_deliveries. Owner/partner are surfaced where the real rows exist.
+const drivers = result.drivers.map((d) => {
+  const v = d.currentVehicle || null;
+  const owner = d.transportOwner || null;
+  const partner = d.currentPartner || null;
+  return {
+    driver_id: d.driver_id,
+    driver_code: d.driver_code,
+    driver_name: d.driver_name,
+    mobile: d.mobile,
+    alternate_mobile: d.alternate_mobile,
+    status: d.status,
+    is_available: d.is_available,
+    rating: d.rating,
+    total_deliveries: d.total_deliveries || 0,
+    todayTrips: d._count?.bookings ?? 0,
+    vehicle: v
+      ? {
+          vehicle_id: v.vehicle_id,
+          vehicle_number: v.vehicle_number,
+          vehicle_type: v.vehicle_type,
+          capacity_kg: v.capacity_kg ?? null,
+          capacity_volume: v.capacity_volume ?? null,
+          body_type: v.body_type ?? null,
+          current_status: v.current_status ?? null,
+          is_available: v.is_available ?? null,
+        }
+      : null,
+    owner: owner
+      ? {
+          owner_id: owner.owner_id,
+          owner_name: owner.owner_name,
+          company_name: owner.company_name,
+          owner_type: owner.owner_type,
+          mobile: owner.mobile,
+        }
+      : null,
+    partner: partner
+      ? {
+          partner_id: partner.partner_id,
+          partner_name: partner.partner_name,
+          company_name: partner.company_name,
+        }
+      : null,
+    // Convenience label so the UI can show owner/partner without branching.
+    owner_name: owner?.owner_name || partner?.partner_name || null,
+  };
+});
 
     return {
       drivers,

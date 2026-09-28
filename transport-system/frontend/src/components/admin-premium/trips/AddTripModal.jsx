@@ -8,7 +8,7 @@ function AddTripModal({ isOpen, onClose, onSaved, editingTrip }) {
     <div className="fixed inset-0 z-50">
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black/30 backdrop-blur-sm transition-opacity"
+        className="absolute inset-0 bg-black/30 transition-opacity"
         onClick={onClose}
       />
 

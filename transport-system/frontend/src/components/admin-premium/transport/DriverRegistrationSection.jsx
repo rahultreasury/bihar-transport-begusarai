@@ -342,11 +342,12 @@ export default function DriverRegistrationSection({
         </div>
       </div>
 
-      {/* Transport Owner Assignment */}
+      {/* Transport Owner Assignment (Optional) */}
       <div className="border-t border-border/40 pt-4">
         <div className="flex items-center gap-2 mb-3">
           <div className="h-1.5 w-1.5 rounded-full bg-blue-500" />
           <span className="text-xs font-semibold text-muted uppercase tracking-wider">Transport Owner Assignment</span>
+          <span className="text-xs text-muted font-normal">(optional)</span>
         </div>
 
         {/* Self-Owner Toggle */}
@@ -377,13 +378,13 @@ export default function DriverRegistrationSection({
         {!formData.is_self_owner && (
           <div className="space-y-3 mt-3" ref={ownerWrapperRef}>
             <label className={labelCls}>
-              Transport Owner <span className="text-red-500">*</span>
+              Transport Owner
             </label>
             <SearchableSelect
               value={selectedOwner ? `${selectedOwner.owner_name} (${selectedOwner.owner_code || selectedOwner.owner_id})` : ''}
               onChange={handleOwnerSelect}
               options={owners}
-              placeholder="Search transport owner by name or code..."
+              placeholder="Search transport owner by name or code... (optional)"
               inputClass={`w-full px-3 py-2.5 rounded-xl border text-sm bg-card/40 focus:outline-none focus:ring-2 focus:ring-amber-500/30 transition ${errors.transport_owner_id ? 'border-red-500/50' : 'border-border/60'}`}
               error={errors.transport_owner_id}
               displayRenderer={(o) => `${o.owner_name} (${o.owner_code || o.owner_id}) • ${o.city || ''}`}
@@ -458,7 +459,7 @@ export default function DriverRegistrationSection({
         {!formData.no_vehicle_assigned && (
           <div className="space-y-3">
             <label className={labelCls}>
-              Vehicle <span className="text-red-500">*</span>
+              Vehicle
             </label>
             <select
               name="vehicle_id"

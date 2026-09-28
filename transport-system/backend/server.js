@@ -62,9 +62,15 @@ const driverManagementRoutes = require('./routes/driverManagementRoutes');
 const partnerRoutes = require('./routes/partnerRoutes');
 const partnerApplicationRoutes = require('./routes/partnerApplicationRoutes');
 const partnerSettlementRoutes = require('./routes/partnerSettlementRoutes');
+const partnerSelfServiceRoutes = require('./routes/partnerSelfServiceRoutes');
 const tripFinancialRoutes = require('./routes/tripFinancialRoutes');
 const tripRoutes = require('./routes/tripRoutes');
 const financialRoutes = require('./routes/financialRoutes');
+// Enquiry module (pre-booking customer intake → admin quote → acceptance)
+const enquiryRoutes = require('./routes/enquiryRoutes');
+const adminEnquiryRoutes = require('./routes/adminEnquiryRoutes');
+const driverEnquiryRoutes = require('./routes/driverEnquiryRoutes');
+const realtime = require('./realtime/enquiryRealtime');
 const emailService = require('./services/emailService');
 
 const app = express();
@@ -178,7 +184,18 @@ app.use('/api', bookingLimiter, bookingMvpRoutes);
 // truth for GET /api/admin/drivers and is never shadowed by adminRoutes.
 app.use('/api/admin/drivers', adminLimiter, driverManagementRoutes);
 
+// Admin Enquiry Routes (Transport Enquiries workspace).
+// MUST be mounted BEFORE /api/admin so /api/admin/enquiries/* is handled here
+// and never swallowed by the catch-all admin router.
+app.use('/api/admin/enquiries', adminLimiter, adminEnquiryRoutes);
+
 app.use('/api/admin', adminLimiter, adminRoutes);
+
+// Customer Enquiry Routes — the login-free enquiry intake + quote acceptance.
+app.use('/api/enquiries', bookingLimiter, enquiryRoutes);
+
+// Driver Enquiry Routes — assigned jobs, issue reporting, reassignment requests.
+app.use('/api/driver/enquiries', bookingLimiter, driverEnquiryRoutes);
 app.use('/api/drivers', bookingLimiter, driverRoutes);
 app.use('/api/delivery', bookingLimiter, deliveryRoutes);
 app.use('/api/vehicles', bookingLimiter, vehicleRoutes);
@@ -189,6 +206,7 @@ app.use('/api', mapsRoutes);
 
 // Partner Management Routes
 app.use('/api/admin/partners', adminLimiter, partnerRoutes);
+app.use('/api/partner', partnerSelfServiceRoutes);
 app.use('/api/partner', partnerApplicationRoutes);
 app.use('/api/admin/partner-applications', adminLimiter, partnerApplicationRoutes);
 app.use('/api/admin/settlements', adminLimiter, partnerSettlementRoutes);
@@ -254,7 +272,16 @@ app.get('/api/health/db', async (req, res, next) => {
 app.use('/api', (req, res, next) => {
   // Auth and health endpoints are always allowed — they either don't need DB
   // or are the mechanism to check DB status.
-  const alwaysAllowed = ['/api/health', '/api/health/db', '/api/auth/login', '/api/auth/admin-login', '/api/auth/signup', '/api/auth/driver-signup'];
+  const alwaysAllowed = [
+    '/api/health',
+    '/api/health/db',
+    '/api/auth/login',
+    '/api/auth/admin-login',
+    '/api/auth/signup',
+    '/api/auth/driver-signup',
+    '/api/auth/send-otp',
+    '/api/auth/verify-otp',
+  ];
   if (alwaysAllowed.some(path => req.path === path || req.path.startsWith(path))) {
     return next();
   }
@@ -292,12 +319,17 @@ let dbReady = false;
 let dbReadyChecked = false;
 
 // Start server immediately so HTTP is available even if PostgreSQL is cold.
-app.listen(PORT, '0.0.0.0', () => {
+const httpServer = app.listen(PORT, '0.0.0.0', () => {
   // eslint-disable-next-line no-console
   console.log(`✅ Server running on port ${PORT}`);
   // eslint-disable-next-line no-console
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
 });
+
+// Socket.IO for live enquiry updates. Realtime is an ENHANCEMENT, not a
+// dependency: if it cannot attach, every consumer falls back to HTTP polling
+// and the enquiry feature keeps working.
+realtime.initRealtime(httpServer);
 
 // Background database warm-up — does not block server startup.
 // Sets dbReady = true once Prisma connectivity is confirmed.
@@ -360,20 +392,21 @@ const verifyEmail = async () => {
 };
 verifyEmail();
 
-// Graceful shutdown — disconnect Prisma on SIGTERM/SIGINT
-process.on('SIGTERM', async () => {
-  console.log('[server] SIGTERM received. Shutting down gracefully...');
+// Graceful shutdown — close realtime + disconnect Prisma on SIGTERM/SIGINT
+async function shutdown(signal) {
+  console.log(`[server] ${signal} received. Shutting down gracefully...`);
+  try {
+    await realtime.closeRealtime();
+  } catch (err) {
+    console.error('[server] realtime shutdown error:', err.message);
+  }
   const { prisma } = require('./config/prisma');
   await prisma.$disconnect();
   process.exit(0);
-});
+}
 
-process.on('SIGINT', async () => {
-  console.log('[server] SIGINT received. Shutting down gracefully...');
-  const { prisma } = require('./config/prisma');
-  await prisma.$disconnect();
-  process.exit(0);
-});
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
 // Prevent unhandled rejections from crashing the process
 process.on('unhandledRejection', (err) => {

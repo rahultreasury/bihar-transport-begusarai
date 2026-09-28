@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { bookingAPI } from '../services/api';
 import SEO from '../components/seo/SEO';
 import { deriveQuoteState } from '../utils/bookingUtils';
+import { FALLBACK_CUSTOMER_CARE, buildCallUrl } from '../config/customerCare';
 
 // Tracking components
 import BookingHeader from '../components/tracking/BookingHeader';
@@ -26,6 +27,7 @@ import NotFoundCard from '../components/tracking/NotFoundCard';
 function TrackBooking() {
   const { bookingNumber } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
 
   // Search form state
   const [searchRef, setSearchRef] = useState('');
@@ -260,7 +262,13 @@ function TrackBooking() {
           <div className="mt-10 text-center">
             <p className="text-xs text-gray-400">
               Need help? Call us at{' '}
-              <a href="tel:+918210931799" className="text-amber-600 font-medium hover:text-amber-700">
+              {/* Dial target comes from the shared customer-care config, so this
+                  link can never point at a different number than the support
+                  card below it or the Home page. Displayed text is unchanged. */}
+              <a
+                href={buildCallUrl(FALLBACK_CUSTOMER_CARE)}
+                className="text-amber-600 font-medium hover:text-amber-700"
+              >
                 +91 8210 931 799
               </a>
             </p>
@@ -375,6 +383,30 @@ function TrackBooking() {
             {booking.booking_reference}
           </span>
         </nav>
+
+        {/* Enquiry success banner — shown only when redirected from the booking form */}
+        {location.state?.message && (
+          <div className="rounded-2xl bg-emerald-50 border-2 border-emerald-200 p-4 md:p-5">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-lg font-bold text-emerald-800">
+                  {location.state.message}
+                </h3>
+                <p className="text-sm text-emerald-700 mt-1 leading-relaxed">
+                  Enquiry ID: <span className="font-mono font-semibold">{booking.booking_reference}</span>
+                </p>
+                <p className="text-sm text-emerald-700 mt-1 leading-relaxed">
+                  Our team will review your requirement and contact you regarding the quotation and confirmation.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Booking Header — animated entrance */}
         <div className="animate-fade-in-down" style={{ animationDuration: '0.4s' }}>

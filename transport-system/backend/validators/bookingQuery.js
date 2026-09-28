@@ -21,6 +21,29 @@ const BOOKING_STATUSES = [
   'completed',
 ];
 
+// Allowed quote_status values.
+// The Prisma schema declares a `QuoteStatus` enum, but `Booking.quote_status`
+// is persisted as a nullable String with a "PENDING" default, so the accepted
+// values are validated here against that enum's members. The admin ENQUIRY
+// queue filters Bookings by this column, so it must be a real, validated
+// filter rather than a client-side guess.
+const QUOTE_STATUSES = [
+  'PENDING',
+  'PREPARING',
+  'DRIVER_RESERVED',
+  'VEHICLE_RESERVED',
+  'SENT',
+  'QUOTE_SENT',
+  'WAITING_CUSTOMER_APPROVAL',
+  'ACCEPTED',
+  'REJECTED',
+  'EXPIRED',
+  // 'ACTIONABLE' is not a stored value — it is the UI-facing alias the admin
+  // ENQUIRY queue uses to request every status that still needs admin action.
+  // BookingRepository.listBookings expands it into the concrete statuses.
+  'ACTIONABLE',
+];
+
 // Allowed sort fields (must be columns that exist on the Booking model).
 const SORTABLE_FIELDS = ['created_at', 'pickup_date', 'final_price', 'status', 'booking_reference'];
 
@@ -41,7 +64,23 @@ const bookingQuerySchema = z.object({
   driver_id: z.coerce.number().int().positive().optional().default(''),
   vehicle_id: z.coerce.number().int().positive().optional().default(''),
   archived: z.string().optional().default(''),
+  // Admin ENQUIRY queue filter. Comma-separated so a single request can ask for
+  // every actionable state (e.g. ?quote_status=PENDING,PREPARING).
+  quote_status: z.string().optional().default(''),
 }).refine((data) => {
+  // Validate quote_status against the allowed set, if provided.
+  if (data.quote_status) {
+    const requested = String(data.quote_status)
+      .split(',')
+      .map((v) => v.trim().toUpperCase())
+      .filter(Boolean);
+    if (requested.length === 0 || requested.some((v) => !QUOTE_STATUSES.includes(v))) {
+      return false;
+    }
+  }
+  return true;
+}, { message: 'invalid quote_status', path: ['quote_status'] })
+.refine((data) => {
   // Validate status against allowed set, if provided.
   if (data.status && !BOOKING_STATUSES.includes(data.status)) {
     return false;
@@ -84,4 +123,10 @@ function parseBookingQuery(query = {}) {
   };
 }
 
-module.exports = { parseBookingQuery, bookingQuerySchema, BOOKING_STATUSES, SORTABLE_FIELDS };
+module.exports = {
+  parseBookingQuery,
+  bookingQuerySchema,
+  BOOKING_STATUSES,
+  QUOTE_STATUSES,
+  SORTABLE_FIELDS,
+};

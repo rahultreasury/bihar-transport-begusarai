@@ -149,6 +149,71 @@ class PartnerService {
   }
 
   /**
+   * Link an existing VehicleOwner (created via the Admin Dashboard) to an
+   * existing Partner.
+   *
+   * Unlike linkVehicleOwnerToPartner() this path does NOT require the
+   * VehicleOwner's mobile to match the Partner's mobile -- it links an
+   * arbitrary admin-created VehicleOwner to a Partner by ID.
+   *
+   * Reuses the existing PartnerRepository.linkVehicleOwner() so there is no
+   * duplicate linking logic.
+   *
+   * @param {number} partnerId        - existing, active Partner
+   * @param {number} vehicleOwnerId   - existing VehicleOwner row
+   * @returns {Promise<Object>}
+   */
+  async linkAdminVehicleOwnerToPartner(partnerId, vehicleOwnerId) {
+    const partner = await this.repo.findById(partnerId);
+    if (!partner) {
+      const err = new Error('Partner not found');
+      err.code = 'PARTNER_NOT_FOUND';
+      throw err;
+    }
+    if (partner.is_active === false) {
+      const err = new Error('Partner is not active');
+      err.code = 'PARTNER_INACTIVE';
+      throw err;
+    }
+
+    const vehicleOwner = await this.repo.findVehicleOwnerById(vehicleOwnerId);
+    if (!vehicleOwner) {
+      const err = new Error('VehicleOwner not found');
+      err.code = 'VEHICLE_OWNER_NOT_FOUND';
+      throw err;
+    }
+
+    // Already linked to the SAME partner -- idempotent success.
+    if (vehicleOwner.partner_link === partnerId) {
+      return {
+        partner_id: partner.partner_id,
+        partner_name: partner.partner_name,
+        vehicle_owner_id: vehicleOwner.owner_id,
+        vehicle_owner_name: vehicleOwner.owner_name,
+        already_linked: true,
+      };
+    }
+
+    // Linked to a DIFFERENT partner -- reject with a clear 409.
+    if (vehicleOwner.partner_link && vehicleOwner.partner_link !== partnerId) {
+      const err = new Error('VehicleOwner is already linked to another Partner');
+      err.code = 'VEHICLE_OWNER_ALREADY_LINKED';
+      err.data = { current_partner_id: vehicleOwner.partner_link };
+      throw err;
+    }
+
+    // Link atomically via the existing repository method.
+    const result = await this.repo.linkVehicleOwner(partnerId, vehicleOwnerId);
+    return {
+      partner_id: partner.partner_id,
+      partner_name: partner.partner_name,
+      vehicle_owner_id: result.owner_id,
+      vehicle_owner_name: result.owner_name,
+      already_linked: false,
+    };
+  }
+
+  /**
    * Create a VehicleOwner from an existing Partner.
    * Checks for existing VehicleOwner by exact mobile first.
    * If found, links it instead of creating a duplicate.
@@ -202,6 +267,69 @@ class PartnerService {
 
   async getPartnerDashboard(partnerId) {
     return await this.repo.getDashboardSummary(partnerId);
+  }
+
+  /**
+   * Get Partner financial summary based on PartnerLedger (accounting source of truth)
+   * Uses transaction-type grouping as defined in the financial audit
+   */
+  async getPartnerFinancialSummary(partnerId) {
+    const { prisma } = require('../config/prisma');
+
+    // Total Received: actual money received by Partner
+    // transaction_type IN ('cash', 'online_transfer', 'settlement_payment')
+    const receivedAgg = await prisma.partnerLedger.aggregate({
+      where: {
+        partner_id: partnerId,
+        transaction_type: { in: ['cash', 'online_transfer', 'settlement_payment'] },
+      },
+      _sum: { credit: true },
+    });
+
+    // Total Paid Out: actual money paid by Partner
+    // transaction_type IN ('settlement_receipt', 'partner_receivable')
+    const paidOutAgg = await prisma.partnerLedger.aggregate({
+      where: {
+        partner_id: partnerId,
+        transaction_type: { in: ['settlement_receipt', 'partner_receivable'] },
+      },
+      _sum: { debit: true },
+    });
+
+    // Total Earnings: Partner income/earnings (accounting entries)
+    // transaction_type IN ('commission', 'booking_income', 'bonus')
+    const earningsAgg = await prisma.partnerLedger.aggregate({
+      where: {
+        partner_id: partnerId,
+        transaction_type: { in: ['commission', 'booking_income', 'bonus'] },
+      },
+      _sum: { credit: true },
+    });
+
+    // Total Advances/Expenses: Partner expenses/advances
+    // transaction_type IN ('fuel_advance', 'driver_advance', 'toll', 'repair', 'penalty', 'other_expense')
+    const advancesAgg = await prisma.partnerLedger.aggregate({
+      where: {
+        partner_id: partnerId,
+        transaction_type: { in: ['fuel_advance', 'driver_advance', 'toll', 'repair', 'penalty', 'other_expense'] },
+      },
+      _sum: { debit: true },
+    });
+
+    // Outstanding Balance: latest running_balance from PartnerLedger
+    const latestLedger = await prisma.partnerLedger.findFirst({
+      where: { partner_id: partnerId },
+      orderBy: { created_at: 'desc' },
+      select: { running_balance: true },
+    });
+
+    return {
+      totalReceived: receivedAgg._sum.credit || 0,
+      totalPaidOut: paidOutAgg._sum.debit || 0,
+      totalEarnings: earningsAgg._sum.credit || 0,
+      totalAdvancesExpenses: advancesAgg._sum.debit || 0,
+      outstandingBalance: latestLedger?.running_balance || 0,
+    };
   }
 
   async listPartners(filters = {}) {
@@ -331,8 +459,8 @@ async deletePartner(partnerId) {
   // SOURCED VEHICLES MANAGEMENT
   // ============================
 
-  async getSourcedVehicles(partnerId) {
-    return await this.repo.getSourcedVehicles(partnerId);
+  async getSourcedVehicles(partnerId, options = {}) {
+    return await this.repo.getSourcedVehicles(partnerId, options);
   }
 
   async addSourcedVehicle(partnerId, data) {
@@ -587,6 +715,40 @@ async deletePartner(partnerId) {
 
   async getPartnerDrivers(partnerId) {
     return await this.repo.getPartnerDrivers(partnerId);
+  }
+
+  /**
+   * Get Partner's drivers with pagination, search, and filters.
+   *
+   * Scoping: Resolves the partner's linked VehicleOwner (via
+   * VehicleOwner.partner_link → Partner.partner_id) and filters drivers
+   * by transport_owner_id. This ensures the driver list is consistent
+   * with the driver-assignment endpoint, which validates that
+   * driver.transport_owner_id === trip.transport_owner_id.
+   *
+   * Falls back to partner_id filtering when no linked VehicleOwner exists,
+   * so drivers directly assigned to the partner (Driver.partner_id) are
+   * still returned.
+   */
+  async getPartnerDriversPaginated(partnerId, filters = {}) {
+    const driverRepo = require('../repositories/DriverRepository');
+    const tripRepo = require('../repositories/TripRepository');
+    const driverRepository = new driverRepo();
+    const tripRepository = new tripRepo();
+
+    // Resolve the partner's linked VehicleOwner (same method used by the
+    // assignment endpoint for consistency)
+    const owner = await tripRepository.getOwnerByPartnerId(partnerId);
+
+    if (owner) {
+      // Filter by transport_owner_id — matches the assignment endpoint's
+      // ownership check (driver.transport_owner_id === trip.transport_owner_id)
+      return await driverRepository.findAll({ ...filters, transport_owner_id: owner.owner_id });
+    }
+
+    // Fallback: filter by partner_id directly (for partners without a
+    // linked VehicleOwner — e.g. self-owner drivers)
+    return await driverRepository.findAll({ ...filters, partner_id: partnerId });
   }
 
   async getDriverAssignmentHistory(driverId) {

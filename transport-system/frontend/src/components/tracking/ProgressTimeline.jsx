@@ -2,7 +2,7 @@ import React from 'react';
 import { normalizeQuoteStatus, normalizeStatus, isConfirmedStatus } from '../../utils/bookingUtils';
 
 const TIMELINE_STEPS = [
-  { key: 'booking_received', label: 'Booking Received' },
+  { key: 'enquiry_received', label: 'Enquiry Received' },
   { key: 'finding_price', label: 'Finding Best Price' },
   { key: 'waiting_approval', label: 'Waiting for Your Approval' },
   { key: 'confirmed', label: 'Booking Confirmation' },

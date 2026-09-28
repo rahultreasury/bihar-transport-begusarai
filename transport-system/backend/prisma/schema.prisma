@@ -87,6 +87,80 @@ enum InvoiceStatus {
 }
 
 // ============================================================
+// ENQUIRY (PRE-BOOKING REQUEST) ENUMS
+// ============================================================
+// The Enquiry is the CUSTOMER-FACING INTAKE record that exists BEFORE any
+// Booking/Trip exists. It captures what the customer asked for, then tracks
+// the admin assignment + quotation + acceptance handshake.
+//
+// Lifecycle:
+//   ENQUIRY_SUBMITTED → ADMIN_REVIEW → ASSIGNMENT_PENDING → VEHICLE_ASSIGNED
+//   → DRIVER_ASSIGNED → QUOTE_READY → AWAITING_CUSTOMER_ACCEPTANCE
+//   → CUSTOMER_ACCEPTED → CONFIRMED → IN_PROGRESS → COMPLETED
+//
+// Terminal states: CUSTOMER_REJECTED, CANCELLED
+enum EnquiryStatus {
+  ENQUIRY_SUBMITTED
+  ADMIN_REVIEW
+  ASSIGNMENT_PENDING
+  VEHICLE_ASSIGNED
+  DRIVER_ASSIGNED
+  QUOTE_READY
+  AWAITING_CUSTOMER_ACCEPTANCE
+  CUSTOMER_ACCEPTED
+  CUSTOMER_REJECTED
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+// Pricing stage of the enquiry. Kept separate from EnquiryStatus so the
+// price can be re-quoted without losing the operational status history.
+enum EnquiryPriceStatus {
+  NOT_QUOTED
+  ESTIMATED
+  QUOTED
+  SENT
+  ACCEPTED
+  REJECTED
+  CANCELLED
+}
+
+// Who performed an EnquiryEvent. Used for audit + the customer-facing
+// activity feed ("Transport team reviewing", "You accepted the quote").
+enum EnquiryActorType {
+  CUSTOMER
+  ADMIN
+  DRIVER
+  PARTNER
+  SYSTEM
+}
+
+// Canonical EnquiryEvent types. Stored as TEXT (not a Prisma enum) so new
+// event types can be added by migration without invalidating history rows.
+enum EnquiryEventType {
+  ENQUIRY_CREATED
+  ADMIN_VIEWED
+  STATUS_CHANGED
+  VEHICLE_ASSIGNED
+  DRIVER_ASSIGNED
+  PARTNER_ASSIGNED
+  REASSIGNED
+  QUOTE_CREATED
+  QUOTE_SENT
+  QUOTE_UPDATED
+  CUSTOMER_ACCEPTED
+  CUSTOMER_REJECTED
+  CUSTOMER_CANCELLED
+  DRIVER_REASSIGNMENT_REQUESTED
+  DRIVER_ISSUE_REPORTED
+  BOOKING_CREATED
+  TRIP_LINKED
+  NOTE_ADDED
+}
+
+// ============================================================
 // TRIP MANAGEMENT ENUMS
 // ============================================================
 
@@ -279,16 +353,64 @@ model User {
   created_at    DateTime? @default(now())
   updated_at    DateTime? @default(now())
 
-  // Relations
+// Relations
   drivers            Driver[]
   bookings           Booking[]
   partnerApplications PartnerApplication[]
   trips              Trip[]
+  passwordResetTokens PasswordResetToken[]
+  otpVerifications   OtpVerification[]
+  // Pre-booking enquiries raised by this customer (enquiry intake stage).
+  enquiries          Enquiry[]        @relation("enquiry_customer")
 
   @@index([email], name: "idx_users_email")
   @@index([phone], name: "idx_users_phone")
   @@index([role], name: "idx_users_role")
   @@map("users")
+}
+
+// --- Password Reset Tokens ---
+model PasswordResetToken {
+  id         Int       @id @default(autoincrement())
+  user_id    Int
+  token_hash String    @unique
+  expires_at DateTime
+  used_at    DateTime?
+  created_at DateTime? @default(now())
+
+  // Relations
+  user User @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+
+  @@index([user_id], name: "idx_password_reset_user")
+  @@index([expires_at], name: "idx_password_reset_expires")
+  @@map("password_reset_tokens")
+}
+
+// --- OTP Verification ---
+// Stores hashed OTP records for phone-based customer authentication.
+// OTPs are NEVER stored in plaintext — only the SHA-256 hash is persisted.
+// Each OTP is single-use and invalidated after successful verification.
+model OtpVerification {
+  id           Int       @id @default(autoincrement())
+  user_id      Int?                  // Linked to User when phone is found; nullable for pre-registration OTPs
+  phone        String                // Normalized 10-digit Indian mobile number
+  otp_hash     String                // SHA-256 hash of the OTP (never plaintext)
+  expires_at   DateTime              // OTP validity window (~5 minutes)
+  attempts     Int       @default(0) // Number of failed verification attempts
+  max_attempts Int       @default(3) // Maximum allowed verification attempts before lockout
+  verified_at  DateTime?             // Timestamp when OTP was successfully verified (null = unused)
+  consumed     Boolean   @default(false) // Prevents OTP reuse after successful verification
+  created_at   DateTime? @default(now())
+  updated_at   DateTime? @default(now())
+
+  // Relations
+  user User? @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+
+  @@index([phone], name: "idx_otp_phone")
+  @@index([expires_at], name: "idx_otp_expires")
+  @@index([created_at], name: "idx_otp_created")
+  @@index([user_id], name: "idx_otp_user")
+  @@map("otp_verifications")
 }
 
 // --- Drivers ---
@@ -304,7 +426,7 @@ model Driver {
   state             String?   @default("Bihar")
   pincode           String?
   partner_id        Int?                  // Current partner assignment (nullable for unassigned drivers)
-  transport_owner_id Int                   // REQUIRED: every Driver must have exactly one Transport Owner (Phase 2)
+  transport_owner_id Int?                  // OPTIONAL: Driver can exist without Transport Owner (Self-Owner path creates DRIVER_OWNER)
   license_number    String?
   license_expiry    String?
   license_class     String?   // Vehicle type / license class (e.g. HTV, LMV)
@@ -326,7 +448,7 @@ model Driver {
   // Relations
   user                 User                @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
   currentPartner       Partner?            @relation("current_partner_drivers", fields: [partner_id], references: [partner_id], onDelete: SetNull)
-  transportOwner       VehicleOwner        @relation("transport_owner_drivers", fields: [transport_owner_id], references: [owner_id], onDelete: Restrict)
+  transportOwner       VehicleOwner?       @relation("transport_owner_drivers", fields: [transport_owner_id], references: [owner_id], onDelete: Restrict)
   currentVehicle       TransportVehicle?   @relation("current_driver_vehicle", fields: [current_vehicle_id], references: [vehicle_id], onDelete: SetNull)
   bookings             Booking[]
   deliveries           Delivery[]
@@ -334,9 +456,13 @@ model Driver {
   transactions         DriverTransaction[]
   timelineEvents       DriverTimeline[]
   driverAssignments    DriverAssignment[]  @relation("assigned_driver_history")
+// Relations
   reservations         Reservation[]
   vehicleAssignments   VehicleAssignment[] @relation("assigned_driver")
   trips                Trip[]
+  // Enquiries this driver is ASSIGNED to via admin assignment.
+  // NOTE: driver.mobile is NEVER exposed through enquiry customer DTOs.
+  assignedEnquiries    Enquiry[]         @relation("enquiry_assigned_driver")
 
   current_vehicle_id  Int?    @unique // Currently assigned vehicle (first-class entity)
 
@@ -431,9 +557,11 @@ model VehicleOwner {
   vehicles            TransportVehicle[] @relation("vehicle_owner")
   drivers             Driver[]           @relation("transport_owner_drivers")
   applications        PartnerApplication[] @relation("vehicle_owner_applications")
+// Relations
   bookings            Booking[]
   trips               Trip[]
   linkedPartner       Partner?           @relation("vehicle_owner_link", fields: [partner_link], references: [partner_id], onDelete: SetNull)
+  assignedEnquiries   Enquiry[]          @relation("enquiry_assigned_owner")
 
   @@index([owner_code], name: "idx_vehicle_owner_code")
   @@index([mobile], name: "idx_vehicle_owner_mobile")
@@ -485,9 +613,13 @@ model TransportVehicle {
   bookings            Booking[]
   deliveries          Delivery[]
   bookingAssignments  BookingAssignment[]
+// Relations
+// Relations
   reservations        Reservation[]
   vehicleAssignments  VehicleAssignment[]
   trips                Trip[]
+  assignedEnquiries    Enquiry[]     @relation("enquiry_assigned_vehicle")
+  requestedEnquiries   Enquiry[]     @relation("enquiry_requested_vehicle")
 
   @@index([driver_id], name: "idx_vehicles_driver")
   @@index([owner_id], name: "idx_vehicles_owner")
@@ -546,6 +678,15 @@ model Booking {
   goods_volume          Float?
   number_of_items       Int?      @default(1)
   fragile               Boolean?  @default(false)
+  // Material + Quantity + Weight unit fields (Step 2)
+  // goods_description is reused as the material/goods name.
+  // number_of_items is reused as the quantity number.
+  // goods_weight_kg is reused as the weight value.
+  quantity_unit         String?   // e.g. Bags, Boxes, PCS, Bundles, LOOSE
+  weight_unit           String?   // e.g. KG, Tons, Quintal, Metric Ton, FTL
+  // Free-text handling/delivery notes typed by the customer on the booking form.
+  // Nullable so existing booking rows are unaffected.
+  special_instructions  String?
   vehicle_type_required String
   estimated_distance_km Float?
   estimated_price       Float?
@@ -569,11 +710,15 @@ model Booking {
   driver_assigned_at    DateTime?
   pickup_completed_at   DateTime?
   delivered_at          DateTime?
+// Relations
   archived_at           DateTime?  // Soft-delete / archive timestamp
 
 // Relations
-  user               User              @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
-  driver             Driver?           @relation(fields: [driver_id], references: [driver_id], onDelete: SetNull)
+user               User              @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+// Reverse link to the pre-booking Enquiry that this Booking was created from.
+// Nullable so every pre-existing Booking row remains valid.
+enquiry            Enquiry?          @relation("enquiry_booking")
+driver             Driver?           @relation(fields: [driver_id], references: [driver_id], onDelete: SetNull)
   vehicle            TransportVehicle? @relation(fields: [vehicle_id], references: [vehicle_id], onDelete: SetNull)
   partner            Partner?          @relation(fields: [partner_id], references: [partner_id], onDelete: SetNull)
   vehicleOwner       VehicleOwner?     @relation(fields: [vehicle_owner_id], references: [owner_id], onDelete: SetNull)
@@ -591,6 +736,8 @@ model Booking {
   financialTransactions FinancialTransaction[]
   trips              Trip[]
 
+// Indexes
+// Indexes
   @@index([user_id], name: "idx_bookings_user")
   @@index([driver_id], name: "idx_bookings_driver")
   @@index([vehicle_id], name: "idx_bookings_vehicle")
@@ -652,8 +799,9 @@ model Admin {
   created_at    DateTime? @default(now())
   updated_at    DateTime? @default(now())
 
-  // Relations
+// Relations
   bookingAssignments BookingAssignment[] @relation("assigned_by_admin")
+  enquiryQuotes      Enquiry[]          @relation("enquiry_quoted_by")
 
   @@map("admins")
 }
@@ -743,9 +891,11 @@ model Partner {
   payments          PartnerPayment[]
   settlements       Settlement[]
   documents         PartnerDocument[]
+// Relations
   driverAssignments DriverAssignment[]  @relation("partner_assignments")
   applications      PartnerApplication[]
   linkedVehicleOwner VehicleOwner?      @relation("vehicle_owner_link")
+  assignedEnquiries Enquiry[]          @relation("enquiry_assigned_partner")
 
   @@index([partner_code], name: "idx_partner_code")
   @@index([mobile], name: "idx_partner_mobile")
@@ -1447,6 +1597,7 @@ model Client {
   // Relations
   trips            Trip[]
 
+// Indexes
   @@index([client_code], name: "idx_client_code")
   @@index([company_name], name: "idx_client_company")
   @@index([phone], name: "idx_client_phone")
@@ -1454,5 +1605,174 @@ model Client {
   @@index([status], name: "idx_client_status")
   @@index([is_active], name: "idx_client_active")
   @@map("clients")
+}
+
+// ============================================================
+// ENQUIRY MODULE (PRE-BOOKING CUSTOMER INTAKE)
+// ============================================================
+//
+// ARCHITECTURAL CONTRACT (do not change without reading this):
+//
+//   Enquiry  ──(customer accepts final quote)──►  Booking  ──►  Trip
+//     ▲                                                        ▲
+//     │                                                        │
+//   intake / quote / acceptance                    existing operational + financial system
+//
+// The Enquiry is the REQUEST + QUOTATION + ACCEPTANCE record. It is NOT a
+// second financial system and it does NOT duplicate the Booking/Trip/financial
+// tables. Once the customer accepts, a canonical Booking row is created (via
+// the existing BookingService) and linked through Booking.enquiry_id, and the
+// Trip/settlement/commission system continues unchanged.
+//
+// PRIVACY CONTRACT:
+// The customer's mobile is stored here (they typed it). The DRIVER's mobile is
+// NEVER written to this table and NEVER returned to a customer by any DTO in
+// dtos/EnquiryDTO.js — the customer can only reach support via the fixed
+// Bihar Transport customer-care WhatsApp number in config/customerCare.js.
+model Enquiry {
+  enquiry_id            Int            @id @default(autoincrement())
+
+  // Canonical, server-derived, human-readable request id.
+  // Format: BTB-YYYYMMDD-NNNNNN  (e.g. BTB-20260926-000123)
+  // Derived from the DB autoincrement PK (see EnquiryNumberService) — never
+  // from UUID / Math.random() / frontend input.
+  enquiry_number        String         @unique
+
+  // ── Customer identity ──────────────────────────────────────────────
+  // customer_id is NULL for guest customers (no login wall on submit).
+  // Guest access is instead proven by a short-lived signed enquiry access
+  // token issued at creation (see EnquiryAccessToken).
+  customer_id           Int?
+  customer_name         String
+  customer_mobile       String
+  customer_email        String?
+  // Stable per-browser handle so a guest can list their own enquiries later.
+  session_key           String?
+
+  // ── Route ──────────────────────────────────────────────────────────
+  pickup_location       String
+  pickup_address        String?
+  pickup_latitude       Float?
+  pickup_longitude      Float?
+  drop_location         String
+  drop_address          String?
+  drop_latitude         Float?
+  drop_longitude        Float?
+  distance_km           Float?
+
+  // ── Vehicle ────────────────────────────────────────────────────────
+  // "requested" = what the customer picked on the booking page.
+  // "assigned"  = what an admin actually committed to (separate, nullable).
+  requested_vehicle_id    Int?
+  requested_vehicle_name  String?
+  assigned_vehicle_id     Int?
+  assigned_driver_id      Int?
+  assigned_partner_id     Int?   // network Partner who sourced the trip
+  assigned_owner_id       Int?   // VehicleOwner (transport owner)
+  // Immutable snapshot so the customer-facing history survives reassignment.
+  assigned_vehicle_number String?
+  assigned_vehicle_type   String?
+  assigned_driver_name    String?
+  driver_assigned_at      DateTime?
+  vehicle_assigned_at     DateTime?
+
+  // ── Shipment ───────────────────────────────────────────────────────
+  // material is NULLABLE: a customer routinely books a vehicle before they
+  // know the load, and the transport team captures it on the call. An
+  // unanswered field stays NULL — it is never backfilled with a placeholder.
+  material              String?
+  quantity              Float?
+  quantity_unit         String?
+  weight                Float?
+  weight_unit           String?
+  goods_category        String?
+  fragile               Boolean         @default(false)
+  special_instructions  String?
+
+  // ── Schedule ───────────────────────────────────────────────────────
+  pickup_date           DateTime
+  pickup_time           String
+
+  // ── Pricing ────────────────────────────────────────────────────────
+  // estimated_price_min / max come from the pricing engine at intake time.
+  // final_quoted_price is set ONLY by an authenticated admin and is the single
+  // server-authoritative price the customer is ever asked to accept.
+  estimated_price_min   Float?
+  estimated_price_max   Float?
+  final_quoted_price    Float?
+  price_status          EnquiryPriceStatus @default(NOT_QUOTED)
+  quote_remarks         String?
+  quoted_by_admin_id    Int?
+  quoted_at             DateTime?
+
+  // ── Status ─────────────────────────────────────────────────────────
+  status                EnquiryStatus   @default(ENQUIRY_SUBMITTED)
+  accepted_at           DateTime?
+  rejected_at           DateTime?
+  cancelled_at          DateTime?
+  cancellation_reason   String?
+  confirmed_at          DateTime?
+  started_at            DateTime?
+  completed_at          DateTime?
+
+  // ── Timestamps ─────────────────────────────────────────────────────
+  created_at            DateTime        @default(now())
+  updated_at            DateTime        @updatedAt
+
+  // ── Relations ──────────────────────────────────────────────────────
+  customer              User?           @relation("enquiry_customer", fields: [customer_id], references: [user_id], onDelete: SetNull)
+  requestedVehicle      TransportVehicle? @relation("enquiry_requested_vehicle", fields: [requested_vehicle_id], references: [vehicle_id], onDelete: SetNull)
+  assignedVehicle       TransportVehicle? @relation("enquiry_assigned_vehicle", fields: [assigned_vehicle_id], references: [vehicle_id], onDelete: SetNull)
+  assignedDriver        Driver?         @relation("enquiry_assigned_driver", fields: [assigned_driver_id], references: [driver_id], onDelete: SetNull)
+  assignedPartner       Partner?        @relation("enquiry_assigned_partner", fields: [assigned_partner_id], references: [partner_id], onDelete: SetNull)
+  assignedOwner         VehicleOwner?   @relation("enquiry_assigned_owner", fields: [assigned_owner_id], references: [owner_id], onDelete: SetNull)
+  quotedByAdmin         Admin?          @relation("enquiry_quoted_by", fields: [quoted_by_admin_id], references: [admin_id], onDelete: SetNull)
+  // The canonical operational Booking created when the customer accepted the
+  // final quote. Unique — one Booking is the operational record of exactly one
+  // Enquiry. Nullable so an enquiry always survives its Booking.
+  booking_id            Int?            @unique
+  booking               Booking?        @relation("enquiry_booking", fields: [booking_id], references: [booking_id], onDelete: SetNull)
+  events                EnquiryEvent[]
+
+  @@index([enquiry_number], name: "idx_enquiries_number")
+  @@index([customer_id], name: "idx_enquiries_customer")
+  @@index([booking_id], name: "idx_enquiries_booking")
+  @@index([customer_mobile], name: "idx_enquiries_mobile")
+  @@index([session_key], name: "idx_enquiries_session")
+  @@index([status], name: "idx_enquiries_status")
+  @@index([price_status], name: "idx_enquiries_price_status")
+  @@index([assigned_driver_id], name: "idx_enquiries_driver")
+  @@index([assigned_vehicle_id], name: "idx_enquiries_vehicle")
+  @@index([assigned_partner_id], name: "idx_enquiries_partner")
+  @@index([pickup_date], name: "idx_enquiries_pickup_date")
+  @@index([created_at], name: "idx_enquiries_created")
+  @@map("enquiries")
+}
+
+// --- Enquiry Event (immutable audit trail + customer activity feed) ---
+// Append-only. Every meaningful transition writes exactly one row, which
+// powers BOTH the admin audit history and the customer "Request Timeline".
+model EnquiryEvent {
+  enquiry_event_id  Int               @id @default(autoincrement())
+  enquiry_id        Int
+  event_type        EnquiryEventType
+  actor_type        EnquiryActorType  @default(SYSTEM)
+  actor_id          Int?              // admin_id / user_id / driver_id (nullable)
+  actor_name        String?
+  message           String
+  // JSON payload for extra context (e.g. { from, to, vehicle_number }).
+  // MUST NEVER contain driver mobile numbers.
+  metadata          Json?
+  // False for internal-only events that must not appear on the customer feed.
+  customer_visible  Boolean           @default(true)
+  created_at        DateTime          @default(now())
+
+  // Relations
+  enquiry Enquiry @relation(fields: [enquiry_id], references: [enquiry_id], onDelete: Cascade)
+
+  @@index([enquiry_id, created_at], name: "idx_enquiry_events_enquiry")
+  @@index([event_type], name: "idx_enquiry_events_type")
+  @@index([created_at], name: "idx_enquiry_events_created")
+  @@map("enquiry_events")
 }
 
