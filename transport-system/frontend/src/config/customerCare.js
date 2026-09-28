@@ -23,9 +23,34 @@
  * the same number, kept here purely so the very first paint is never empty. Set
  * VITE_CUSTOMER_CARE_WHATSAPP at build time to change it without a backend
  * round trip.
+ *
+ * THE PHOTO
+ * The representative's portrait ships with the frontend as a static asset
+ * (public/assets/customer-care.png) and is referenced by an ordinary
+ * same-origin path, so it is served by the CDN in exactly the same way as the
+ * rest of public/ — no backend redeploy, no environment variable, no import.
+ * That default is deliberately NOT conditional on configuration: the Support
+ * card is the one place on the confirmation page that answers "is this safe,
+ * and who do I call?", and it must never degrade to a "BC" monogram because
+ * one environment variable on one host was left unset. The env var below only
+ * exists to point at a DIFFERENT photograph (e.g. a future team member) — it
+ * is never required for the real portrait to render.
  */
 
 import { enquiryAPI } from '../services/enquiryAPI';
+
+/**
+ * The representative portrait that ships with the app.
+ *
+ * A transparent-background cutout, served from public/ so the browser requests
+ * it from the same origin as the page. Keep this in sync with the file in
+ * public/assets/ — if the file is renamed, this constant must be too, or the
+ * Support card silently falls back to its monogram.
+ */
+export const DEFAULT_CUSTOMER_CARE_PHOTO = '/assets/customer-care.png';
+
+/** Alt text for the portrait. Carries no personal information. */
+export const CUSTOMER_CARE_PHOTO_ALT = 'Bihar Transport Customer Care Executive';
 
 /** Build-time fallback. Override with VITE_CUSTOMER_CARE_WHATSAPP. */
 const FALLBACK_DIGITS = (
@@ -57,7 +82,8 @@ export const FALLBACK_CUSTOMER_CARE = {
   brandName: 'Bihar Transport',
   name: 'Bihar Transport Customer Care',
   designation: 'Customer Care Executive',
-  photo: import.meta.env.VITE_CUSTOMER_CARE_PHOTO || null,
+  photo: import.meta.env.VITE_CUSTOMER_CARE_PHOTO || DEFAULT_CUSTOMER_CARE_PHOTO,
+  photoAlt: CUSTOMER_CARE_PHOTO_ALT,
   phoneDisplay: formatPhoneDisplay(FALLBACK_PHONE),
   phoneDigits: FALLBACK_PHONE,
   hours: 'Mon – Sat, 8:00 AM – 8:00 PM',

@@ -18,12 +18,18 @@
  * all come from the SAME profile object, so they can never disagree.
  *
  * THE PHOTO
- * The representative portrait is a real, configured image
- * (CUSTOMER_CARE_PHOTO / VITE_CUSTOMER_CARE_PHOTO → /assets/customer-care.jpg)
- * and it fills the rounded frame ON ITS OWN. There is no second tile, no
- * initials, no avatar badge and no fallback text beneath or beside it while
- * that photo is available — a duplicate placeholder stacked under a real
- * portrait is exactly what this card used to render, and it read as a bug.
+ * The representative portrait is a real photograph, shipped with the frontend
+ * as public/assets/customer-care.png and rendered on a navy panel. It is NOT
+ * conditional on configuration: this card used to fall back to a blue "BC"
+ * monogram because the photo URL came from an environment variable that had
+ * never been set in production, and a customer deciding whether to trust the
+ * company was shown a box of initials. The portrait is now the default state,
+ * a server-published photo can still override it, and the monogram survives
+ * only as a last-resort fallback for a genuinely broken image path.
+ *
+ * There is no second tile, no initials and no avatar badge stacked beside the
+ * photograph — a duplicate placeholder under a real portrait is exactly what
+ * this card used to render, and it read as a bug.
  *
  * PRIVACY
  * This card links ONLY to Bihar Transport customer care. The assigned driver's
@@ -34,7 +40,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { MessageCircle, Phone, Clock, ShieldCheck, Headset } from 'lucide-react';
 import { enquiryAPI } from '../../services/enquiryAPI';
-import { FALLBACK_CUSTOMER_CARE, buildWhatsAppUrl, buildCallUrl } from '../../config/customerCare';
+import {
+  FALLBACK_CUSTOMER_CARE,
+  buildWhatsAppUrl,
+  buildCallUrl,
+  CUSTOMER_CARE_PHOTO_ALT,
+} from '../../config/customerCare';
 
 /** Derive up to two initials from a name, for the monogram fallback. */
 function initialsOf(name) {
@@ -51,51 +62,83 @@ function initialsOf(name) {
 /**
  * The representative portrait.
  *
- * The photo IS the tile: rounded corners, object-fit: cover so it never
- * distorts, object-position centred so the face stays in frame. It is a single
- * <img> — the previous version also rendered a "hidden" monogram sibling that
- * carried Tailwind's `flex` class, which overrode the [hidden] attribute and
- * painted a second blue BC box directly underneath the photo. That sibling is
- * gone; there is now nothing to show but the photograph.
+ * This is the whole point of the card: the customer is deciding whether to trust
+ * the company enough to submit a transport request, and a blue box with the
+ * letters "BC" tells them nobody is on the other end. So the photograph is
+ * ALWAYS the default state, not a nice-to-have — see the config note in
+ * config/customerCare.js. The monogram is unreachable while the shipped asset
+ * loads, and exists only so a genuinely broken path degrades to something
+ * branded rather than to a torn-image icon.
  *
- * The monogram is a last resort only. It is swapped IN for the <img> — never
- * rendered beside it — so the profile area can never stack two boxes. It is
- * reached only when no photo is configured at all, or when a configured URL
- * fails to load (a torn-image icon in the most important card on the page would
- * be worse than branded initials).
+ * WHY THE NAVY PANEL BEHIND IT
+ * The supplied portrait is a transparent-background cutout. A cutout on a white
+ * card floats — there is no edge to anchor it and the dark blazer dissolves
+ * into the page. The panel gives the figure a ground: the person's silhouette
+ * reads against navy, the white shirt and red tie pop, and the card keeps the
+ * navy branding it already had. Critically, the panel is a background BEHIND
+ * the alpha channel — there is no white rectangle anywhere in the chain, so the
+ * transparency is preserved exactly as supplied.
+ *
+ * object-fit: contain + object-position: bottom
+ * The source is a 3:4 three-quarter portrait, so `contain` fits it by WIDTH and
+ * leaves the extra height as headroom above the head rather than cutting the
+ * executive off. `cover` would crop the shoulders; `contain` shows the complete
+ * person, which is what the brief asked for. The drop-shadow filter is applied
+ * to the <img>, not the panel, so it uses the alpha channel and separates the
+ * dark jacket from the navy without adding any background of its own.
  */
-function Representative({ photo, name, size = 'lg' }) {
+function Representative({ photo, name, alt, size = 'lg' }) {
   // Remember WHICH url failed rather than a boolean, so a later profile refresh
   // that publishes a different (working) photo renders the real image again.
   const [brokenPhoto, setBrokenPhoto] = useState(null);
 
-  const dims = size === 'lg' ? 'h-[72px] w-[72px] sm:h-20 sm:w-20' : 'h-12 w-12';
+  /* Portrait proportions, not a square. A 3:4 cutout in a square tile either
+     letterboxes to an unreadable speck or has to be cropped to the face. The
+     hero is a narrow portrait panel; the inline variant stays a small tile
+     because it sits in a single-line row. Both are pure Tailwind sizes, so
+     they scale with the breakpoint and never overflow their container. */
+  const dims = size === 'lg' ? 'h-[116px] w-[88px] sm:h-[140px] sm:w-24' : 'h-14 w-14';
   const textSize = size === 'lg' ? 'text-xl sm:text-2xl' : 'text-sm';
 
-  const shell =
-    'shrink-0 overflow-hidden rounded-2xl ring-4 ring-white shadow-[0_10px_26px_-8px_rgba(23,43,77,0.35)]';
-  const label = name ? `${name} — Bihar Transport` : 'Bihar Transport customer care';
+  /* One navy surface for BOTH states, so if the photograph ever fails the
+     fallback sits in exactly the tile the photograph would have occupied —
+     no layout shift, no second stacked box. */
+  const panel =
+    'relative shrink-0 overflow-hidden rounded-2xl ring-1 ring-[#15345B]/15 ' +
+    'bg-gradient-to-b from-[#2A4A78] via-[#15345B] to-[#0B1E36] ' +
+    'shadow-[0_12px_28px_-12px_rgba(16,43,76,0.55)]';
 
-  if (photo && photo !== brokenPhoto) {
-    return (
-      <img
-        src={photo}
-        alt={label}
-        className={`${shell} ${dims} block object-cover object-center`}
-        loading="eager"
-        decoding="async"
-        onError={() => setBrokenPhoto(photo)}
-      />
-    );
-  }
+  const photoSrc = photo && photo !== brokenPhoto ? photo : null;
+  const photoAlt = alt || CUSTOMER_CARE_PHOTO_ALT;
 
   return (
-    <div
-      className={`${shell} ${dims} flex items-center justify-center bg-gradient-to-br from-[#172B4D] to-[#2C4A7C]`}
-      role="img"
-      aria-label={label}
-    >
-      <span className={`${textSize} font-bold tracking-wide text-white`}>{initialsOf(name)}</span>
+    <div className={`${panel} ${dims}`}>
+      {photoSrc ? (
+        <img
+          src={photoSrc}
+          alt={photoAlt}
+          className="block h-full w-full object-contain object-bottom drop-shadow-[0_8px_12px_rgba(0,0,0,0.38)]"
+          /* The hero card is the trust signal on the confirmation page — it is
+             above the fold, so it must not wait on the lazy-loading queue. */
+          loading={size === 'lg' ? 'eager' : 'lazy'}
+          decoding="async"
+          /* width/height give the browser an intrinsic ratio up front, so the
+             panel is reserved before the bytes land and the card never reflows. */
+          width={375}
+          height={400}
+          onError={() => setBrokenPhoto(photoSrc)}
+        />
+      ) : (
+        <div
+          className="flex h-full w-full items-center justify-center"
+          role="img"
+          aria-label={photoAlt}
+        >
+          <span className={`${textSize} font-bold tracking-wide text-white`}>
+            {initialsOf(name)}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -136,7 +179,9 @@ export default function SupportCard({ enquiryNumber, className = '' }) {
       ...care,
       phoneDigits: care.phoneDigits || FALLBACK_CUSTOMER_CARE.phoneDigits,
       // Never let a server response with no photo published knock the real
-      // portrait out — the representative is a person, not a placeholder.
+      // portrait out — the representative is a person, not a placeholder. The
+      // live API returns photo: null whenever CUSTOMER_CARE_PHOTO is unset on
+      // the host, and that must not degrade the card to a "BC" monogram.
       photo: care.photo || FALLBACK_CUSTOMER_CARE.photo,
     };
   }, [care]);
@@ -188,7 +233,11 @@ export default function SupportCard({ enquiryNumber, className = '' }) {
         </div>
 
         <div className="mt-4 flex items-center gap-4">
-          <Representative photo={profile.photo} name={profile.name} />
+          <Representative
+            photo={profile.photo}
+            name={profile.name}
+            alt={profile.photoAlt || CUSTOMER_CARE_PHOTO_ALT}
+          />
 
           <div className="min-w-0 flex-1">
             <p className="text-[17px] font-bold leading-tight text-[#172B4D] sm:text-lg">
@@ -306,7 +355,12 @@ export function SupportInline({ enquiryNumber, className = '' }) {
 
   return (
     <div className={`flex items-center gap-3 ${className}`}>
-      <Representative photo={profile.photo} name={profile.name} size="sm" />
+      <Representative
+        photo={profile.photo}
+        name={profile.name}
+        alt={profile.photoAlt || CUSTOMER_CARE_PHOTO_ALT}
+        size="sm"
+      />
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-semibold text-[#172B4D]">{profile.name}</p>
         <p className="truncate text-xs text-slate-500">
