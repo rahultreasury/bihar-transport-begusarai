@@ -195,6 +195,54 @@ class BookingRepository {
   }
 
   /**
+   * Load the COMMITTED booking plus the minimum customer data the owner
+   * booking-notification email needs.
+   *
+   * Exists so the notification never has to re-derive what the customer typed
+   * at intake, and never has to read from a transaction client (a row that is
+   * only visible inside an open transaction must never be emailed).
+   *
+   * The select is intentionally narrow: no driver/partner/vehicle contact
+   * details are read here, so a notification can never leak a driver's mobile.
+   *
+   * @param {number} bookingId
+   * @returns {Promise<Object|null>}
+   */
+  async findNotificationContext(bookingId) {
+    const id = Number(bookingId);
+    if (!Number.isInteger(id)) return null;
+
+    return await prisma.booking.findUnique({
+      where: { booking_id: id },
+      select: {
+        booking_id: true,
+        booking_number: true,
+        booking_reference: true,
+        pickup_location: true,
+        drop_location: true,
+        pickup_date: true,
+        pickup_time: true,
+        goods_description: true,
+        goods_type: true,
+        vehicle_type_required: true,
+        estimated_distance_km: true,
+        estimated_price: true,
+        final_price: true,
+        status: true,
+        quote_status: true,
+        mobile_snapshot: true,
+        user: {
+          select: {
+            first_name: true,
+            last_name: true,
+            phone: true,
+          },
+        },
+      },
+    });
+  }
+
+  /**
    * Get a booking by numeric primary key.
    * @param {number} bookingId
    * @param {string=} tx - Prisma transaction client

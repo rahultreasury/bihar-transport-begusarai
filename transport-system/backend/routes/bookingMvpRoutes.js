@@ -2,7 +2,6 @@ const express = require('express');
 const { body, validationResult } = require('express-validator');
 const bcrypt = require('bcryptjs');
 
-const { sendBookingNotification } = require('../services/emailService');
 const { prisma } = require('../config/prisma');
 const BookingService = require('../services/BookingService');
 
@@ -151,25 +150,12 @@ const estimated_distance_km = Number(req.body.distance);
 
     console.log('Booking saved with id:', booking_id);
 
-    const bookingPayload = {
-      ...req.body,
-      booking_reference,
-      booking_id,
-    };
-
-// Fire-and-forget email notification — never blocks the booking response.
-    (async () => {
-      try {
-        const result = await sendBookingNotification(bookingPayload);
-        if (result.success) {
-          console.log('[booking][email] sent');
-        } else {
-          console.warn('[booking][email]', result.message);
-        }
-      } catch (err) {
-        console.error('[booking][email]', err);
-      }
-    })();
+    // NOTE: the owner booking notification is NOT sent here. It is dispatched by
+    // the single canonical BookingService.createBooking() AFTER the transaction
+    // commits, which is shared by every booking entry point (this legacy MVP
+    // route, POST /api/bookings/create, the booking controller, and the live
+    // enquiry → quote → accept flow). Sending it from here as well would produce
+    // TWO owner emails for one booking on this route.
 
     return res.status(201).json({
       success: true,

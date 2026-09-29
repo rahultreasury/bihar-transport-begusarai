@@ -13,8 +13,10 @@ const BookingRepository = require('../repositories/BookingRepository');
 const BookingTimelineRepository = require('../repositories/BookingTimelineRepository');
 const ReservationRepository = require('../repositories/ReservationRepository');
 const InvoiceRepository = require('../repositories/InvoiceRepository');
+const { logger } = require('../utils/logger');
 const TripFinancialService = require('./TripFinancialService');
 const ResourceAvailabilityService = require('./ResourceAvailabilityService');
+const BookingNotificationService = require('./BookingNotificationService');
 const { prisma } = require('../config/prisma');
 const { AppError, ValidationError, NotFoundError } = require('../utils/AppError');
 const { buildBookingNumber } = require('./BookingNumberService');
@@ -55,23 +57,34 @@ class BookingService {
     this.invoiceRepo = deps.invoiceRepo || new InvoiceRepository();
     this.tripFinancialService = deps.tripFinancialService || new TripFinancialService();
     this.resourceAvailabilityService = deps.resourceAvailabilityService || new ResourceAvailabilityService();
+    this.notificationService = deps.notificationService || new BookingNotificationService();
   }
 
 /**
-   * Create a new booking.
-   *
-   * Canonical booking-number logic:
-   *   - booking_number (BTB-YYYY-NNNNN) is DERIVED from the DB primary key
-   *     (booking_id) by BookingNumberService — the single canonical
-   *     customer/admin-facing identifier. It is deterministic, sequential,
-   *     unique, and safe under concurrent creation (no MAX+1 race).
-   *   - booking_reference is a legacy alias that mirrors booking_number for
-   *     new bookings so existing tracking/email/WhatsApp links stay uniform.
-   *
-   * @param {Object} input
-   * @returns {Promise<{booking_id: number}>}
-   */
-  async createBooking(input) {
+ * Create a new booking.
+ *
+ * Canonical booking-number logic:
+ *   - booking_number (BTB-YYYY-NNNNN) is DERIVED from the DB primary key
+ *     (booking_id) by BookingNumberService — the single canonical
+ *     customer/admin-facing identifier. It is deterministic, sequential,
+ *     unique, and safe under concurrent creation (no MAX+1 race).
+ *   - booking_reference is a legacy alias that mirrors booking_number for
+ *     new bookings so existing tracking/email/WhatsApp links stay uniform.
+ *
+ * NOTIFICATION
+ * ------------
+ * This is the ONE place the owner is told a booking exists, for every entry
+ * point (legacy POST /api/booking, POST /api/bookings/create, the controller,
+ * and the live enquiry → quote → accept flow). The dispatch happens AFTER the
+ * transaction has COMMITTED and is AWAITED, so a provider failure can never
+ * roll the booking back and a host that drains the request cannot silently
+ * drop the message. The notification service never throws, so a broken SMTP
+ * provider can never fail the customer's booking either.
+ *
+ * @param {Object} input
+ * @returns {Promise<{booking_id: number}>}
+ */
+async createBooking(input) {
     if (!input || !input.user_id) {
       throw new ValidationError('user_id is required');
     }
@@ -122,7 +135,58 @@ const bookingResult = await prisma.$transaction(async (tx) => {
       return { ...booking, booking_number: canonicalNumber, booking_reference: canonicalNumber };
     });
 
+    // ── COMMITTED ────────────────────────────────────────────────────────
+    // The transaction above has resolved, so the booking row is durable. From
+    // here on nothing may roll it back.
+    await this._notifyOwnerOfNewBooking(bookingResult, input);
+
     return bookingResult;
+  }
+
+  /**
+   * Post-commit owner notification for a newly created booking.
+   *
+   * Private, and deliberately defensive in BOTH directions:
+   *   - it never throws, so no notification problem can fail a saved booking;
+   *   - it is awaited, so no notification problem can be lost when the host
+   *     closes the request.
+   *
+   * @private
+   */
+  async _notifyOwnerOfNewBooking(created, input) {
+    const bookingId = created?.booking_id;
+    if (!bookingId) return;
+
+    try {
+      await this.notificationService.notifyOwnerOfNewBooking(bookingId, {
+        source: this._describeCreationSource(input),
+      });
+    } catch (err) {
+      // Booking = SUCCESS, Notification = FAILED. Log and continue.
+      logger.error(
+        {
+          bookingId,
+          message: err?.message,
+          code: err?.code,
+        },
+        '[booking] Notification FAILED — booking is saved and unaffected'
+      );
+    }
+  }
+
+  /**
+   * Human-readable label for the entry point that created this booking, used
+   * only in the notification log line so an operator can tell the flows apart.
+   * @private
+   */
+  _describeCreationSource(input) {
+    if (input?.confirmation_source === 'CUSTOMER' && input?.quote_status === 'ACCEPTED') {
+      return 'enquiry_quote_accepted';
+    }
+    if (input?.quote_status === 'ACCEPTED') return 'quote_accepted';
+    if (input?.confirmation_source === 'ADMIN') return 'admin_confirmed';
+    if (input?.status === 'pending') return 'direct_booking';
+    return 'booking_created';
   }
 
   /**

@@ -100,8 +100,17 @@ async function sendTestEmail() {
 
 /**
  * sendBookingNotification — sends a booking notification to the owner.
- * Booking is saved first; this is fire-and-forget and never blocks.
- * 
+ *
+ * The booking is ALWAYS committed first, and the only caller
+ * (BookingService.createBooking, via BookingNotificationService) invokes this
+ * AFTER the transaction has committed and AWAITS it, so the send is not lost when
+ * a host closes the request. This function itself never throws: a provider
+ * failure is reported in the returned object, and the booking is unaffected.
+ *
+ * This is the BOOKING notification (a booking row now exists). It is a
+ * different event from sendNewInquiryNotificationEmail (a pre-booking enquiry
+ * was submitted) and neither replaces the other.
+ *
  * @param {Object} booking — Must contain:
  *   booking_reference, customerName, mobile, pickup, drop,
  *   vehicle, goodsType, price, [pickupDate], [pickupTime]
@@ -228,10 +237,24 @@ async function sendBookingNotification(booking) {
     });
 
     console.log(`[email] Booking notification sent — booking=${booking_reference} to=${ownerEmail} messageId=${info.messageId}`);
-    return { success: true, message: 'Booking notification sent' };
+    // messageId is returned (not just logged) so the caller can surface the
+    // provider's own id in its structured logs without re-sending anything.
+    return {
+      success: true,
+      message: 'Booking notification sent',
+      messageId: info.messageId,
+      accepted: Array.isArray(info.accepted) ? info.accepted : undefined,
+    };
   } catch (err) {
     console.error(`[email] Booking notification failed — booking=${booking_reference} to=${ownerEmail} error="${err.message}"`);
-    return { success: false, message: `SMTP error: ${err.message}`, error: err.message };
+    return {
+      success: false,
+      message: `SMTP error: ${err.message}`,
+      error: err.message,
+      code: err.code,
+      responseCode: err.responseCode,
+      command: err.command,
+    };
   }
 }
 
