@@ -3,9 +3,14 @@ const required = [
 ];
 
 
-// Treat these as optional; booking/maps/email/SMS can still work with fallback.
+// Treat these as optional; booking/maps/email/SMS/RC-lookup can still work with
+// fallback. PARSE_API_KEY is deliberately OPTIONAL: without it the vehicle RC
+// lookup endpoint returns 503 and the registration form simply falls back to
+// manual entry. It must never be required at boot.
 const optional = [
   'GOOGLE_MAPS_API_KEY',
+  'PARSE_API_KEY',
+  'PARSE_CARINFO_TIMEOUT_MS',
   'WHATSAPP_ACCESS_TOKEN',
   'WHATSAPP_PHONE_NUMBER_ID',
   'WHATSAPP_BUSINESS_NUMBER',

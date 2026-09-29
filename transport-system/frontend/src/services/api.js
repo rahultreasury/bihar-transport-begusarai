@@ -345,6 +345,12 @@ updateDriver: (id, data) => api.put(`/admin/drivers/${id}`, data),
   getVehicleOwnerDrivers: (id, params) => api.get(`/admin/vehicle-owners/${id}/drivers`, { params }),
   getVehicleOwnerVehicles: (id, params) => api.get(`/admin/vehicle-owners/${id}/vehicles`, { params }),
   createVehicleOwnerVehicle: (id, data) => api.post(`/admin/vehicle-owners/${id}/vehicles`, data),
+  // Vehicle RC lookup — proxied by OUR backend, which holds the Parse CarInfo
+  // API key server-side. The browser never talks to Parse and never sees the key.
+  // `refresh: true` bypasses the backend's short-lived lookup cache.
+  lookupVehicleByNumber: (vehicleNumber, refresh = false) =>
+    api.get('/vehicles/lookup', { params: { vehicleNumber, ...(refresh ? { refresh: 'true' } : {}) } }),
+  getVehicleLookupStatus: () => api.get('/vehicles/lookup/status'),
   createVehicle: (data) => api.post('/admin/vehicles', data),
   updateVehicle: (id, data) => api.put(`/admin/vehicles/${id}`, data),
   getVehicleTrips: (id, params) => api.get(`/admin/vehicles/${id}/trips`, { params }),

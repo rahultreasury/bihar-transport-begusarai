@@ -413,10 +413,53 @@ class EnquiryService {
       'enquiry.created'
     );
 
+    // Owner notification — AFTER the enquiry is committed, so an SMTP failure
+    // can never roll back or fail the enquiry the customer just submitted.
+    // Fire-and-forget: the HTTP response does not wait on SMTP.
+    this._notifyOwnerOfNewEnquiry(created);
+
     // Admin room gets it immediately so the enquiries table is live.
     this.realtime.emitEnquiryToAdmins(created.enquiry_id, 'enquiry:created');
 
     return { enquiry: created, accessToken };
+  }
+
+  /**
+   * Email the transport OWNER about a new enquiry. Never throws.
+   *
+   * createEnquiry() is the single creation point for every enquiry entry path
+   * (guest, registered customer, mobile app — all POST /api/enquiries), so
+   * hooking here guarantees exactly one notification per enquiry.
+   * @private
+   */
+  _notifyOwnerOfNewEnquiry(enquiry) {
+    // eslint-disable-next-line global-require
+    const { sendNewInquiryNotificationEmail } = require('./emailService');
+
+    Promise.resolve()
+      .then(() => sendNewInquiryNotificationEmail(enquiry))
+      .then((result) => {
+        if (result && result.success === false) {
+          logger.warn(
+            { enquiryId: enquiry?.enquiry_id, reason: result.message },
+            'enquiry.owner_notification_skipped'
+          );
+        }
+      })
+      .catch((err) => {
+        // Enquiry = SUCCESS, Email = FAILED. Log loudly, never rethrow.
+        logger.error(
+          {
+            enquiryId: enquiry?.enquiry_id,
+            enquiryNumber: enquiry?.enquiry_number,
+            message: err?.message,
+            code: err?.code,
+            responseCode: err?.responseCode,
+            command: err?.command,
+          },
+          'enquiry.owner_notification_failed'
+        );
+      });
   }
 
   // =========================================================================

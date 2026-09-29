@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /><title>dev bootstrap</title></head>
+  <body>
+    <p>Bootstrapping local test session…</p>
+    <script>
+      // TEMPORARY local test helper — deleted after the verification run.
+      localStorage.setItem('token', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwidHlwZSI6ImFkbWluIiwiaWF0IjoxNzkwNDk0MDA2LCJleHAiOjE3OTEwOTg4MDZ9.ofZ66jJGm3LJ5rVPKoL_QfFSPWbM83DHkKddhkRgZTE');
+      localStorage.setItem('user', JSON.stringify({
+        user_id: 1,
+        full_name: 'System Administrator',
+        name: 'System Administrator',
+        email: 'admin@bihartransport.com',
+        role: 'super_admin'
+      }));
+      location.replace('/admin/enquiries');
+    </script>
+  </body>
+</html>

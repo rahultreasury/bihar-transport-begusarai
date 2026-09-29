@@ -12,6 +12,8 @@
  */
 
 const nodemailer = require('nodemailer');
+const fs = require('fs');
+const path = require('path');
 
 // ---- SMTP Transporter ----
 function createTransporter() {
@@ -342,15 +344,370 @@ async function sendPasswordResetEmail({ email, resetUrl, userName }) {
 }
 
 /**
+ * sendNewInquiryNotificationEmail — notifies the transport OWNER that a new
+ * customer enquiry has been submitted.
+ *
+ * The recipient is ALWAYS process.env.OWNER_EMAIL. The customer is never
+ * emailed: neither the enquiry's own address nor the customer's User.email is
+ * ever used as a recipient. This system sends no customer confirmation email.
+ *
+ * Call this only AFTER the enquiry row is committed. It THROWS on SMTP failure
+ * so the caller can log it; callers must wrap it in try/catch so a delivery
+ * failure can never roll back or fail the enquiry itself.
+ *
+ * @param {Object} enquiry  Persisted Enquiry row
+ * @returns {Promise<{success: boolean, messageId?: string, accepted?: string[], rejected?: string[]}>}
+ */
+async function sendNewInquiryNotificationEmail(enquiry) {
+  console.log('[email] New inquiry notification triggered');
+
+  const fromEmail = process.env.FROM_EMAIL;
+  const ownerEmail = process.env.OWNER_EMAIL;
+  const enquiryRef = enquiry?.enquiry_number || (enquiry?.enquiry_id ? `#${enquiry.enquiry_id}` : '—');
+
+  if (!fromEmail) {
+    console.warn('[email] Inquiry notification skipped: FROM_EMAIL not set');
+    return { success: false, message: 'FROM_EMAIL not configured' };
+  }
+  if (!ownerEmail) {
+    console.warn('[email] Inquiry notification skipped: OWNER_EMAIL not set');
+    return { success: false, message: 'OWNER_EMAIL not configured' };
+  }
+  if (!process.env.BREVO_SMTP_USER || !process.env.BREVO_SMTP_PASSWORD) {
+    console.warn('[email] Inquiry notification skipped: SMTP credentials not set');
+    return { success: false, message: 'SMTP not configured' };
+  }
+
+  console.log(`[email] Inquiry ID: ${enquiryRef}`);
+  console.log(`[email] Recipient: ${ownerEmail}`);
+
+  const logo = brandLogoAttachment();
+  const { subject, html, text } = buildNewInquiryEmail({
+    enquiry,
+    enquiryRef,
+    hasLogo: Boolean(logo),
+  });
+
+  const transporter = createTransporter();
+  console.log('[email] Sending inquiry notification...');
+  console.log(`[email] Brand logo embedded: ${logo ? 'yes' : 'no (text wordmark used)'}`);
+
+  try {
+    const info = await transporter.sendMail({
+      from: `"Bihar Transport" <${fromEmail}>`,
+      to: ownerEmail,
+      subject,
+      text,
+      html,
+      // Embedded CID part — the logo travels inside the message, so it needs no
+      // public URL and no client can fail to load it.
+      ...(logo ? { attachments: [logo] } : {}),
+    });
+
+    console.log('[email] SMTP accepted message');
+    console.log(`[email] Message ID: ${info?.messageId}`);
+    console.log(`[email] Accepted: ${JSON.stringify(info?.accepted || [])}`);
+    console.log(`[email] Rejected: ${JSON.stringify(info?.rejected || [])}`);
+
+    return {
+      success: true,
+      messageId: info?.messageId,
+      accepted: info?.accepted || [],
+      rejected: info?.rejected || [],
+    };
+  } catch (error) {
+    console.error('[email] Inquiry notification FAILED', {
+      enquiry: enquiryRef,
+      recipient: ownerEmail,
+      message: error?.message,
+      code: error?.code,
+      response: error?.response,
+      responseCode: error?.responseCode,
+      command: error?.command,
+      rejected: error?.rejected,
+    });
+    // Rethrow so the caller records the failure. Never swallow silently.
+    throw error;
+  }
+}
+
+/**
+ * The official Bihar Transport logo, embedded as a CID attachment.
+ *
+ * CID is used deliberately: an <img src="https://..."> needs a publicly
+ * reachable host this project does not define, and "localhost" never resolves
+ * inside an email client. A CID part travels inside the message itself, so the
+ * logo renders in Zoho/Gmail/Outlook with no external dependency and no
+ * filesystem path ever exposed in the HTML.
+ */
+const BRAND_LOGO_CID = 'bihar-transport-logo';
+
+function resolveBrandLogoPath() {
+  const candidates = [
+    process.env.BRAND_LOGO_PATH,
+    // backend/services -> repo frontend public assets
+    path.join(__dirname, '..', '..', 'frontend', 'public', 'assets', 'logo.png'),
+    path.join(__dirname, '..', '..', 'frontend', 'public', 'logo.jpeg'),
+  ];
+  for (const candidate of candidates) {
+    try {
+      if (candidate && fs.existsSync(candidate)) return candidate;
+    } catch {
+      // try the next candidate
+    }
+  }
+  return null;
+}
+
+/** null when no logo asset is available, so no broken image is ever emitted. */
+function brandLogoAttachment() {
+  const logoPath = resolveBrandLogoPath();
+  if (!logoPath) return null;
+  return {
+    filename: 'bihar-transport-logo.jpg',
+    path: logoPath,
+    cid: BRAND_LOGO_CID,
+    // The asset is a JPEG despite its .png extension, so state the type
+    // explicitly instead of letting the extension guess.
+    contentType: 'image/jpeg',
+  };
+}
+
+// Label -> section heading. Grouping keeps the email short and scannable
+// instead of one long undifferentiated list of rows.
+const INQUIRY_SECTIONS = [
+  { title: 'Customer', labels: ['Customer Name', 'Customer Mobile', 'Source'], highlight: ['Customer Name', 'Customer Mobile'] },
+  { title: 'Transport', labels: ['Pickup Location', 'Drop Location', 'Vehicle Type', 'Goods / Material', 'Quantity', 'Weight'], highlight: ['Pickup Location', 'Drop Location', 'Vehicle Type'] },
+  { title: 'Trip', labels: ['Pickup Date', 'Pickup Time', 'Distance'] },
+  { title: 'Inquiry', labels: ['Inquiry Number', 'Special Instructions', 'Created', 'Inquiry Status'] },
+];
+
+/** Only fields that genuinely exist on the Enquiry row. */
+function newInquiryRows(e) {  const b = e || {};
+  const num = (v, unit) => {
+    if (v === null || v === undefined || v === '' || Number.isNaN(Number(v))) return null;
+    return unit ? `${v} ${unit}` : String(v);
+  };
+  const fmtDate = (d) =>
+    (d ? new Date(d).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) : null);
+
+  return [
+    ['Inquiry Number', b.enquiry_number],
+    ['Customer Name', b.customer_name],
+    ['Customer Mobile', b.customer_mobile],
+    ['Pickup Location', b.pickup_location],
+    ['Drop Location', b.drop_location],
+    ['Vehicle Type', b.requested_vehicle_name],
+    ['Goods / Material', b.material || b.goods_category],
+    ['Quantity', num(b.quantity, b.quantity_unit)],
+    ['Weight', num(b.weight, b.weight_unit)],
+    ['Pickup Date', fmtDate(b.pickup_date)],
+    ['Pickup Time', b.pickup_time],
+    ['Distance', num(b.distance_km, 'km')],
+    ['Source', b.customer_id ? 'Registered customer' : 'Guest (website)'],
+    ['Special Instructions', b.special_instructions],
+    ['Created', b.created_at
+      ? new Date(b.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
+      : null],
+    ['Inquiry Status', b.status],
+  ]
+    // Drop rows the enquiry genuinely has no value for — an absent field is
+    // never rendered as a blank line, and nothing is invented to fill it.
+    .filter(([, value]) => value !== null && value !== undefined && value !== '');
+}
+
+/**
+ * Group the flat rows into CUSTOMER / TRANSPORT / TRIP / INQUIRY blocks so the
+ * owner can scan the email in seconds instead of reading one long list.
+ * A section with no real values is omitted entirely.
+ */
+function newInquirySections(enquiry) {
+  const rows = newInquiryRows(enquiry);
+  const byLabel = new Map(rows.map(([label, value]) => [label, value]));
+
+  return INQUIRY_SECTIONS
+    .map((section) => ({
+      ...section,
+      rows: section.labels
+        .filter((label) => byLabel.has(label))
+        .map((label) => [label, byLabel.get(label)]),
+    }))
+    .filter((section) => section.rows.length > 0);
+}
+
+/**
+ * Build one responsive, table-based, inline-styled HTML email.
+ *
+ * Table layout + inline CSS is used because desktop mail clients have limited
+ * CSS support: flexbox/grid and external stylesheets are unreliable. The media
+ * query below is progressive enhancement only — the inline styles already stack
+ * correctly when it is ignored.
+ */
+function buildNewInquiryEmail({ enquiry, enquiryRef, hasLogo = false }) {
+  const sections = newInquirySections(enquiry);
+  const valueOf = (label) => {
+    for (const section of sections) {
+      const hit = section.rows.find(([l]) => l === label);
+      if (hit) return hit[1];
+    }
+    return null;
+  };
+
+  // The dashboard link appears ONLY when the deployment already configures a
+  // URL. No production URL is invented here.
+  const adminUrl = (process.env.ADMIN_URL || '').trim();
+  const dashboardHref = adminUrl ? `${adminUrl.replace(/\/+$/, '')}/admin/enquiries` : '';
+
+  // ---- plain-text alternative (kept in sync with the HTML) ----------------
+  const textLines = [
+    'Bihar Transport',
+    '================',
+    '',
+    'NEW TRANSPORT INQUIRY',
+    `Inquiry ${enquiryRef}`,
+    '',
+  ];
+  for (const section of sections) {
+    textLines.push(section.title.toUpperCase());
+    for (const [label, value] of section.rows) textLines.push(`  ${label}: ${value}`);
+    textLines.push('');
+  }
+  if (dashboardHref) textLines.push(`View Inquiry in Dashboard: ${dashboardHref}`, '');
+  textLines.push('Bihar Transport Begusarai • Enterprise Logistics');
+
+  // ---- HTML ---------------------------------------------------------------
+  const logoCell = hasLogo
+    ? `<img src="cid:${BRAND_LOGO_CID}" width="250" alt="Bihar Transport"
+             style="display:block;width:250px;max-width:100%;height:auto;border:0;outline:none;text-decoration:none;">`
+    : `<span style="font-size:19px;font-weight:700;letter-spacing:1.5px;color:#15345B;">BIHAR TRANSPORT</span>`;
+
+  const badge = `<span style="display:inline-block;padding:5px 14px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:11px;font-weight:700;letter-spacing:1px;">NEW</span>`;
+
+  const sectionHtml = sections.map((section) => {
+    const rowHtml = section.rows.map(([label, value]) => {
+      const isKey = (section.highlight || []).includes(label);
+      return `
+                  <tr>
+                    <td class="lbl" style="padding:9px 12px 9px 0;border-bottom:1px solid #eef1f5;font-size:13px;color:#64748B;vertical-align:top;width:38%;word-break:normal;overflow-wrap:break-word;">${escapeHtml(label)}</td>
+                    <td class="val" style="padding:9px 0;border-bottom:1px solid #eef1f5;font-size:${isKey ? '15px' : '14px'};font-weight:600;color:#0F2747;word-break:break-word;overflow-wrap:anywhere;max-width:62%;">${escapeHtml(value)}</td>
+                  </tr>`;
+    }).join('');
+
+    return `
+              <tr><td colspan="2" style="padding:0 0 8px;">
+                <span style="font-size:11px;font-weight:700;letter-spacing:1.2px;color:#B45309;text-transform:uppercase;">${escapeHtml(section.title)}</span>
+              </td></tr>
+              <tr><td colspan="2" style="padding:0;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;table-layout:fixed;">${rowHtml}
+                </table>
+              </td></tr>
+              <tr><td colspan="2" style="height:18px;font-size:0;line-height:0;">&nbsp;</td></tr>`;
+  }).join('');
+
+  const ctaButton = dashboardHref
+    ? `<a href="${escapeHtml(dashboardHref)}" style="display:inline-block;background:#F59E0B;color:#ffffff;text-decoration:none;font-size:14px;font-weight:700;padding:13px 30px;border-radius:8px;">View Inquiry in Dashboard</a>`
+    : '';
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>New Transport Inquiry</title>
+</head>
+<body style="margin:0;padding:0;background:#EEF1F5;-webkit-text-size-adjust:100%;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;background:#EEF1F5;">
+    <tr>
+      <td align="center" style="padding:24px 12px;">
+        <table role="presentation" width="680" cellpadding="0" cellspacing="0" style="width:100%;max-width:680px;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #E2E8F0;">
+
+          <!-- Header: logo, title, enquiry number, status badge -->
+          <tr>
+            <td style="padding:26px 28px 22px;background:#ffffff;border-bottom:3px solid #F59E0B;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;">
+                <tr>
+                  <td align="left" style="padding-bottom:16px;">${logoCell}</td>
+                </tr>
+                <tr>
+                  <td style="font-size:20px;font-weight:700;letter-spacing:-0.2px;color:#0F2747;padding-bottom:4px;">New Transport Inquiry</td>
+                </tr>
+                <tr>
+                  <td style="padding-bottom:12px;">
+                    <span style="font-family:Menlo,Consolas,monospace;font-size:14px;color:#475569;">Inquiry ${escapeHtml(enquiryRef)}</span>
+                  </td>
+                </tr>
+                <tr><td align="left">${badge}</td></tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Headline summary so the key facts read in a second -->
+          <tr>
+            <td style="padding:20px 28px 4px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;background:#FFFBEB;border:1px solid #FDE68A;border-radius:10px;">
+                <tr>
+                  <td style="padding:14px 16px;font-size:13px;color:#78350F;">
+                    A new transport enquiry has been submitted. Please follow up with the customer.
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:0 16px 14px;font-size:20px;font-weight:700;color:#0F2747;">
+                    ${escapeHtml(valueOf('Pickup Location') || '—')}
+                    <span style="font-size:13px;font-weight:600;color:#B45309;">&nbsp;&rarr;&nbsp;</span>
+                    ${escapeHtml(valueOf('Drop Location') || '—')}
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Grouped detail sections -->
+          <tr>
+            <td style="padding:20px 28px 8px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;">${sectionHtml}
+              </table>
+            </td>
+          </tr>
+
+          <!-- Dashboard CTA -->
+          ${ctaButton ? `
+          <tr>
+            <td align="center" style="padding:14px 28px 26px;">
+              ${ctaButton}
+            </td>
+          </tr>` : ''}
+
+          <!-- Footer -->
+          <tr>
+            <td align="center" style="padding:18px 28px;background:#F8FAFC;border-top:1px solid #E2E8F0;font-size:12px;color:#94A3B8;">
+              Bihar Transport Begusarai &bull; Enterprise Logistics
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  return {
+    subject: `New Transport Inquiry — ${enquiryRef}`,
+    html,
+    text: textLines.join('\n'),
+  };
+}
+
+/**
  * Escape HTML special characters to prevent injection.
  */
 function escapeHtml(str) {
-  if (typeof str !== 'string') return String(str || '');
-  return str
+  if (str === null || str === undefined) return '';
+  return String(str)
     .replace(/&/g, '&amp;')
-    .replace(/</g, '<')
-    .replace(/>/g, '>')
-    .replace(/"/g, '"')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
 }
 
@@ -358,6 +715,10 @@ module.exports = {
   verifyConnection,
   sendTestEmail,
   sendBookingNotification,
+  sendNewInquiryNotificationEmail,
   sendPasswordResetEmail,
+  // exported for tests
+  buildNewInquiryEmail,
+  newInquiryRows,
 };
 

@@ -1,6 +1,14 @@
 const express = require('express');
 const router = express.Router();
 const { prisma } = require('../config/prisma');
+const { protect, adminOnly } = require('../middleware/auth');
+const { lookupVehicle, lookupStatus } = require('../controllers/vehicleLookupController');
+
+// RC lookup via the backend-only Parse CarInfo proxy.
+// `PARSE_API_KEY` is read server-side (backend/.env) and is never exposed to the
+// client — the React app always calls this endpoint, never Parse directly.
+router.get('/lookup/status', protect, adminOnly, lookupStatus);
+router.get('/lookup', protect, adminOnly, lookupVehicle);
 
 // Search vehicle by registration number
 router.get('/search/:registrationNumber', async (req, res) => {
