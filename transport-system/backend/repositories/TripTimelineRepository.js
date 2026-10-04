@@ -9,7 +9,34 @@ const { prisma } = require('../config/prisma');
 
 class TripTimelineRepository {
   /**
+   * PHASE 5 FIX — dependency injection.
+   *
+   * Same defect class as AuditLogRepository: this repository used to reach
+   * straight for the module-level `prisma` singleton, so a service holding an
+   * injected client still hit the real database whenever it called
+   * `findByTripId` / `getEntityTimeline` without an explicit `tx`. Accepting
+   * the client here means an injected service propagates all the way down.
+   * Existing no-argument callers keep the shared singleton.
+   *
+   * @param {Object} [deps]
+   * @param {import('@prisma/client').PrismaClient} [deps.prisma]
+   */
+  constructor(deps = {}) {
+    this.prisma = deps.prisma || prisma;
+  }
+
+  /** Resolve the client to use: an explicit transaction, else the injected one. */
+  _client(tx = null) {
+    return tx || this.prisma;
+  }
+
+  /**
    * Create a new timeline event for a trip.
+   *
+   * The timeline is APPEND-ONLY: this method only ever inserts. Nothing in
+   * the codebase updates or deletes an existing event to "correct" history,
+   * because a movement record that can be rewritten is not a record.
+   *
    * @param {Object} data - Timeline event data
    * @param {number} data.trip_id - Trip ID
    * @param {string} data.event_type - Event type (trip_created, status_changed, client_payment, etc.)
@@ -18,10 +45,13 @@ class TripTimelineRepository {
    * @param {number} [data.reference_id] - Reference ID
    * @param {Object} [data.metadata] - Additional JSON metadata
    * @param {number} [data.created_by] - User ID who created the event
+   * @param {Object} [tx] - Optional Prisma transaction client, so the event
+   *        and the change it describes commit together or not at all
    * @returns {Promise<Object>} Created timeline event
    */
-  async create(data) {
-    return prisma.tripTimeline.create({
+  async create(data, tx = null) {
+    const client = this._client(tx);
+    return client.tripTimeline.create({
       data: {
         trip_id: data.trip_id,
         event_type: data.event_type,
@@ -40,7 +70,7 @@ class TripTimelineRepository {
    * @returns {Promise<Array>} Array of timeline events
    */
   async findByTripId(tripId) {
-    return prisma.tripTimeline.findMany({
+    return this.prisma.tripTimeline.findMany({
       where: { trip_id: tripId },
       orderBy: { created_at: 'asc' },
     });
@@ -60,7 +90,7 @@ class TripTimelineRepository {
       where.event_type = filters.event_type;
     }
 
-    return prisma.tripTimeline.findMany({
+    return this.prisma.tripTimeline.findMany({
       where,
       orderBy: { created_at: 'asc' },
     });
@@ -72,7 +102,7 @@ class TripTimelineRepository {
    * @returns {Promise<Object|null>} Most recent timeline event
    */
   async findLatestByTripId(tripId) {
-    return prisma.tripTimeline.findFirst({
+    return this.prisma.tripTimeline.findFirst({
       where: { trip_id: tripId },
       orderBy: { created_at: 'desc' },
     });
@@ -84,7 +114,7 @@ class TripTimelineRepository {
    * @returns {Promise<Object>} Delete count
    */
   async deleteByTripId(tripId) {
-    return prisma.tripTimeline.deleteMany({
+    return this.prisma.tripTimeline.deleteMany({
       where: { trip_id: tripId },
     });
   }
@@ -115,7 +145,7 @@ class TripTimelineRepository {
       where.trip = { ...where.trip, vehicle_id: filters.vehicle_id };
     }
 
-    return prisma.tripTimeline.findMany({
+    return this.prisma.tripTimeline.findMany({
       where,
       include: {
         trip: {

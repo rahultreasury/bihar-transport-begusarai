@@ -177,6 +177,12 @@ enum TripStatus {
   DELIVERED
   COMPLETED
   CANCELLED
+  // ── Phase 4: operational lifecycle, APPENDED so every pre-existing enum
+  //    sort order for the values above is unchanged.
+  TO_LOADING_POINT // vehicle has left for the loading point
+  AT_LOADING_POINT // vehicle has arrived and is waiting
+  LOADED // loading has actually finished
+  DISPATCHED // vehicle has left the loading point
 }
 
 enum TripExpenseType {
@@ -219,6 +225,35 @@ enum TripPaymentCategory {
   OWNER_PAYMENT
   DRIVER_PAYMENT
 }
+
+// ============================================================
+// VEHICLE HIRE (PHASE 2) — COMMERCIAL TERMS
+// ============================================================
+// The operational Trip IS the vehicle-hire record. These three enums record
+// the COMMERCIAL TERMS of that hire. They are stored explicitly so the model is
+// never inferred from UI text, and they are deliberately separate from the
+// payment columns: a hire is a calculation, a payment is a cash movement.
+
+// Who the hire is billed to. Determines which party the gross hire is raised
+// against; it does NOT change the commission maths.
+
+// The commercial model this hire is booked on.
+//   COMMISSION — Bihar Transport intermediates the load and takes a commission
+//                on the gross hire (the default broker model).
+//   CONTRACT  — the hire rate itself is contracted with the vendor for this
+//                trip; the same gross/commission/net arithmetic still applies,
+//                but the model is recorded so reporting can separate the two.
+
+// The basis the gross hire was quoted on.
+// These values REUSE the rate catalogue the booking form already ships
+// (frontend/src/utils/bookingForm.js: RATE_AS_PER_OPTIONS) so the stored basis
+// and the basis the customer chose can never disagree. FIXED is that
+// catalogue's "quotes the whole trip" mode, i.e. a per-trip hire.
+//
+// TRANSPORT_COMMISSION and NET_FREIGHT are APPENDED (Phase 8) so the sort order
+// of every pre-existing value is unchanged. The full presentation of each basis
+// — which fields the page shows, and the arithmetic that produces the gross —
+// lives in config/vehicleHirePolicy.js, not here.
 
 // ============================================================
 // TRIP FINANCIAL ENUMS
@@ -308,7 +343,7 @@ enum LedgerTransactionType {
   cash
   online_transfer
   other_expense
-  partner_payable    // Amount Bihar Transport owes partner
+  partner_payable // Amount Bihar Transport owes partner
   partner_receivable // Amount partner owes Bihar Transport
   settlement_payment // Payment made to partner
   settlement_receipt // Payment received from partner
@@ -353,15 +388,15 @@ model User {
   created_at    DateTime? @default(now())
   updated_at    DateTime? @default(now())
 
-// Relations
-  drivers            Driver[]
-  bookings           Booking[]
+  // Relations
+  drivers             Driver[]
+  bookings            Booking[]
   partnerApplications PartnerApplication[]
-  trips              Trip[]
+  trips               Trip[]
   passwordResetTokens PasswordResetToken[]
-  otpVerifications   OtpVerification[]
+  otpVerifications    OtpVerification[]
   // Pre-booking enquiries raised by this customer (enquiry intake stage).
-  enquiries          Enquiry[]        @relation("enquiry_customer")
+  enquiries           Enquiry[]            @relation("enquiry_customer")
 
   @@index([email], name: "idx_users_email")
   @@index([phone], name: "idx_users_phone")
@@ -392,13 +427,13 @@ model PasswordResetToken {
 // Each OTP is single-use and invalidated after successful verification.
 model OtpVerification {
   id           Int       @id @default(autoincrement())
-  user_id      Int?                  // Linked to User when phone is found; nullable for pre-registration OTPs
-  phone        String                // Normalized 10-digit Indian mobile number
-  otp_hash     String                // SHA-256 hash of the OTP (never plaintext)
-  expires_at   DateTime              // OTP validity window (~5 minutes)
+  user_id      Int? // Linked to User when phone is found; nullable for pre-registration OTPs
+  phone        String // Normalized 10-digit Indian mobile number
+  otp_hash     String // SHA-256 hash of the OTP (never plaintext)
+  expires_at   DateTime // OTP validity window (~5 minutes)
   attempts     Int       @default(0) // Number of failed verification attempts
   max_attempts Int       @default(3) // Maximum allowed verification attempts before lockout
-  verified_at  DateTime?             // Timestamp when OTP was successfully verified (null = unused)
+  verified_at  DateTime? // Timestamp when OTP was successfully verified (null = unused)
   consumed     Boolean   @default(false) // Prevents OTP reuse after successful verification
   created_at   DateTime? @default(now())
   updated_at   DateTime? @default(now())
@@ -415,56 +450,56 @@ model OtpVerification {
 
 // --- Drivers ---
 model Driver {
-  driver_id         Int       @id @default(autoincrement())
-  driver_code       String?   @unique    // Auto-generated: DRV000001 (nullable for migration)
-  user_id           Int
-  driver_name       String
-  mobile            String
-  alternate_mobile  String?
-  address           String?
-  city              String?
-  state             String?   @default("Bihar")
-  pincode           String?
-  partner_id        Int?                  // Current partner assignment (nullable for unassigned drivers)
-  transport_owner_id Int?                  // OPTIONAL: Driver can exist without Transport Owner (Self-Owner path creates DRIVER_OWNER)
-  license_number    String?
-  license_expiry    String?
-  license_class     String?   // Vehicle type / license class (e.g. HTV, LMV)
-  joining_date      String?
-  status            String?   @default("available") // available, on_trip, inactive
-  profile_image     String?
-  is_available      Boolean?  @default(true)
-  is_verified       Boolean?  @default(false)
-  rating            Float?    @default(0)
-  total_deliveries  Int?      @default(0)
-  total_advance     Float?    @default(0)  // Total advance given
-  total_paid        Float?    @default(0)  // Total amount paid
-  total_expenses    Float?    @default(0)  // Total expenses
-  current_balance   Float?    @default(0)  // Running balance
-  performance_rating Float?   @default(0)  // Partner's performance rating
-  created_at        DateTime? @default(now())
-  updated_at        DateTime? @default(now())
+  driver_id          Int       @id @default(autoincrement())
+  driver_code        String?   @unique // Auto-generated: DRV000001 (nullable for migration)
+  user_id            Int
+  driver_name        String
+  mobile             String
+  alternate_mobile   String?
+  address            String?
+  city               String?
+  state              String?   @default("Bihar")
+  pincode            String?
+  partner_id         Int? // Current partner assignment (nullable for unassigned drivers)
+  transport_owner_id Int? // OPTIONAL: Driver can exist without Transport Owner (Self-Owner path creates DRIVER_OWNER)
+  license_number     String?
+  license_expiry     String?
+  license_class      String? // Vehicle type / license class (e.g. HTV, LMV)
+  joining_date       String?
+  status             String?   @default("available") // available, on_trip, inactive
+  profile_image      String?
+  is_available       Boolean?  @default(true)
+  is_verified        Boolean?  @default(false)
+  rating             Float?    @default(0)
+  total_deliveries   Int?      @default(0)
+  total_advance      Float?    @default(0) // Total advance given
+  total_paid         Float?    @default(0) // Total amount paid
+  total_expenses     Float?    @default(0) // Total expenses
+  current_balance    Float?    @default(0) // Running balance
+  performance_rating Float?    @default(0) // Partner's performance rating
+  created_at         DateTime? @default(now())
+  updated_at         DateTime? @default(now())
 
   // Relations
-  user                 User                @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
-  currentPartner       Partner?            @relation("current_partner_drivers", fields: [partner_id], references: [partner_id], onDelete: SetNull)
-  transportOwner       VehicleOwner?       @relation("transport_owner_drivers", fields: [transport_owner_id], references: [owner_id], onDelete: Restrict)
-  currentVehicle       TransportVehicle?   @relation("current_driver_vehicle", fields: [current_vehicle_id], references: [vehicle_id], onDelete: SetNull)
-  bookings             Booking[]
-  deliveries           Delivery[]
-  bookingAssignments   BookingAssignment[] @relation("assigned_driver")
-  transactions         DriverTransaction[]
-  timelineEvents       DriverTimeline[]
-  driverAssignments    DriverAssignment[]  @relation("assigned_driver_history")
-// Relations
-  reservations         Reservation[]
-  vehicleAssignments   VehicleAssignment[] @relation("assigned_driver")
-  trips                Trip[]
+  user               User                @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+  currentPartner     Partner?            @relation("current_partner_drivers", fields: [partner_id], references: [partner_id], onDelete: SetNull)
+  transportOwner     VehicleOwner?       @relation("transport_owner_drivers", fields: [transport_owner_id], references: [owner_id], onDelete: Restrict)
+  currentVehicle     TransportVehicle?   @relation("current_driver_vehicle", fields: [current_vehicle_id], references: [vehicle_id], onDelete: SetNull)
+  bookings           Booking[]
+  deliveries         Delivery[]
+  bookingAssignments BookingAssignment[] @relation("assigned_driver")
+  transactions       DriverTransaction[]
+  timelineEvents     DriverTimeline[]
+  driverAssignments  DriverAssignment[]  @relation("assigned_driver_history")
+  // Relations
+  reservations       Reservation[]
+  vehicleAssignments VehicleAssignment[] @relation("assigned_driver")
+  trips              Trip[]
   // Enquiries this driver is ASSIGNED to via admin assignment.
   // NOTE: driver.mobile is NEVER exposed through enquiry customer DTOs.
-  assignedEnquiries    Enquiry[]         @relation("enquiry_assigned_driver")
+  assignedEnquiries  Enquiry[]           @relation("enquiry_assigned_driver")
 
-  current_vehicle_id  Int?    @unique // Currently assigned vehicle (first-class entity)
+  current_vehicle_id Int? @unique // Currently assigned vehicle (first-class entity)
 
   @@index([driver_code], name: "idx_drivers_code")
   @@index([user_id], name: "idx_drivers_user")
@@ -484,16 +519,16 @@ model Driver {
 model DriverTransaction {
   transaction_id   Int       @id @default(autoincrement())
   driver_id        Int
-  transaction_type String    // advance, trip_payment, fuel_expense, toll_expense, other_expense, recovery
+  transaction_type String // advance, trip_payment, fuel_expense, toll_expense, other_expense, recovery
   amount           Float
   balance_before   Float
   balance_after    Float
   description      String?
-  reference_type   String?   // booking, vehicle, etc.
+  reference_type   String? // booking, vehicle, etc.
   reference_id     Int?
-  payment_mode     String?   // cash, bank, upi, etc.
+  payment_mode     String? // cash, bank, upi, etc.
   transaction_date DateTime? @default(now())
-  recorded_by      Int?      // admin_id
+  recorded_by      Int? // admin_id
   notes            String?
   created_at       DateTime? @default(now())
 
@@ -508,14 +543,14 @@ model DriverTransaction {
 
 // --- Driver Timeline / Activity Log ---
 model DriverTimeline {
-  event_id      Int       @id @default(autoincrement())
-  driver_id     Int
-  event_type    String    // driver_created, vehicle_assigned, trip_started, trip_completed, advance_given, fuel_added, payment_recorded, status_changed
-  description   String
-  reference_type String?  // booking, vehicle, transaction
-  reference_id  Int?
-  metadata      String?   // JSON payload for additional context
-  created_at    DateTime? @default(now())
+  event_id       Int       @id @default(autoincrement())
+  driver_id      Int
+  event_type     String // driver_created, vehicle_assigned, trip_started, trip_completed, advance_given, fuel_added, payment_recorded, status_changed
+  description    String
+  reference_type String? // booking, vehicle, transaction
+  reference_id   Int?
+  metadata       String? // JSON payload for additional context
+  created_at     DateTime? @default(now())
 
   // Relations
   driver Driver @relation(fields: [driver_id], references: [driver_id], onDelete: Cascade)
@@ -528,40 +563,40 @@ model DriverTimeline {
 
 // --- Vehicle Owners ---
 model VehicleOwner {
-  owner_id            Int           @id @default(autoincrement())
-  owner_code          String?       @unique    // Auto-generated: VOW000001 (nullable for migration)
-  owner_name          String
-  company_name        String?
-  email               String?
-  mobile              String
-  alternate_mobile    String?
-  city                String?
-  state               String?       @default("Bihar")
-  gst_number          String?
-  pan_number          String?
-  bank_account        String?
-  bank_ifsc           String?
-  bank_name           String?
-  upi_id              String?
-  address             String?
-  status              String?   @default("active") // active, inactive, suspended
-  owner_type          String?   @default("TRANSPORT_COMPANY") // TRANSPORT_COMPANY, INDIVIDUAL_OWNER, DRIVER_OWNER
-  notes               String?
-  is_active           Boolean?  @default(true)
-  created_at          DateTime?     @default(now())
-  updated_at          DateTime?     @default(now())
-  deleted_at          DateTime?     // Soft delete
-  partner_link        Int?      @unique  // FK to Partner.partner_id (nullable, 1:1)
+  owner_id         Int       @id @default(autoincrement())
+  owner_code       String?   @unique // Auto-generated: VOW000001 (nullable for migration)
+  owner_name       String
+  company_name     String?
+  email            String?
+  mobile           String
+  alternate_mobile String?
+  city             String?
+  state            String?   @default("Bihar")
+  gst_number       String?
+  pan_number       String?
+  bank_account     String?
+  bank_ifsc        String?
+  bank_name        String?
+  upi_id           String?
+  address          String?
+  status           String?   @default("active") // active, inactive, suspended
+  owner_type       String?   @default("TRANSPORT_COMPANY") // TRANSPORT_COMPANY, INDIVIDUAL_OWNER, DRIVER_OWNER
+  notes            String?
+  is_active        Boolean?  @default(true)
+  created_at       DateTime? @default(now())
+  updated_at       DateTime? @default(now())
+  deleted_at       DateTime? // Soft delete
+  partner_link     Int?      @unique // FK to Partner.partner_id (nullable, 1:1)
 
   // Relations
-  vehicles            TransportVehicle[] @relation("vehicle_owner")
-  drivers             Driver[]           @relation("transport_owner_drivers")
-  applications        PartnerApplication[] @relation("vehicle_owner_applications")
-// Relations
-  bookings            Booking[]
-  trips               Trip[]
-  linkedPartner       Partner?           @relation("vehicle_owner_link", fields: [partner_link], references: [partner_id], onDelete: SetNull)
-  assignedEnquiries   Enquiry[]          @relation("enquiry_assigned_owner")
+  vehicles          TransportVehicle[]   @relation("vehicle_owner")
+  drivers           Driver[]             @relation("transport_owner_drivers")
+  applications      PartnerApplication[] @relation("vehicle_owner_applications")
+  // Relations
+  bookings          Booking[]
+  trips             Trip[]
+  linkedPartner     Partner?             @relation("vehicle_owner_link", fields: [partner_link], references: [partner_id], onDelete: SetNull)
+  assignedEnquiries Enquiry[]            @relation("enquiry_assigned_owner")
 
   @@index([owner_code], name: "idx_vehicle_owner_code")
   @@index([mobile], name: "idx_vehicle_owner_mobile")
@@ -576,50 +611,65 @@ model VehicleOwner {
 
 // --- Transport Vehicles ---
 model TransportVehicle {
-  vehicle_id           Int           @id @default(autoincrement())
-  vehicle_code         String?       @unique    // Auto-generated: VEH000001 (nullable for migration)
-  driver_id            Int?
-  owner_id             Int?          // Vehicle owner (who owns this vehicle)
-  partner_id           Int?          // Network partner who sourced this vehicle (nullable)
-  vehicle_number       String        @unique
-  vehicle_type         String        // ENUM stored as TEXT in SQLite
-  vehicle_name         String?
-  capacity_kg          Float?
-  capacity_volume      Float?
-  body_type            String?       // Open body, closed body, container, etc.
-  vehicle_make         String?
-  vehicle_model        String?
-  manufacturing_year   Int?
-  registration_date    String?
-  insurance_number     String?
-  insurance_expiry     String?
-  permit_number        String?
-  permit_expiry        String?
+  vehicle_id            Int     @id @default(autoincrement())
+  vehicle_code          String? @unique // Auto-generated: VEH000001 (nullable for migration)
+  driver_id             Int?
+  owner_id              Int? // Vehicle owner (who owns this vehicle)
+  partner_id            Int? // Network partner who sourced this vehicle (nullable)
+  vehicle_number        String  @unique
+  vehicle_type          String // ENUM stored as TEXT in SQLite
+  vehicle_name          String?
+  capacity_kg           Float?
+  capacity_volume       Float?
+  body_type             String? // Open body, closed body, container, etc.
+  vehicle_make          String?
+  vehicle_model         String?
+  manufacturing_year    Int?
+  registration_date     String?
+  insurance_number      String?
+  insurance_expiry      String?
+  permit_number         String?
+  permit_expiry         String?
   pollution_certificate String?
-  pollution_expiry     String?
-  is_available         Boolean?      @default(true)
-  is_verified          Boolean?      @default(false)
-  current_status       String?       @default("available")
-  base_location        String?
-  hourly_rate          Float?
-  per_km_rate          Float?
-  created_at           DateTime?     @default(now())
-  updated_at           DateTime?     @default(now())
+  pollution_expiry      String?
 
-// Relations
-  driver              Driver?         @relation("current_driver_vehicle")
-  owner               VehicleOwner?   @relation("vehicle_owner", fields: [owner_id], references: [owner_id], onDelete: SetNull)
-  sourcePartner       Partner?        @relation("sourced_vehicles", fields: [partner_id], references: [partner_id], onDelete: SetNull)
-  bookings            Booking[]
-  deliveries          Delivery[]
-  bookingAssignments  BookingAssignment[]
-// Relations
-// Relations
-  reservations        Reservation[]
-  vehicleAssignments  VehicleAssignment[]
-  trips                Trip[]
-  assignedEnquiries    Enquiry[]     @relation("enquiry_assigned_vehicle")
-  requestedEnquiries   Enquiry[]     @relation("enquiry_requested_vehicle")
+  // ── Vehicle Hire (Phase 8): the documents the master did not previously
+  //    capture. Added by migration 20260930120000 as NULLABLE TEXT — the same
+  //    type the three expiry columns above already use, because a mixed
+  //    representation would mean two parsers for one concept. NULL means "not
+  //    recorded", which is the truth; nothing is backfilled.
+  //    READ-ONLY from the Vehicle Hire page: it reports these dates, it never
+  //    writes them.
+  tax_number             String? // road tax / cess receipt
+  tax_expiry             String?
+  fitness_number         String?
+  fitness_expiry         String?
+  national_permit_number String? // only held by vehicles that cross states
+  national_permit_expiry String?
+
+  is_available   Boolean?  @default(true)
+  is_verified    Boolean?  @default(false)
+  current_status String?   @default("available")
+  base_location  String?
+  hourly_rate    Float?
+  per_km_rate    Float?
+  created_at     DateTime? @default(now())
+  updated_at     DateTime? @default(now())
+
+  // Relations
+  driver             Driver?             @relation("current_driver_vehicle")
+  owner              VehicleOwner?       @relation("vehicle_owner", fields: [owner_id], references: [owner_id], onDelete: SetNull)
+  sourcePartner      Partner?            @relation("sourced_vehicles", fields: [partner_id], references: [partner_id], onDelete: SetNull)
+  bookings           Booking[]
+  deliveries         Delivery[]
+  bookingAssignments BookingAssignment[]
+  // Relations
+  // Relations
+  reservations       Reservation[]
+  vehicleAssignments VehicleAssignment[]
+  trips              Trip[]
+  assignedEnquiries  Enquiry[]           @relation("enquiry_assigned_vehicle")
+  requestedEnquiries Enquiry[]           @relation("enquiry_requested_vehicle")
 
   @@index([driver_id], name: "idx_vehicles_driver")
   @@index([owner_id], name: "idx_vehicles_owner")
@@ -632,33 +682,33 @@ model TransportVehicle {
 
 // --- Bookings ---
 model Booking {
-  booking_id            Int       @id @default(autoincrement())
-  booking_reference     String?   @unique // Legacy / backward-compat alias (nullable)
-  booking_number        String    @unique // CANONICAL booking number: BTB-YYYY-NNNNN
-  user_id               Int
-  driver_id             Int?
-  vehicle_id            Int?                  // Assigned transport vehicle (nullable)
-  partner_id            Int?                  // Network partner who sourced this booking (nullable)
-  vehicle_owner_id      Int?                  // Vehicle owner (nullable - for owned vehicles)
+  booking_id        Int     @id @default(autoincrement())
+  booking_reference String? @unique // Legacy / backward-compat alias (nullable)
+  booking_number    String  @unique // CANONICAL booking number: BTB-YYYY-NNNNN
+  user_id           Int
+  driver_id         Int?
+  vehicle_id        Int? // Assigned transport vehicle (nullable)
+  partner_id        Int? // Network partner who sourced this booking (nullable)
+  vehicle_owner_id  Int? // Vehicle owner (nullable - for owned vehicles)
 
   // Snapshot data (immutable - preserves historical accuracy)
-  partner_name_snapshot   String?             // Partner name at time of booking
-  driver_name_snapshot    String?             // Driver name at time of booking
-  truck_number_snapshot   String?             // Truck number at time of booking
-  mobile_snapshot         String?             // Contact mobile at time of booking
+  partner_name_snapshot String? // Partner name at time of booking
+  driver_name_snapshot  String? // Driver name at time of booking
+  truck_number_snapshot String? // Truck number at time of booking
+  mobile_snapshot       String? // Contact mobile at time of booking
 
   // Commission fields
-  commission_percentage Float?    @default(0) // Commission % for this booking
-  commission_amount     Float?    @default(0) // Calculated commission amount
-  commission_type       String?   @default("percentage") // "percentage" or "fixed"
+  commission_percentage Float?  @default(0) // Commission % for this booking
+  commission_amount     Float?  @default(0) // Calculated commission amount
+  commission_type       String? @default("percentage") // "percentage" or "fixed"
 
   // Settlement fields
-  settlement_status     String?   @default("pending") // pending, settled, locked
-  settlement_id         Int?                          // FK to settlement
+  settlement_status String? @default("pending") // pending, settled, locked
+  settlement_id     Int? // FK to settlement
 
   // Trip financial fields (driver/owner payout agreed at booking level)
-  driver_payout               Float?   // Agreed payout to driver/vehicle
-  owner_settlement_amount     Float?   // Agreed settlement amount for owner
+  driver_payout           Float? // Agreed payout to driver/vehicle
+  owner_settlement_amount Float? // Agreed settlement amount for owner
 
   pickup_location       String
   pickup_address        String?
@@ -682,8 +732,8 @@ model Booking {
   // goods_description is reused as the material/goods name.
   // number_of_items is reused as the quantity number.
   // goods_weight_kg is reused as the weight value.
-  quantity_unit         String?   // e.g. Bags, Boxes, PCS, Bundles, LOOSE
-  weight_unit           String?   // e.g. KG, Tons, Quintal, Metric Ton, FTL
+  quantity_unit         String? // e.g. Bags, Boxes, PCS, Bundles, LOOSE
+  weight_unit           String? // e.g. KG, Tons, Quintal, Metric Ton, FTL
   // Free-text handling/delivery notes typed by the customer on the booking form.
   // Nullable so existing booking rows are unaffected.
   special_instructions  String?
@@ -698,11 +748,11 @@ model Booking {
   // Who confirmed this booking: CUSTOMER (online accept) or ADMIN (offline /
   // phone/WhatsApp manual confirmation). Single source: quote_status is the
   // driver of confirmation; this field records the confirmation channel.
-  confirmation_source    String?  // "CUSTOMER" | "ADMIN"
+  confirmation_source   String? // "CUSTOMER" | "ADMIN"
   quote_remarks         String?
   quote_sent_at         DateTime?
   quote_accepted_at     DateTime?
-  quote_valid_until     DateTime?  // When the sent quote expires (backend-validated)
+  quote_valid_until     DateTime? // When the sent quote expires (backend-validated)
   quote_rejected_at     DateTime?
   created_at            DateTime? @default(now())
   updated_at            DateTime? @default(now())
@@ -710,34 +760,37 @@ model Booking {
   driver_assigned_at    DateTime?
   pickup_completed_at   DateTime?
   delivered_at          DateTime?
-// Relations
-  archived_at           DateTime?  // Soft-delete / archive timestamp
+  // Relations
+  archived_at           DateTime? // Soft-delete / archive timestamp
 
-// Relations
-user               User              @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
-// Reverse link to the pre-booking Enquiry that this Booking was created from.
-// Nullable so every pre-existing Booking row remains valid.
-enquiry            Enquiry?          @relation("enquiry_booking")
-driver             Driver?           @relation(fields: [driver_id], references: [driver_id], onDelete: SetNull)
-  vehicle            TransportVehicle? @relation(fields: [vehicle_id], references: [vehicle_id], onDelete: SetNull)
-  partner            Partner?          @relation(fields: [partner_id], references: [partner_id], onDelete: SetNull)
-  vehicleOwner       VehicleOwner?     @relation(fields: [vehicle_owner_id], references: [owner_id], onDelete: SetNull)
-  bookingSettlement  Settlement?       @relation(fields: [settlement_id], references: [settlement_id], onDelete: SetNull)
-  delivery           Delivery?
-  bookingEvents      BookingEvent[]
-  bookingAssignments BookingAssignment[]
-  reservations       Reservation[]
-  invoices           Invoice[]
-  ledgerEntries      PartnerLedger[] @relation("ledger_entries")
-  tripFinancial      TripFinancial?
-  tripAdvances       TripAdvance[]
-  tripSettlements    TripSettlement[]
-  commissionRecords  CommissionRecord[]
+  // Relations
+  user                  User                      @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+  // Reverse link to the pre-booking Enquiry that this Booking was created from.
+  // Nullable so every pre-existing Booking row remains valid.
+  enquiry               Enquiry?                  @relation("enquiry_booking")
+  invoices              Invoice[]
+  driver                Driver?                   @relation(fields: [driver_id], references: [driver_id], onDelete: SetNull)
+  vehicle               TransportVehicle?         @relation(fields: [vehicle_id], references: [vehicle_id], onDelete: SetNull)
+  partner               Partner?                  @relation(fields: [partner_id], references: [partner_id], onDelete: SetNull)
+  vehicleOwner          VehicleOwner?             @relation(fields: [vehicle_owner_id], references: [owner_id], onDelete: SetNull)
+  bookingSettlement     Settlement?               @relation(fields: [settlement_id], references: [settlement_id], onDelete: SetNull)
+  delivery              Delivery?
+  bookingEvents         BookingEvent[]
+  bookingAssignments    BookingAssignment[]
+  reservations          Reservation[]
+  ledgerEntries         PartnerLedger[]           @relation("ledger_entries")
+  tripFinancial         TripFinancial?
+  tripAdvances          TripAdvance[]
+  tripSettlements       TripSettlement[]
+  commissionRecords     CommissionRecord[]
   financialTransactions FinancialTransaction[]
-  trips              Trip[]
+  trips                 Trip[]
+  // Phase B — the confirmed commercial SNAPSHOT taken from the Enquiry's
+  // Quotation at the moment of order conversion. Read-only for operations; the
+  // Quotation remains the commercial source of truth before confirmation.
 
-// Indexes
-// Indexes
+  // Indexes
+  // Indexes
   @@index([user_id], name: "idx_bookings_user")
   @@index([driver_id], name: "idx_bookings_driver")
   @@index([vehicle_id], name: "idx_bookings_vehicle")
@@ -753,30 +806,30 @@ driver             Driver?           @relation(fields: [driver_id], references: 
 
 // --- Deliveries ---
 model Delivery {
-  delivery_id           Int       @id @default(autoincrement())
-  booking_id            Int       @unique
-  driver_id             Int?
-  vehicle_id            Int?
-  current_status        String?   @default("booking_confirmed")
-  status_description    String?
-  current_latitude      Float?
-  current_longitude     Float?
-  last_location_update  DateTime?
-  estimated_pickup_time DateTime?
-  actual_pickup_time    DateTime?
+  delivery_id             Int       @id @default(autoincrement())
+  booking_id              Int       @unique
+  driver_id               Int?
+  vehicle_id              Int?
+  current_status          String?   @default("booking_confirmed")
+  status_description      String?
+  current_latitude        Float?
+  current_longitude       Float?
+  last_location_update    DateTime?
+  estimated_pickup_time   DateTime?
+  actual_pickup_time      DateTime?
   estimated_delivery_time DateTime?
-  actual_delivery_time  DateTime?
-  delivery_otp          String?
-  otp_verified          Boolean?  @default(false)
-  delivery_proof_image  String?
-  delivery_notes        String?
-  recipient_name        String?
-  created_at            DateTime? @default(now())
-  updated_at            DateTime? @default(now())
+  actual_delivery_time    DateTime?
+  delivery_otp            String?
+  otp_verified            Boolean?  @default(false)
+  delivery_proof_image    String?
+  delivery_notes          String?
+  recipient_name          String?
+  created_at              DateTime? @default(now())
+  updated_at              DateTime? @default(now())
 
   // Relations
-  booking Booking?       @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
-  driver  Driver?        @relation(fields: [driver_id], references: [driver_id], onDelete: SetNull)
+  booking Booking?          @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
+  driver  Driver?           @relation(fields: [driver_id], references: [driver_id], onDelete: SetNull)
   vehicle TransportVehicle? @relation(fields: [vehicle_id], references: [vehicle_id], onDelete: SetNull)
 
   @@index([booking_id], name: "idx_deliveries_booking")
@@ -799,9 +852,12 @@ model Admin {
   created_at    DateTime? @default(now())
   updated_at    DateTime? @default(now())
 
-// Relations
+  // Relations
   bookingAssignments BookingAssignment[] @relation("assigned_by_admin")
-  enquiryQuotes      Enquiry[]          @relation("enquiry_quoted_by")
+  enquiryQuotes      Enquiry[]           @relation("enquiry_quoted_by")
+  // Phase B — Quotation. QuotedBy / SentBy / UpdatedBy are DISTINCT relations
+  // so it is always visible WHO last changed the money, not merely who first
+  // created it.
 
   @@map("admins")
 }
@@ -834,10 +890,10 @@ model BookingAssignment {
   created_at            DateTime? @default(now())
 
   // Relations
-  booking       Booking?          @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
-  assignedDriver Driver?          @relation("assigned_driver", fields: [assigned_driver_id], references: [driver_id], onDelete: SetNull)
+  booking         Booking?          @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
+  assignedDriver  Driver?           @relation("assigned_driver", fields: [assigned_driver_id], references: [driver_id], onDelete: SetNull)
   assignedVehicle TransportVehicle? @relation(fields: [assigned_vehicle_id], references: [vehicle_id], onDelete: SetNull)
-  assignedByAdmin Admin?          @relation("assigned_by_admin", fields: [assigned_by_admin_id], references: [admin_id], onDelete: SetNull)
+  assignedByAdmin Admin?            @relation("assigned_by_admin", fields: [assigned_by_admin_id], references: [admin_id], onDelete: SetNull)
 
   @@index([booking_id], name: "idx_booking_assignments_booking_id")
   @@index([assigned_driver_id], name: "idx_booking_assignments_driver_id")
@@ -852,50 +908,50 @@ model BookingAssignment {
 
 // --- Transport Partners (Network Partners) ---
 model Partner {
-  partner_id        Int          @id @default(autoincrement())
-  partner_code      String?      @unique    // Auto-generated: PRT000001 (nullable for migration)
-  partner_name      String
-  owner_name        String
-  company_name      String?
-  email             String?
-  mobile            String
-  alternate_mobile  String?
-  city              String?
-  state             String?       @default("Bihar")
-  gst_number        String?
-  pan_number        String?
-  bank_account      String?
-  bank_ifsc         String?
-  bank_name         String?
-  upi_id            String?
-  address           String?
-  status            PartnerStatus @default(active)
-  notes             String?
+  partner_id            Int           @id @default(autoincrement())
+  partner_code          String?       @unique // Auto-generated: PRT000001 (nullable for migration)
+  partner_name          String
+  owner_name            String
+  company_name          String?
+  email                 String?
+  mobile                String
+  alternate_mobile      String?
+  city                  String?
+  state                 String?       @default("Bihar")
+  gst_number            String?
+  pan_number            String?
+  bank_account          String?
+  bank_ifsc             String?
+  bank_name             String?
+  upi_id                String?
+  address               String?
+  status                PartnerStatus @default(active)
+  notes                 String?
   // Network/capacity information
-  available_capacity String?     // Description of available transport capacity
-  network_locations  String?     // JSON: cities/routes this partner can service
-  commission_percentage Float?   @default(10) // Default 10% commission
-  commission_type   String?      @default("percentage") // "percentage" or "fixed"
-  fixed_commission  Float?       @default(0) // Fixed commission amount if type is "fixed"
-  is_active         Boolean?     @default(true)
-  created_at        DateTime?    @default(now())
-  updated_at        DateTime?    @default(now())
-  deleted_at        DateTime?    // Soft delete
-  partner_capability String?     @default("PARTNER_ONLY") // PARTNER_ONLY, TRANSPORT_OPERATOR, BOTH
+  available_capacity    String? // Description of available transport capacity
+  network_locations     String? // JSON: cities/routes this partner can service
+  commission_percentage Float?        @default(10) // Default 10% commission
+  commission_type       String?       @default("percentage") // "percentage" or "fixed"
+  fixed_commission      Float?        @default(0) // Fixed commission amount if type is "fixed"
+  is_active             Boolean?      @default(true)
+  created_at            DateTime?     @default(now())
+  updated_at            DateTime?     @default(now())
+  deleted_at            DateTime? // Soft delete
+  partner_capability    String?       @default("PARTNER_ONLY") // PARTNER_ONLY, TRANSPORT_OPERATOR, BOTH
 
   // Relations
-  sourcedVehicles   TransportVehicle[] @relation("sourced_vehicles")
-  drivers           Driver[]            @relation("current_partner_drivers")
-  bookings          Booking[]
-  ledgerEntries     PartnerLedger[]
-  payments          PartnerPayment[]
-  settlements       Settlement[]
-  documents         PartnerDocument[]
-// Relations
-  driverAssignments DriverAssignment[]  @relation("partner_assignments")
-  applications      PartnerApplication[]
-  linkedVehicleOwner VehicleOwner?      @relation("vehicle_owner_link")
-  assignedEnquiries Enquiry[]          @relation("enquiry_assigned_partner")
+  sourcedVehicles    TransportVehicle[]   @relation("sourced_vehicles")
+  drivers            Driver[]             @relation("current_partner_drivers")
+  bookings           Booking[]
+  ledgerEntries      PartnerLedger[]
+  payments           PartnerPayment[]
+  settlements        Settlement[]
+  documents          PartnerDocument[]
+  // Relations
+  driverAssignments  DriverAssignment[]   @relation("partner_assignments")
+  applications       PartnerApplication[]
+  linkedVehicleOwner VehicleOwner?        @relation("vehicle_owner_link")
+  assignedEnquiries  Enquiry[]            @relation("enquiry_assigned_partner")
 
   @@index([partner_code], name: "idx_partner_code")
   @@index([mobile], name: "idx_partner_mobile")
@@ -909,15 +965,15 @@ model Partner {
 
 // --- Partner Driver Assignments (history) ---
 model DriverAssignment {
-  assignment_id     Int       @id @default(autoincrement())
-  driver_id         Int
-  partner_id        Int
-  assigned_by       Int?      // Admin ID who assigned
-  assigned_at       DateTime? @default(now())
-  unassigned_at     DateTime? // When driver was removed from this partner
-  status            String?   @default("active") // active, inactive
-  notes             String?
-  created_at        DateTime? @default(now())
+  assignment_id Int       @id @default(autoincrement())
+  driver_id     Int
+  partner_id    Int
+  assigned_by   Int? // Admin ID who assigned
+  assigned_at   DateTime? @default(now())
+  unassigned_at DateTime? // When driver was removed from this partner
+  status        String?   @default("active") // active, inactive
+  notes         String?
+  created_at    DateTime? @default(now())
 
   // Relations
   driver  Driver  @relation("assigned_driver_history", fields: [driver_id], references: [driver_id], onDelete: Cascade)
@@ -931,15 +987,15 @@ model DriverAssignment {
 
 // --- Vehicle Driver Assignments (history) ---
 model VehicleAssignment {
-  assignment_id     Int       @id @default(autoincrement())
-  vehicle_id        Int
-  driver_id         Int
-  assigned_by       Int?      // Admin ID who assigned
-  assigned_at       DateTime? @default(now())
-  unassigned_at     DateTime? // When driver was unassigned from this vehicle
-  status            String?   @default("active") // active, inactive
-  notes             String?
-  created_at        DateTime? @default(now())
+  assignment_id Int       @id @default(autoincrement())
+  vehicle_id    Int
+  driver_id     Int
+  assigned_by   Int? // Admin ID who assigned
+  assigned_at   DateTime? @default(now())
+  unassigned_at DateTime? // When driver was unassigned from this vehicle
+  status        String?   @default("active") // active, inactive
+  notes         String?
+  created_at    DateTime? @default(now())
 
   // Relations
   vehicle TransportVehicle @relation(fields: [vehicle_id], references: [vehicle_id], onDelete: Cascade)
@@ -953,26 +1009,26 @@ model VehicleAssignment {
 
 // --- Partner Ledger (immutable accounting) ---
 model PartnerLedger {
-  ledger_id         Int                  @id @default(autoincrement())
-  partner_id        Int
-  booking_id        Int?                 // Optional link to booking
-  transaction_id    String               @unique // Auto-generated: LED-YYYYMMDD-XXXXX
-  transaction_type  LedgerTransactionType
-  date              DateTime?            @default(now())
-  description       String?
-  debit             Float?               @default(0)
-  credit            Float?               @default(0)
-  running_balance   Float                @default(0) // Calculated running balance
-  payment_mode      String?              // cash, bank, upi, cheque
-  remarks           String?
-  reference_number  String?              // Cheque number, transaction ref, etc.
-  created_by        Int?                 // Admin ID who created this entry
-  is_reversal       Boolean?             @default(false) // True if this is a reversal entry
-  reversal_of       String?              // transaction_id of the original entry being reversed
-  created_at        DateTime?             @default(now())
+  ledger_id        Int                   @id @default(autoincrement())
+  partner_id       Int
+  booking_id       Int? // Optional link to booking
+  transaction_id   String                @unique // Auto-generated: LED-YYYYMMDD-XXXXX
+  transaction_type LedgerTransactionType
+  date             DateTime?             @default(now())
+  description      String?
+  debit            Float?                @default(0)
+  credit           Float?                @default(0)
+  running_balance  Float                 @default(0) // Calculated running balance
+  payment_mode     String? // cash, bank, upi, cheque
+  remarks          String?
+  reference_number String? // Cheque number, transaction ref, etc.
+  created_by       Int? // Admin ID who created this entry
+  is_reversal      Boolean?              @default(false) // True if this is a reversal entry
+  reversal_of      String? // transaction_id of the original entry being reversed
+  created_at       DateTime?             @default(now())
 
-// Relations
-  partner Partner @relation(fields: [partner_id], references: [partner_id], onDelete: Cascade)
+  // Relations
+  partner Partner  @relation(fields: [partner_id], references: [partner_id], onDelete: Cascade)
   booking Booking? @relation("ledger_entries", fields: [booking_id], references: [booking_id], onDelete: SetNull)
 
   @@index([partner_id], name: "idx_ledger_partner")
@@ -986,22 +1042,22 @@ model PartnerLedger {
 
 // --- Partner Payments ---
 model PartnerPayment {
-  payment_id        Int       @id @default(autoincrement())
-  payment_number    String    @unique    // Auto-generated: PAY-YYYYMMDD-XXXXX
-  partner_id        Int
-  amount            Float
-  payment_method    String    // cash, bank_transfer, upi, cheque
-  reference_number  String?   // Transaction ref, cheque number, UPI ref
-  date              DateTime? @default(now())
-  created_by        Int?      // Admin ID
-  status            String?   @default("pending") // pending, paid, partially_paid, cancelled
-  remarks           String?
-  settlement_id     Int?      // Optional link to settlement
-  created_at        DateTime? @default(now())
-  updated_at        DateTime? @default(now())
+  payment_id       Int       @id @default(autoincrement())
+  payment_number   String    @unique // Auto-generated: PAY-YYYYMMDD-XXXXX
+  partner_id       Int
+  amount           Float
+  payment_method   String // cash, bank_transfer, upi, cheque
+  reference_number String? // Transaction ref, cheque number, UPI ref
+  date             DateTime? @default(now())
+  created_by       Int? // Admin ID
+  status           String?   @default("pending") // pending, paid, partially_paid, cancelled
+  remarks          String?
+  settlement_id    Int? // Optional link to settlement
+  created_at       DateTime? @default(now())
+  updated_at       DateTime? @default(now())
 
   // Relations
-  partner    Partner    @relation(fields: [partner_id], references: [partner_id], onDelete: Cascade)
+  partner    Partner     @relation(fields: [partner_id], references: [partner_id], onDelete: Cascade)
   settlement Settlement? @relation(fields: [settlement_id], references: [settlement_id], onDelete: SetNull)
 
   @@index([partner_id], name: "idx_payment_partner")
@@ -1016,8 +1072,8 @@ model Settlement {
   settlement_id     Int              @id @default(autoincrement())
   settlement_number String           @unique // Auto-generated: STL-YYYYMM-XXXXX
   partner_id        Int
-  month             Int              // 1-12
-  year              Int              // e.g. 2026
+  month             Int // 1-12
+  year              Int // e.g. 2026
   total_bookings    Int?             @default(0)
   gross_revenue     Float?           @default(0)
   commission        Float?           @default(0)
@@ -1032,10 +1088,10 @@ model Settlement {
   amount_paid       Float?           @default(0)
   balance_due       Float?           @default(0)
   status            SettlementStatus @default(pending)
-  locked_at         DateTime?        // When settlement was locked
-  settled_at        DateTime?        // When fully settled
+  locked_at         DateTime? // When settlement was locked
+  settled_at        DateTime? // When fully settled
   notes             String?
-  pdf_url           String?          // Path to generated PDF
+  pdf_url           String? // Path to generated PDF
   created_at        DateTime?        @default(now())
   updated_at        DateTime?        @default(now())
 
@@ -1053,19 +1109,19 @@ model Settlement {
 
 // --- Partner Documents ---
 model PartnerDocument {
-  document_id   Int                  @id @default(autoincrement())
+  document_id   Int                 @id @default(autoincrement())
   partner_id    Int
   document_type PartnerDocumentType
   document_name String
   file_url      String
-  file_size     Int?                 // Size in bytes
+  file_size     Int? // Size in bytes
   mime_type     String?
-  expiry_date   DateTime?            // For insurance, RC, etc.
-  is_verified   Boolean?             @default(false)
+  expiry_date   DateTime? // For insurance, RC, etc.
+  is_verified   Boolean?            @default(false)
   notes         String?
-  uploaded_by   Int?                 // Admin ID
-  created_at    DateTime?            @default(now())
-  updated_at    DateTime?            @default(now())
+  uploaded_by   Int? // Admin ID
+  created_at    DateTime?           @default(now())
+  updated_at    DateTime?           @default(now())
 
   // Relations
   partner Partner @relation(fields: [partner_id], references: [partner_id], onDelete: Cascade)
@@ -1073,56 +1129,56 @@ model PartnerDocument {
   @@index([partner_id], name: "idx_doc_partner")
   @@index([document_type], name: "idx_doc_type")
   @@index([expiry_date], name: "idx_doc_expiry")
-@@map("partner_documents")
+  @@map("partner_documents")
 }
 
 // --- Partner Applications (public registration → admin review) ---
 model PartnerApplication {
-  application_id    Int       @id @default(autoincrement())
-  application_code  String?   @unique // Auto-generated: PPA-YYYY-NNNNN (nullable for migration)
+  application_id   Int     @id @default(autoincrement())
+  application_code String? @unique // Auto-generated: PPA-YYYY-NNNNN (nullable for migration)
 
   // Applicant details
-  first_name        String
-  last_name         String
-  email             String
-  phone             String
-  password_hash      String    // Hashed password for when approved
+  first_name    String
+  last_name     String
+  email         String
+  phone         String
+  password_hash String // Hashed password for when approved
 
   // Business details
-  partnership_type  String    // "vehicle_owner" or "transport_owner"
-  company_name      String?
-  gst_number        String?
-  pan_number        String?
-  city              String?
-  state             String?   @default("Bihar")
+  partnership_type String // "vehicle_owner" or "transport_owner"
+  company_name     String?
+  gst_number       String?
+  pan_number       String?
+  city             String?
+  state            String? @default("Bihar")
 
   // Additional fields
-  address           String?
-  vehicle_number    String?   // For vehicle owner
-  vehicle_type      String?   // For vehicle owner
-  number_of_vehicles Int?     // For transport owner
-  available_capacity String?  // For transport owner
-  network_locations  String?  // For transport owner
+  address            String?
+  vehicle_number     String? // For vehicle owner
+  vehicle_type       String? // For vehicle owner
+  number_of_vehicles Int? // For transport owner
+  available_capacity String? // For transport owner
+  network_locations  String? // For transport owner
 
   // Review
-  status            String    @default("pending") // pending, approved, rejected
-  reviewed_by       Int?      // Admin ID
-  reviewed_at       DateTime?
-  rejection_reason  String?
-  admin_notes       String?
+  status           String    @default("pending") // pending, approved, rejected
+  reviewed_by      Int? // Admin ID
+  reviewed_at      DateTime?
+  rejection_reason String?
+  admin_notes      String?
 
   // Linked records (set on approval)
-  partner_id        Int?      // FK to Partner (set when approved for transport_owner)
-  vehicle_owner_id  Int?      // FK to VehicleOwner (set when approved for vehicle_owner)
-  user_id           Int?      // FK to User (set when approved)
+  partner_id       Int? // FK to Partner (set when approved for transport_owner)
+  vehicle_owner_id Int? // FK to VehicleOwner (set when approved for vehicle_owner)
+  user_id          Int? // FK to User (set when approved)
 
   // Relations
-  partner          Partner?        @relation(fields: [partner_id], references: [partner_id], onDelete: SetNull)
-  vehicleOwner     VehicleOwner?   @relation("vehicle_owner_applications", fields: [vehicle_owner_id], references: [owner_id], onDelete: SetNull)
-  user             User?           @relation(fields: [user_id], references: [user_id], onDelete: SetNull)
+  partner      Partner?      @relation(fields: [partner_id], references: [partner_id], onDelete: SetNull)
+  vehicleOwner VehicleOwner? @relation("vehicle_owner_applications", fields: [vehicle_owner_id], references: [owner_id], onDelete: SetNull)
+  user         User?         @relation(fields: [user_id], references: [user_id], onDelete: SetNull)
 
-  created_at        DateTime? @default(now())
-  updated_at        DateTime? @default(now())
+  created_at DateTime? @default(now())
+  updated_at DateTime? @default(now())
 
   @@index([phone], name: "idx_app_phone")
   @@index([email], name: "idx_app_email")
@@ -1139,22 +1195,22 @@ model PartnerApplication {
 // Single source of truth for reserved driver/vehicle during the quote
 // workflow. Booking only holds business state (status, quote_status, price).
 model Reservation {
-  reservation_id   Int               @id @default(autoincrement())
-  booking_id       Int
-  driver_id        Int?
-  vehicle_id       Int?
-  status           ReservationStatus @default(ACTIVE)
-  expires_at       DateTime?         // When the reservation expires
-  released_at      DateTime?
-  converted_at     DateTime?
-  reserved_by      Int?              // Admin ID who reserved
-  created_at       DateTime?         @default(now())
-  updated_at       DateTime?         @default(now())
+  reservation_id Int               @id @default(autoincrement())
+  booking_id     Int
+  driver_id      Int?
+  vehicle_id     Int?
+  status         ReservationStatus @default(ACTIVE)
+  expires_at     DateTime? // When the reservation expires
+  released_at    DateTime?
+  converted_at   DateTime?
+  reserved_by    Int? // Admin ID who reserved
+  created_at     DateTime?         @default(now())
+  updated_at     DateTime?         @default(now())
 
   // Relations
-  booking  Booking?          @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
-  driver   Driver?           @relation(fields: [driver_id], references: [driver_id], onDelete: SetNull)
-  vehicle  TransportVehicle? @relation(fields: [vehicle_id], references: [vehicle_id], onDelete: SetNull)
+  booking Booking?          @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
+  driver  Driver?           @relation(fields: [driver_id], references: [driver_id], onDelete: SetNull)
+  vehicle TransportVehicle? @relation(fields: [vehicle_id], references: [vehicle_id], onDelete: SetNull)
 
   @@index([booking_id], name: "idx_reservations_booking")
   @@index([driver_id], name: "idx_reservations_driver")
@@ -1164,34 +1220,91 @@ model Reservation {
   @@map("reservations")
 }
 
-// --- Invoices (generated on delivery completion, NOT quote accept) ---
-// Module is ready for the future billing workflow. Not auto-generated on
-// quote acceptance.
+// --- Invoices (the customer billing document) ---
+//
+// PHASE 7 NOTE — the comment that used to live here ("generated on delivery
+// completion, NOT quote accept") was STALE: BookingService.acceptQuote() has
+// always written the invoice at quote acceptance, and Phase 7 closes the gap
+// that the LIVE Enquiry path (Enquiry → Quote → Customer Acceptance →
+// Booking) created NO invoice at all. The invoice is raised by
+// BookingService.createBooking() inside the same transaction that confirms
+// the booking, so every entry point is covered by one rule.
+//
+// `booking_id` is UNIQUE (Phase 7). One booking = one bill. Previously the
+// column was only non-uniquely indexed, so the database itself permitted a
+// second invoice for the same booking — a double bill — while two separate
+// code paths could both write one. See migration
+// 20260929170000_phase7_customer_billing_integrity.
+//
+// The tax columns (tax_amount / grand_total) are EXISTING repository
+// columns. Phase 7 does NOT populate them and does NOT add tax logic: the
+// client's GST treatment is still "CLIENT CLARIFICATION REQUIRED"
+// (docs/PHASE2C_BUSINESS_RULES.md:408-418). Inventing a tax percentage
+// here is exactly the kind of unspecified business rule Phase 7 must not
+// create. `final_price` is the authoritative invoiced amount.
 model Invoice {
-  invoice_id      Int           @id @default(autoincrement())
-  invoice_number  String        @unique
-  booking_id      Int
-  final_price     Float
-  status          InvoiceStatus @default(PENDING)
-  goods_amount    Float?
-  vehicle_charge  Float?
-  extra_charges   Float?        @default(0)
-  discount        Float?        @default(0)
-  total_amount    Float?
-  tax_amount      Float?        @default(0)
-  grand_total     Float?
-  issued_at       DateTime?
-  due_at          DateTime?
-  paid_at         DateTime?
-  notes           String?
-  created_at      DateTime?     @default(now())
-  updated_at      DateTime?     @default(now())
+  invoice_id     Int           @id @default(autoincrement())
+  invoice_number String        @unique
+  // PHASE 9: nullable. An invoice used to be strictly booking-scoped, so a
+  // DIRECT / OFFLINE_CLIENT trip (which has no Booking by design — see
+  // migration 20260909120000) could never be billed. The booking column is
+  // kept, and `invoices_booking_id_key` still enforces one bill per booking;
+  // PostgreSQL permits repeated NULLs in a unique index, so relaxing NOT NULL
+  // does not weaken that guarantee for any existing booking.
+  booking_id     Int?
+  // The consignment this bill belongs to. Set for every Phase 9 dispatch
+  // invoice, booking-backed or standalone.
+  //
+  // A PARTIAL unique index exists in the database (migration
+  // 20261004120000_phase9_dispatch_workspace):
+  //   invoices_one_dispatch_invoice_per_trip ON (trip_id)
+  //     WHERE trip_id IS NOT NULL AND document_kind = 'INTERNAL_CUSTOMER_INVOICE'
+  // It is deliberately NOT declared here: Prisma's schema language cannot
+  // express a partial index, and declaring a plain `@@unique([trip_id])` would
+  // create a DIFFERENT and stricter index on the next refresh. Documented so
+  // it is not lost.
+  final_price    Float
+  status         InvoiceStatus @default(PENDING)
+  goods_amount   Float?
+  vehicle_charge Float?
+  extra_charges  Float?        @default(0)
+  discount       Float?        @default(0)
+  total_amount   Float?
+  tax_amount     Float?        @default(0)
+  grand_total    Float?
+  issued_at      DateTime?
+  due_at         DateTime?
+  paid_at        DateTime?
+  notes          String?
+  created_at     DateTime?     @default(now())
+  updated_at     DateTime?     @default(now())
+
+  // ── Phase 9: the customer's billing identity and the tax breakdown ─────
+  // These are COPIES of the commercial decision already taken on the
+  // Quotation (gst_type / gst_percentage) and the charge lines on
+  // QuotationCharge. Nothing here is a second calculation: the amounts are
+  // read from the quotation at the moment the invoice is raised and frozen on
+  // the document, which is exactly what an invoice is.
+
+
+  // Payment lifecycle. DELIBERATELY SEPARATE FROM `status`, which is the
+  // document lifecycle. A dispatched trip is NOT a paid trip and never
+  // becomes one because a truck left a loading point.
+
+  // ── HONESTY: this is an INTERNAL customer invoice, not a government
+  //    e-invoice. `document_kind` says so on the record, the PDF prints it,
+  //    and `irn` / `gov_ack_json` stay NULL until a real GST e-invoice API is
+  //    integrated. Nothing in this codebase may populate them without one.
+
+  // When the PDF was last rendered from this row.
 
   // Relations
-  booking Booking @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
+  booking  Booking?               @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
 
+  // Phase 7: replaces the old non-unique idx_invoices_booking. A booking
+  // bills at most once, so the uniqueness IS the only lookup that matters.
+  @@unique([booking_id], name: "invoices_booking_id_key")
   @@index([invoice_number], name: "idx_invoices_number")
-  @@index([booking_id], name: "idx_invoices_booking")
   @@index([status], name: "idx_invoices_status")
   @@map("invoices")
 }
@@ -1204,49 +1317,48 @@ model Invoice {
 // Per-trip financial snapshot. This is the single source of truth
 // for one trip's complete financial picture.
 model TripFinancial {
-  trip_financial_id     Int              @id @default(autoincrement())
-  booking_id            Int?             @unique    // Nullable: standalone trips have no booking
-  trip_id               Int?             // Direct trip link for standalone trips (Phase 3)
-  status                TripFinancialStatus @default(DRAFT)
+  trip_financial_id Int                 @id @default(autoincrement())
+  booking_id        Int?                @unique // Nullable: standalone trips have no booking
+  trip_id           Int? // Direct trip link for standalone trips (Phase 3)
+  status            TripFinancialStatus @default(DRAFT)
 
   // Customer revenue
-  customer_fare         Float            // Total amount customer paid
+  customer_fare Float // Total amount customer paid
 
   // Driver/vehicle costs
-  driver_payout         Float?           // Agreed payout to driver/vehicle
-  total_advance         Float?           @default(0) // Sum of all driver advances
-  total_fuel_advance    Float?           @default(0) // Sum of all fuel advances
-  remaining_driver_settlement Float?     @default(0) // driver_payout - total_advance - total_fuel_advance
+  driver_payout               Float? // Agreed payout to driver/vehicle
+  total_advance               Float? @default(0) // Sum of all driver advances
+  total_fuel_advance          Float? @default(0) // Sum of all fuel advances
+  remaining_driver_settlement Float? @default(0) // driver_payout - total_advance - total_fuel_advance
 
   // Owner settlement
-  owner_settlement_amount Float?         // Agreed owner settlement
-  total_owner_advance   Float?           @default(0) // Sum of all owner advances
-  remaining_owner_settlement Float?      @default(0) // owner_settlement - total_owner_advance
+  owner_settlement_amount    Float? // Agreed owner settlement
+  total_owner_advance        Float? @default(0) // Sum of all owner advances
+  remaining_owner_settlement Float? @default(0) // owner_settlement - total_owner_advance
 
   // Commission
-  commission_rate       Float?           @default(5) // Configurable commission rate
-  commission_amount     Float?           @default(0) // Calculated commission
+  commission_rate   Float? @default(5) // Configurable commission rate
+  commission_amount Float? @default(0) // Calculated commission
 
   // BT Margin (ADMIN ONLY - confidential)
-  bt_margin             Float?           @default(0) // customer_fare - driver_payout - commission
+  bt_margin Float? @default(0) // customer_fare - driver_payout - commission
 
   // Metadata
-  calculated_at         DateTime?
-  calculated_by         Int?             // Admin ID who calculated
-  notes                 String?
-  created_at            DateTime?        @default(now())
-  updated_at            DateTime?        @default(now())
+  calculated_at DateTime?
+  calculated_by Int? // Admin ID who calculated
+  notes         String?
+  created_at    DateTime? @default(now())
+  updated_at    DateTime? @default(now())
 
   // Relations
-  booking       Booking?             @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
-  trip          Trip?                @relation(fields: [trip_id], references: [trip_id], onDelete: Cascade)
-  advances      TripAdvance[]
-  settlements   TripSettlement[]
-  commissions   CommissionRecord[]
-  transactions  FinancialTransaction[]
+  booking      Booking?               @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
+  trip         Trip?                  @relation(fields: [trip_id], references: [trip_id], onDelete: Cascade)
+  advances     TripAdvance[]
+  settlements  TripSettlement[]
+  commissions  CommissionRecord[]
+  transactions FinancialTransaction[]
 
   @@index([booking_id], name: "idx_trip_financial_booking")
-  @@index([trip_id], name: "idx_trip_financial_trip")
   @@index([status], name: "idx_trip_financial_status")
   @@map("trip_financials")
 }
@@ -1255,23 +1367,23 @@ model TripFinancial {
 // Individual advance records for a trip. Never overwrite previous advances.
 // Supports both booking-linked advances (legacy) and direct trip advances (Phase 1).
 model TripAdvance {
-  advance_id            Int       @id @default(autoincrement())
-  trip_financial_id     Int?
-  booking_id            Int?
-  trip_id               Int?      // Direct trip link for standalone trips (Phase 1)
-  driver_id             Int?
-  vehicle_id            Int?
-  transport_owner_id    Int?
-  amount                Float
-  advance_type          AdvanceType
-  payment_method        String    // cash, bank, upi, etc.
-  reference_number      String?
-  given_by              Int?      // Admin ID who gave the advance
-  given_at              DateTime? @default(now())
-  notes                 String?
-  status                String?   @default("pending") // pending, approved, paid, cancelled
-  created_at            DateTime? @default(now())
-  updated_at            DateTime? @default(now())
+  advance_id         Int         @id @default(autoincrement())
+  trip_financial_id  Int?
+  booking_id         Int?
+  trip_id            Int? // Direct trip link for standalone trips (Phase 1)
+  driver_id          Int?
+  vehicle_id         Int?
+  transport_owner_id Int?
+  amount             Float
+  advance_type       AdvanceType
+  payment_method     String // cash, bank, upi, etc.
+  reference_number   String?
+  given_by           Int? // Admin ID who gave the advance
+  given_at           DateTime?   @default(now())
+  notes              String?
+  status             String?     @default("pending") // pending, approved, paid, cancelled
+  created_at         DateTime?   @default(now())
+  updated_at         DateTime?   @default(now())
 
   // Relations
   tripFinancial TripFinancial? @relation(fields: [trip_financial_id], references: [trip_financial_id], onDelete: Cascade)
@@ -1280,7 +1392,6 @@ model TripAdvance {
 
   @@index([trip_financial_id], name: "idx_trip_advance_financial")
   @@index([booking_id], name: "idx_trip_advance_booking")
-  @@index([trip_id], name: "idx_trip_advance_trip")
   @@index([driver_id], name: "idx_trip_advance_driver")
   @@index([transport_owner_id], name: "idx_trip_advance_owner")
   @@map("trip_advances")
@@ -1289,56 +1400,55 @@ model TripAdvance {
 // --- Trip Settlement ---
 // Per-trip settlement records for driver and owner.
 model TripSettlement {
-  settlement_id             Int       @id @default(autoincrement())
-  trip_financial_id         Int
-  booking_id                Int?      // Nullable for standalone trips
-  trip_id                   Int?      // Direct trip link for standalone trips (Phase 1)
+  settlement_id     Int  @id @default(autoincrement())
+  trip_financial_id Int
+  booking_id        Int? // Nullable for standalone trips
+  trip_id           Int? // Direct trip link for standalone trips (Phase 1)
 
   // Driver settlement
-  driver_settlement_amount  Float?
-  driver_settlement_status  PaymentStatus @default(PENDING)
-  driver_settlement_paid_at DateTime?
+  driver_settlement_amount         Float?
+  driver_settlement_status         PaymentStatus @default(PENDING)
+  driver_settlement_paid_at        DateTime?
   driver_settlement_payment_method String?
-  driver_settlement_reference String?
-  driver_settlement_notes   String?
+  driver_settlement_reference      String?
+  driver_settlement_notes          String?
 
   // Owner settlement
-  owner_settlement_amount   Float?
-  owner_settlement_status   PaymentStatus @default(PENDING)
-  owner_settlement_paid_at  DateTime?
+  owner_settlement_amount         Float?
+  owner_settlement_status         PaymentStatus @default(PENDING)
+  owner_settlement_paid_at        DateTime?
   owner_settlement_payment_method String?
-  owner_settlement_reference String?
-  owner_settlement_notes    String?
+  owner_settlement_reference      String?
+  owner_settlement_notes          String?
 
   // General
-  created_at                DateTime? @default(now())
-  updated_at                DateTime? @default(now())
+  created_at DateTime? @default(now())
+  updated_at DateTime? @default(now())
 
   // Relations
   tripFinancial TripFinancial @relation(fields: [trip_financial_id], references: [trip_financial_id], onDelete: Cascade)
   booking       Booking?      @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
-  trip          Trip?          @relation(fields: [trip_id], references: [trip_id], onDelete: Cascade)
+  trip          Trip?         @relation(fields: [trip_id], references: [trip_id], onDelete: Cascade)
 
   @@index([trip_financial_id], name: "idx_trip_settlement_financial")
   @@index([booking_id], name: "idx_trip_settlement_booking")
-  @@index([trip_id], name: "idx_trip_settlement_trip")
   @@map("trip_settlements")
 }
 
 // --- Commission Record ---
 // Per-trip commission tracking with full audit trail.
 model CommissionRecord {
-  commission_id         Int       @id @default(autoincrement())
-  trip_financial_id     Int
-  booking_id            Int
-  commission_rate       Float
-  commission_type       String    @default("percentage") // "percentage" or "fixed"
-  commission_base       Float     // The amount on which commission is calculated
-  commission_amount     Float
-  applied_at            DateTime? @default(now())
-  applied_by            Int?      // Admin ID who applied commission
-  notes                 String?
-  created_at            DateTime? @default(now())
+  commission_id     Int       @id @default(autoincrement())
+  trip_financial_id Int
+  booking_id        Int
+  commission_rate   Float
+  commission_type   String    @default("percentage") // "percentage" or "fixed"
+  commission_base   Float // The amount on which commission is calculated
+  commission_amount Float
+  applied_at        DateTime? @default(now())
+  applied_by        Int? // Admin ID who applied commission
+  notes             String?
+  created_at        DateTime? @default(now())
 
   // Relations
   tripFinancial TripFinancial @relation(fields: [trip_financial_id], references: [trip_financial_id], onDelete: Cascade)
@@ -1353,40 +1463,67 @@ model CommissionRecord {
 // Central transaction ledger. Every financial event creates one entry here.
 // This is the SINGLE SOURCE OF TRUTH for all trip financials.
 model FinancialTransaction {
-  transaction_id    Int                  @id @default(autoincrement())
-  trip_financial_id Int
-  booking_id        Int?                 // Nullable: standalone trips have no booking
-  trip_id           Int?                 // Direct trip link for standalone trips
-  vehicle_id        Int?
-  driver_id         Int?
+  transaction_id     Int  @id @default(autoincrement())
+  trip_financial_id  Int
+  booking_id         Int? // Nullable: standalone trips have no booking
+  trip_id            Int? // Direct trip link for standalone trips
+  vehicle_id         Int?
+  driver_id          Int?
   transport_owner_id Int?
-  client_id         Int?                 // For offline client payments
+  client_id          Int? // For offline client payments
 
-  transaction_type  FinancialTransactionType
-  amount            Float
-  direction         TransactionDirection   // DEBIT = money out from BT, CREDIT = money in to BT
-  from_party        TransactionParty?     // Who paid / from whom
-  to_party          TransactionParty?     // Who received / to whom
-  purpose           String?               // Human-readable purpose
-  payment_method    String?               // cash, bank, upi, cheque, etc.
-  reference_number  String?
-  transaction_date  DateTime?             // When the transaction occurred
-  status            PaymentStatus         @default(PAID)
-  metadata          String?               // JSON payload for additional context
-  notes             String?
+  transaction_type FinancialTransactionType
+  amount           Float
+  direction        TransactionDirection // DEBIT = money out from BT, CREDIT = money in to BT
+  from_party       TransactionParty? // Who paid / from whom
+  to_party         TransactionParty? // Who received / to whom
+  purpose          String? // Human-readable purpose
+  payment_method   String? // cash, bank, upi, cheque, etc.
+  // For a CUSTOMER_PAYMENT / CLIENT_PAYMENT this is the payment's own
+  // transaction reference (UPI / bank / receipt no.), and it is the
+  // IDEMPOTENCY KEY for that payment.
+  //
+  // PHASE 7: a PARTIAL unique index
+  //   financial_tx_customer_payment_reference_key
+  //     ON (trip_id, reference_number)
+  //     WHERE transaction_type IN ('CUSTOMER_PAYMENT','CLIENT_PAYMENT')
+  //       AND reference_number IS NOT NULL
+  //       AND status <> 'CANCELLED'
+  // exists in the database (migration
+  // 20260929170000_phase7_customer_billing_integrity). It is deliberately
+  // NOT declared here: Prisma's schema language cannot express a partial
+  // index, and declaring a plain `@@unique` would create a DIFFERENT and
+  // stricter index on the next refresh. Documented here so it is not lost.
+  //
+  // Vendor money (owner/driver advances + settlements) is deliberately
+  // excluded from that index: it is a different financial relationship and
+  // must not share the customer's idempotency key space.
+  reference_number String?
+  transaction_date DateTime? // When the transaction occurred
+  status           PaymentStatus            @default(PAID)
+  metadata         String? // JSON payload for additional context
+  notes            String?
 
-  created_by        Int?                  // Admin/User ID who created this
-  created_at        DateTime?             @default(now())
-  updated_at        DateTime?             @default(now())
+  // PHASE 9: which invoice a CUSTOMER payment settles.
+  //
+  // This is a pointer, not a copy of the money. `amount` on this row remains
+  // the single truth about cash actually received, so PARTIAL payments work
+  // without any schedule: five payments of ₹10,000 against a ₹50,000 invoice
+  // are five rows and one derived balance. Vendor rows leave this NULL — the
+  // customer and the vendor are different financial relationships and are
+  // never settled by the same document.
+
+  created_by Int? // Admin/User ID who created this
+  created_at DateTime? @default(now())
+  updated_at DateTime? @default(now())
 
   // Relations
   tripFinancial TripFinancial @relation(fields: [trip_financial_id], references: [trip_financial_id], onDelete: Cascade)
   booking       Booking?      @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
-  trip          Trip?          @relation(fields: [trip_id], references: [trip_id], onDelete: Cascade)
+  trip          Trip?         @relation(fields: [trip_id], references: [trip_id], onDelete: Cascade)
 
   @@index([trip_financial_id], name: "idx_financial_tx_financial")
   @@index([booking_id], name: "idx_financial_tx_booking")
-  @@index([trip_id], name: "idx_financial_tx_trip")
   @@index([transaction_type], name: "idx_financial_tx_type")
   @@index([from_party], name: "idx_financial_tx_from")
   @@index([to_party], name: "idx_financial_tx_to")
@@ -1399,13 +1536,13 @@ model FinancialTransaction {
 // Every sensitive action creates an audit record.
 model AuditLog {
   audit_id       Int       @id @default(autoincrement())
-  user_id        Int?      // Who performed the action
-  user_role      String    // admin, driver, owner, etc.
-  action         String    // e.g., "payout_changed", "advance_created", "settlement_approved"
-  entity_type    String    // e.g., "Booking", "TripFinancial", "TripAdvance"
-  entity_id      Int       // ID of the entity
-  previous_value String?   // JSON snapshot of previous state
-  new_value      String?   // JSON snapshot of new state
+  user_id        Int? // Who performed the action
+  user_role      String // admin, driver, owner, etc.
+  action         String // e.g., "payout_changed", "advance_created", "settlement_approved"
+  entity_type    String // e.g., "Booking", "TripFinancial", "TripAdvance"
+  entity_id      Int // ID of the entity
+  previous_value String? // JSON snapshot of previous state
+  new_value      String? // JSON snapshot of new state
   reason         String?
   ip_address     String?
   user_agent     String?
@@ -1426,57 +1563,190 @@ model AuditLog {
 // Central entity for offline/online trip management.
 // A Trip can be created independently or from a Booking.
 model Trip {
-  trip_id            Int       @id @default(autoincrement())
-  trip_number        String    @unique // BTBT-YYYY-NNNNN
-  source_type        TripSourceType @default(ONLINE_BOOKING)
-  booking_id         Int?      // Optional link to existing booking
-  user_id            Int?      // Online customer (User) — null for offline/direct
-  client_id          Int?      // Offline corporate client — null for online/direct
-  transport_owner_id Int       // Transport Owner (VehicleOwner)
-  vehicle_id         Int       // Vehicle (TransportVehicle)
-  driver_id          Int       // Driver
+  trip_id     Int            @id @default(autoincrement())
+  trip_number String         @unique // BTBT-YYYY-NNNNN
+  source_type TripSourceType @default(ONLINE_BOOKING)
+  booking_id  Int? // Optional link to existing booking
+  user_id     Int? // Online customer (User) — null for offline/direct
+  client_id   Int? // Offline corporate client — null for online/direct
+
+  // ── THE CURRENT VEHICLE HIRE ASSIGNMENT ─────────────────────────────────
+  // NULLABLE ON PURPOSE. The Trip is the ONE record both the Enquiry page and
+  // the Vehicle Hire page operate on, so it has to be able to represent a
+  // confirmed consignment that is still WAITING FOR A VEHICLE — a state these
+  // three columns could not express while they were NOT NULL.
+  //
+  //   vehicle_id = null  →  WAITING FOR VEHICLE
+  //   vehicle_id set     →  VEHICLE ASSIGNED  (hire money not yet agreed)
+  //   + a vehicle_hires row → VEHICLE HIRED  (gross/commission/net agreed)
+  //
+  // Relaxing these to nullable changes no existing row and deletes nothing
+  // (migration 20261001120000). The application contract is unchanged:
+  // TripService.createTrip still REQUIRES all three when a trip is created
+  // through POST /api/trips. Existing services already guard these fields with
+  // explicit `if (!trip.vehicle_id)` blockers rather than assuming them.
+  transport_owner_id Int? // Transport Owner (VehicleOwner) — the hire vendor
+  vehicle_id         Int? // Vehicle (TransportVehicle) — the hired truck
+  driver_id          Int? // Driver
 
   // Route
-  pickup_location    String
-  pickup_city        String
-  drop_location      String
-  drop_city          String
-  distance_km        Float?
-  expected_delivery_date DateTime?  // Expected delivery date
-  trip_delivered_date    DateTime?  // Actual delivery date
+  pickup_location        String
+  pickup_city            String
+  drop_location          String
+  drop_city              String
+  distance_km            Float?
+  expected_delivery_date DateTime? // Expected delivery date
+  trip_delivered_date    DateTime? // Actual delivery date
 
   // Financial (base amounts only - all derived values come from FinancialTransaction)
-  freight_amount     Float
-  driver_payment     Float?    // Agreed driver payout
-  owner_payment      Float?    // Agreed owner settlement
-  notes              String?
+  // `freight_amount` IS the GROSS VEHICLE HIRE. It is the base the commission
+  // is calculated on and it is NEVER overwritten with a net figure — the net
+  // vendor payable is always derived (see VehicleHireService) so that
+  // gross − commission === net holds for every historical row as well.
+  freight_amount Float
+  driver_payment Float? // Agreed driver payout
+  owner_payment  Float? // Agreed owner settlement
+  notes          String?
+
+  // ── Vehicle hire commercial terms (Phase 2) ────────────────────────────
+  // Stored explicitly rather than inferred from UI text or from a free-text
+  // note. All nullable so every pre-existing Trip row stays valid and no
+  // historical hire is backfilled with an invented value.
+  // Commission terms for THIS hire. `commission_type` reuses the existing
+  // 'percentage' | 'fixed' convention already stored as text on
+  // CommissionRecord.commission_type, so CommissionCalculator's supported
+  // types apply unchanged and no second vocabulary is introduced.
+
+  // ── Phase 4: loading / dispatch operational facts ─────────────────────
+  // Every column is nullable so all pre-existing trips stay valid and are
+  // never given an invented loading history.
+  //
+  // There is deliberately NO `loading_point` column: `pickup_location` /
+  // `pickup_city` ARE the loading point for this business, so duplicating
+  // them would create two answers to one question.
+  sent_to_loading_at    DateTime? // left for the loading point
+  arrived_at_loading_at DateTime? // arrived and waiting
+  loading_started_at    DateTime? // physical loading began
+  loading_completed_at  DateTime? // physical loading finished
+  loading_remarks       String?
+  loaded_by             String?
+  dispatched_at         DateTime? // left the loading point
+
+  // ACTUAL figures recorded at loading. The PLANNED material / quantity /
+  // weight live on the Booking and are NEVER overwritten — a variance is
+  // recorded here instead of an original being rewritten.
+  actual_quantity      Float?
+  actual_quantity_unit String?
+  actual_weight_kg     Float?
+
+  // Per-trip override of the mandatory document set. NULL means "use the
+  // repository default" (config/tripDocumentPolicy.js); an empty array is a
+  // deliberate "no documents required".
+  documents_required Json?
+
+  // ── Phase 9: dispatch-time decisions that govern LATER workflows ───────
+  // POD REQUIRED. NULL means "not decided yet" and the delivery workflow falls
+  // back to config/dispatchPolicy.js. TRUE means the operator stated, before
+  // the vehicle left, that proof of delivery WILL be collected — which is what
+  // keeps DELIVERED → POD_PENDING → POD RECEIVED → COMPLETED the only path.
+  // FALSE means POD is genuinely not applicable and DELIVERED → COMPLETED is a
+  // legal, single step. Making POD permanently mandatory was explicitly ruled
+  // out, so this tri-state is what keeps it optional.
+  pod_required Boolean?
+
+  // TRANSIT INSURANCE REQUIRED. Same tri-state rule: NULL defers to the
+  // repository default in config/dispatchPolicy.js.
+  insurance_required Boolean?
+
+  // DECLARED VALUE OF GOODS. This is the number that decides whether an
+  // e-way bill is statutorily required for the consignment, so it is recorded
+  // on the trip rather than inferred from the freight we charge.
+  value_of_goods Float?
+
+  // ── Phase 5: transit position and ETA ─────────────────────────────────
+  // Current vehicle position on this trip. Same vocabulary the repository
+  // already uses on `Delivery` (current_latitude / current_longitude /
+  // last_location_update) so there is one shape, not two. Movement HISTORY is
+  // not stored here — it lives on the append-only TripTimeline.
+
+  // ETA — only ever written by the server from a real Google Distance Matrix
+  // call (the integration already in controllers/mapsController.js). NULL is an
+  // honest "no ETA could be computed", never a placeholder number.
+
+  // ── Phase 6: arrival at the destination and proof of delivery ──────────
+  // A destination arrival is a FACT recorded on the trip, exactly like the
+  // existing `sent_to_loading_at` / `arrived_at_loading_at` / `dispatched_at`.
+  // It deliberately does NOT introduce a new TripStatus: the existing statuses
+  // already express the delivery workflow, so none was added.
+
+  // POD facts that are neither documents nor timestamps. The POD DOCUMENT
+  // itself is the existing `trip_documents` row with document_type = 'POD',
+  // with its own PRESENT/VERIFIED lifecycle and its own `file_url` — no POD2.
+  // ACTUAL RECEIVED figures. Deliberately separate from `actual_quantity` /
+  // `actual_weight_kg` above (which are the LOADED actuals) and from the
+  // PLANNED figures on Booking/Enquiry. Nothing here overwrites either.
 
   // Status
-  status             TripStatus @default(PENDING)
+  status TripStatus @default(PENDING)
 
   // Timestamps
-  trip_date          DateTime?
-  created_at         DateTime? @default(now())
-  updated_at         DateTime? @default(now())
-  completed_at       DateTime?
-  cancelled_at       DateTime?
+  trip_date    DateTime?
+  created_at   DateTime? @default(now())
+  updated_at   DateTime? @default(now())
+  completed_at DateTime?
+  cancelled_at DateTime?
 
   // Relations
-  user               User?             @relation(fields: [user_id], references: [user_id])
-  client             Client?           @relation(fields: [client_id], references: [client_id])
-  transportOwner     VehicleOwner      @relation(fields: [transport_owner_id], references: [owner_id])
-  vehicle            TransportVehicle  @relation(fields: [vehicle_id], references: [vehicle_id])
-  driver             Driver            @relation(fields: [driver_id], references: [driver_id])
-  booking            Booking?          @relation(fields: [booking_id], references: [booking_id])
-  expenses           TripExpense[]
-  payments           TripPayment[]
-  timeline           TripTimeline[]
-  tripAdvances       TripAdvance[]
-  tripFinancials     TripFinancial[]
-  tripSettlements    TripSettlement[]
+  user                  User?                  @relation(fields: [user_id], references: [user_id])
+  client                Client?                @relation(fields: [client_id], references: [client_id])
+  // onDelete: SetNull — a vehicle/driver/owner master that is removed leaves the
+  // consignment and its history intact with a NULL assignment, which the Vehicle
+  // Hire page then honestly renders as "waiting for a vehicle" rather than
+  // crashing or silently borrowing another vehicle's identity.
+  transportOwner        VehicleOwner?          @relation(fields: [transport_owner_id], references: [owner_id], onDelete: SetNull)
+  vehicle               TransportVehicle?      @relation(fields: [vehicle_id], references: [vehicle_id], onDelete: SetNull)
+  driver                Driver?                @relation(fields: [driver_id], references: [driver_id], onDelete: SetNull)
+  booking               Booking?               @relation(fields: [booking_id], references: [booking_id])
+  expenses              TripExpense[]
+  payments              TripPayment[]
+  timeline              TripTimeline[]
+  tripAdvances          TripAdvance[]
+  tripFinancials        TripFinancial[]
+  tripSettlements       TripSettlement[]
   financialTransactions FinancialTransaction[]
+  documents             TripDocument[]
+  // Phase 9 — the dispatch act and the events that only exist because a
+  // vehicle is on the road. All are 1:1 or 1:N back-references to records
+  // that are about THIS trip; none of them is a second trip.
+  dispatch              TripDispatch?
+  ewayBill              EwayBill?
+  insurance             TripInsurance?
+  // Phase 9: the customer bills raised against this consignment. Existing
+  // rows created before Phase 9 have trip_id = NULL and are untouched.
+  // The hire this trip has, if one was booked. UNIQUE on trip_id in the
+  // database, so a second hire for the same consignment is impossible.
+
+  // ── THE RESERVATION LINK (enquiry → trip) ────────────────────────────────
+  // Scalar only, with NO Prisma relation on purpose — see migration
+  // 20261003120000_enquiry_trip_reservation.
+  //
+  // A vehicle and driver are now assigned BEFORE the customer accepts, so the
+  // consignment needs an operational Trip while it is still only an enquiry.
+  // `booking_id` cannot carry that: the Booking does not exist until acceptance,
+  // which is exactly when we stop needing to make one.
+  //
+  //   NULL → an ordinary trip; behaviour unchanged everywhere.
+  //   set  → the trip that RESERVES resources for this enquiry. Backed by a
+  //          UNIQUE partial index in the migration, so an enquiry can never
+  //          hold two reservation trips — provisioning is duplicate-safe in the
+  //          DATABASE, not only in the application.
+  //
+  // It is linked to the Booking at customer acceptance, so there is still
+  // exactly ONE operational trip per consignment across its whole life.
 
   @@index([trip_number], name: "idx_trips_number")
+  // The Vehicle Hire queue's read path: status filter + recency ordering.
+  @@index([status, trip_date(sort: Desc), trip_id(sort: Desc)], name: "idx_trips_hire_queue")
   @@index([user_id], name: "idx_trips_user")
   @@index([transport_owner_id], name: "idx_trips_owner")
   @@index([vehicle_id], name: "idx_trips_vehicle")
@@ -1487,6 +1757,26 @@ model Trip {
   @@map("trips")
 }
 
+// ============================================================
+// VEHICLE HIRE (Phase 8) — THE HIRE RECORD
+// ============================================================
+// Mirrors migration 20260930120100_create_vehicle_hires exactly. Nothing here is
+// a second ledger, a second trip, or a second copy of the vehicle / vendor /
+// driver: each of those is a foreign key to the existing master.
+//
+// NOT A PAYMENT TABLE. A hire creates an OBLIGATION. The money leaves later
+// through FinancialTransaction / TripAdvance / TripSettlement, which this model
+// never writes. There is deliberately no `paid_amount` and no `payment_status`
+// column, because how much has been paid to the vendor is a question the
+// existing ledger already answers — duplicating it here would create two
+// answers that eventually disagree.
+//
+// GROSS IS NEVER OVERWRITTEN BY NET. `gross_hire` and `net_vendor_payable` are
+// separate columns and a CHECK constraint states the identity
+// `net_vendor_payable = gross_hire - commission_amount`, so PostgreSQL — not
+// discipline — keeps what Bihar Transport charged and what the vendor is owed in
+// agreement for every row, historical and new.
+
 // --- Trip Expense ---
 // Individual expense records for a trip.
 // IMPORTANT (Phase 3): `paid_by` distinguishes Bihar Transport expenses
@@ -1494,24 +1784,23 @@ model Trip {
 // reduce BT Net Profit. Owner-paid expenses (diesel, maintenance, toll,
 // driver wages) are owner-side costs and must NOT appear as BT expenses.
 model TripExpense {
-  expense_id    Int                  @id @default(autoincrement())
-  trip_id       Int
-  expense_type  TripExpenseType
-  amount        Float
-  paid_by       ExpensePaidBy        @default(BIHAR_TRANSPORT)
-  paid_to       TransactionParty?    @default(VENDOR)
-  expense_date  DateTime?            @default(now())
-  description   String?
-  receipt       String?              // URL / path to uploaded receipt image
-  payment_method String?
+  expense_id       Int               @id @default(autoincrement())
+  trip_id          Int
+  expense_type     TripExpenseType
+  amount           Float
+  paid_by          ExpensePaidBy     @default(BIHAR_TRANSPORT)
+  paid_to          TransactionParty? @default(VENDOR)
+  expense_date     DateTime?         @default(now())
+  description      String?
+  receipt          String? // URL / path to uploaded receipt image
+  payment_method   String?
   reference_number String?
-  created_at    DateTime?            @default(now())
-  updated_at    DateTime?            @default(now())
+  created_at       DateTime?         @default(now())
+  updated_at       DateTime?         @default(now())
 
   // Relations
-  trip          Trip           @relation(fields: [trip_id], references: [trip_id], onDelete: Cascade)
+  trip Trip @relation(fields: [trip_id], references: [trip_id], onDelete: Cascade)
 
-  @@index([trip_id], name: "idx_trip_expenses_trip")
   @@index([expense_type], name: "idx_trip_expenses_type")
   @@index([paid_by], name: "idx_trip_expenses_paid_by")
   @@map("trip_expenses")
@@ -1520,22 +1809,21 @@ model TripExpense {
 // --- Trip Payment ---
 // Individual payment records for a trip.
 model TripPayment {
-  payment_id     Int            @id @default(autoincrement())
-  trip_id        Int
-  amount         Float
-  payment_type   TripPaymentType
+  payment_id       Int                 @id @default(autoincrement())
+  trip_id          Int
+  amount           Float
+  payment_type     TripPaymentType
   payment_category TripPaymentCategory @default(CLIENT_PAYMENT) // Who: CLIENT_PAYMENT, OWNER_PAYMENT, DRIVER_PAYMENT
-  payment_date   DateTime?      @default(now())
-  payment_method String?        // cash, bank, upi, cheque
-  reference      String?
-  notes          String?
-  created_at     DateTime?      @default(now())
-  updated_at     DateTime?      @default(now())
+  payment_date     DateTime?           @default(now())
+  payment_method   String? // cash, bank, upi, cheque
+  reference        String?
+  notes            String?
+  created_at       DateTime?           @default(now())
+  updated_at       DateTime?           @default(now())
 
   // Relations
-  trip           Trip           @relation(fields: [trip_id], references: [trip_id], onDelete: Cascade)
+  trip Trip @relation(fields: [trip_id], references: [trip_id], onDelete: Cascade)
 
-  @@index([trip_id], name: "idx_trip_payments_trip")
   @@index([payment_type], name: "idx_trip_payments_type")
   @@index([payment_category], name: "idx_trip_payments_category")
   @@map("trip_payments")
@@ -1546,22 +1834,104 @@ model TripPayment {
 model TripTimeline {
   timeline_id    Int       @id @default(autoincrement())
   trip_id        Int
-  event_type     String    // trip_created, status_changed, client_payment, owner_payment,
-                           // driver_payment, expense_added, assignment_changed, note_added
+  event_type     String // trip_created, status_changed, client_payment, owner_payment,
+  // driver_payment, expense_added, assignment_changed, note_added
   description    String
-  reference_type String?   // expense, payment, trip, etc.
+  reference_type String? // expense, payment, trip, etc.
   reference_id   Int?
-  metadata       String?   // JSON payload for additional context
-  created_by     Int?      // Admin/User ID
+  metadata       String? // JSON payload for additional context
+  created_by     Int? // Admin/User ID
   created_at     DateTime? @default(now())
 
   // Relations
   trip Trip @relation(fields: [trip_id], references: [trip_id], onDelete: Cascade)
 
-  @@index([trip_id], name: "idx_trip_timeline_trip")
   @@index([event_type], name: "idx_trip_timeline_event")
   @@index([created_at], name: "idx_trip_timeline_date")
   @@map("trip_timeline")
+}
+
+// ============================================================
+// TRIP DOCUMENTS (Phase 4)
+// ============================================================
+// A trip's PAPERWORK is a fact of its own. It is NOT part of the trip's
+// operational status and is deliberately never encoded into it — there is no
+// `LOADED_WITH_LR` anywhere. A trip is `LOADED`; its LR is `PRESENT`; its
+// e-way bill is `VERIFIED`. Keeping them apart is what lets the dispatch
+// gate ask "is the paperwork ready?" independently of "is the truck loaded?".
+//
+// This is the FIRST document model scoped to a Trip. The two that already
+// exist are deliberately NOT reused: `Invoice` is booking-scoped and
+// commercial (an amount owed, not a transport paper), and `PartnerDocument`
+// is scoped to a Partner's own credentials (GST, PAN, RC) rather than to a
+// single consignment.
+
+enum TripDocumentType {
+  LR // Lorry Receipt — issued at loading
+  GR // Goods Receipt — issued at unloading
+  INVOICE
+  E_WAY_BILL // statutory road-freight e-way bill
+  INSURANCE
+  PERMIT
+  FITNESS
+  RC // Registration Certificate
+  POD // Proof of Delivery
+  OTHER
+}
+
+enum TripDocumentStatus {
+  PENDING // expected for this trip, not yet supplied
+  PRESENT // supplied, not yet verified
+  VERIFIED // checked and accepted
+  REJECTED // supplied but not acceptable
+  EXPIRED // valid until a date that has now passed
+}
+
+model TripDocument {
+  document_id     Int                @id @default(autoincrement())
+  trip_id         Int
+  document_type   TripDocumentType
+  document_status TripDocumentStatus @default(PENDING)
+
+  // Identity of the document itself. Unique per (trip, type) so a retried
+  // request can never record the same document twice.
+  reference_number String?
+
+  // Only meaningful for the types that have such dates; NULL otherwise.
+  issued_at  DateTime?
+  expires_at DateTime?
+
+  // `file_url` is NOT served publicly. The endpoint that returns it is
+  // admin-gated in routes/tripRoutes.js.
+  file_url    String?
+  is_uploaded Boolean   @default(false)
+  is_verified Boolean   @default(false)
+  verified_by Int?
+  verified_at DateTime?
+
+  remarks String?
+
+  created_by Int?
+  created_at DateTime? @default(now())
+  updated_at DateTime? @default(now())
+
+  trip Trip @relation(fields: [trip_id], references: [trip_id], onDelete: Cascade)
+
+  // Phase 9 back-references. A TripDocument is the ONE file store for a
+  // consignment's paperwork; the dispatch act, the e-way bill, the insurance
+  // policy and a vehicle-change proof each POINT at the document they were
+  // evidenced by rather than holding their own copy of the file.
+  dispatchLrGr        TripDispatch[]      @relation("dispatch_lr_gr")
+  ewayBillRefs        EwayBill[]          @relation("eway_bill_document")
+  insuranceRefs       TripInsurance[]     @relation("insurance_document")
+
+  // The compound unique that makes "one document of this type per trip" a
+  // DATABASE fact. `TripDocumentService` addresses it by this name, so the
+  // selector below and the index here must not drift apart.
+  @@unique([trip_id, document_type], name: "uq_trip_documents_trip_type")
+  @@index([trip_id], name: "idx_trip_documents_trip")
+  @@index([document_status], name: "idx_trip_documents_status")
+  @@map("trip_documents")
 }
 
 // ============================================================
@@ -1572,32 +1942,32 @@ model TripTimeline {
 // Offline corporate/business accounts with ongoing relationships.
 // Distinct from User (online customers) and Partner (transport network partners).
 model Client {
-  client_id        Int       @id @default(autoincrement())
-  client_code      String?   @unique    // Auto-generated: CLI-00001 (nullable for migration)
-  company_name     String
-  contact_person   String?
-  phone            String
-  email            String?
-  address          String?
-  city             String?
-  state            String?   @default("Bihar")
-  gst_number       String?
-  pan_number       String?
-  bank_account     String?
-  bank_ifsc        String?
-  bank_name        String?
- upi_id           String?
-  status           String?   @default("active") // active, inactive, suspended
-  notes            String?
-  is_active        Boolean?  @default(true)
-  created_at       DateTime? @default(now())
-  updated_at       DateTime? @default(now())
-  deleted_at       DateTime? // Soft delete
+  client_id      Int       @id @default(autoincrement())
+  client_code    String?   @unique // Auto-generated: CLI-00001 (nullable for migration)
+  company_name   String
+  contact_person String?
+  phone          String
+  email          String?
+  address        String?
+  city           String?
+  state          String?   @default("Bihar")
+  gst_number     String?
+  pan_number     String?
+  bank_account   String?
+  bank_ifsc      String?
+  bank_name      String?
+  upi_id         String?
+  status         String?   @default("active") // active, inactive, suspended
+  notes          String?
+  is_active      Boolean?  @default(true)
+  created_at     DateTime? @default(now())
+  updated_at     DateTime? @default(now())
+  deleted_at     DateTime? // Soft delete
 
   // Relations
-  trips            Trip[]
+  trips Trip[]
 
-// Indexes
+  // Indexes
   @@index([client_code], name: "idx_client_code")
   @@index([company_name], name: "idx_client_company")
   @@index([phone], name: "idx_client_phone")
@@ -1630,35 +2000,35 @@ model Client {
 // dtos/EnquiryDTO.js — the customer can only reach support via the fixed
 // Bihar Transport customer-care WhatsApp number in config/customerCare.js.
 model Enquiry {
-  enquiry_id            Int            @id @default(autoincrement())
+  enquiry_id Int @id @default(autoincrement())
 
   // Canonical, server-derived, human-readable request id.
   // Format: BTB-YYYYMMDD-NNNNNN  (e.g. BTB-20260926-000123)
   // Derived from the DB autoincrement PK (see EnquiryNumberService) — never
   // from UUID / Math.random() / frontend input.
-  enquiry_number        String         @unique
+  enquiry_number String @unique
 
   // ── Customer identity ──────────────────────────────────────────────
   // customer_id is NULL for guest customers (no login wall on submit).
   // Guest access is instead proven by a short-lived signed enquiry access
   // token issued at creation (see EnquiryAccessToken).
-  customer_id           Int?
-  customer_name         String
-  customer_mobile       String
-  customer_email        String?
+  customer_id     Int?
+  customer_name   String
+  customer_mobile String
+  customer_email  String?
   // Stable per-browser handle so a guest can list their own enquiries later.
-  session_key           String?
+  session_key     String?
 
   // ── Route ──────────────────────────────────────────────────────────
-  pickup_location       String
-  pickup_address        String?
-  pickup_latitude       Float?
-  pickup_longitude      Float?
-  drop_location         String
-  drop_address          String?
-  drop_latitude         Float?
-  drop_longitude        Float?
-  distance_km           Float?
+  pickup_location  String
+  pickup_address   String?
+  pickup_latitude  Float?
+  pickup_longitude Float?
+  drop_location    String
+  drop_address     String?
+  drop_latitude    Float?
+  drop_longitude   Float?
+  distance_km      Float?
 
   // ── Vehicle ────────────────────────────────────────────────────────
   // "requested" = what the customer picked on the booking page.
@@ -1667,8 +2037,8 @@ model Enquiry {
   requested_vehicle_name  String?
   assigned_vehicle_id     Int?
   assigned_driver_id      Int?
-  assigned_partner_id     Int?   // network Partner who sourced the trip
-  assigned_owner_id       Int?   // VehicleOwner (transport owner)
+  assigned_partner_id     Int? // network Partner who sourced the trip
+  assigned_owner_id       Int? // VehicleOwner (transport owner)
   // Immutable snapshot so the customer-facing history survives reassignment.
   assigned_vehicle_number String?
   assigned_vehicle_type   String?
@@ -1680,59 +2050,65 @@ model Enquiry {
   // material is NULLABLE: a customer routinely books a vehicle before they
   // know the load, and the transport team captures it on the call. An
   // unanswered field stays NULL — it is never backfilled with a placeholder.
-  material              String?
-  quantity              Float?
-  quantity_unit         String?
-  weight                Float?
-  weight_unit           String?
-  goods_category        String?
-  fragile               Boolean         @default(false)
-  special_instructions  String?
+  material             String?
+  quantity             Float?
+  quantity_unit        String?
+  weight               Float?
+  weight_unit          String?
+  goods_category       String?
+  fragile              Boolean @default(false)
+  special_instructions String?
 
   // ── Schedule ───────────────────────────────────────────────────────
-  pickup_date           DateTime
-  pickup_time           String
+  pickup_date DateTime
+  pickup_time String
 
   // ── Pricing ────────────────────────────────────────────────────────
   // estimated_price_min / max come from the pricing engine at intake time.
   // final_quoted_price is set ONLY by an authenticated admin and is the single
   // server-authoritative price the customer is ever asked to accept.
-  estimated_price_min   Float?
-  estimated_price_max   Float?
-  final_quoted_price    Float?
-  price_status          EnquiryPriceStatus @default(NOT_QUOTED)
-  quote_remarks         String?
-  quoted_by_admin_id    Int?
-  quoted_at             DateTime?
+  estimated_price_min Float?
+  estimated_price_max Float?
+  final_quoted_price  Float?
+  price_status        EnquiryPriceStatus @default(NOT_QUOTED)
+  quote_remarks       String?
+  quoted_by_admin_id  Int?
+  quoted_at           DateTime?
 
   // ── Status ─────────────────────────────────────────────────────────
-  status                EnquiryStatus   @default(ENQUIRY_SUBMITTED)
-  accepted_at           DateTime?
-  rejected_at           DateTime?
-  cancelled_at          DateTime?
-  cancellation_reason   String?
-  confirmed_at          DateTime?
-  started_at            DateTime?
-  completed_at          DateTime?
+  status              EnquiryStatus @default(ENQUIRY_SUBMITTED)
+  accepted_at         DateTime?
+  rejected_at         DateTime?
+  cancelled_at        DateTime?
+  cancellation_reason String?
+  confirmed_at        DateTime?
+  started_at          DateTime?
+  completed_at        DateTime?
 
   // ── Timestamps ─────────────────────────────────────────────────────
-  created_at            DateTime        @default(now())
-  updated_at            DateTime        @updatedAt
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
 
   // ── Relations ──────────────────────────────────────────────────────
-  customer              User?           @relation("enquiry_customer", fields: [customer_id], references: [user_id], onDelete: SetNull)
-  requestedVehicle      TransportVehicle? @relation("enquiry_requested_vehicle", fields: [requested_vehicle_id], references: [vehicle_id], onDelete: SetNull)
-  assignedVehicle       TransportVehicle? @relation("enquiry_assigned_vehicle", fields: [assigned_vehicle_id], references: [vehicle_id], onDelete: SetNull)
-  assignedDriver        Driver?         @relation("enquiry_assigned_driver", fields: [assigned_driver_id], references: [driver_id], onDelete: SetNull)
-  assignedPartner       Partner?        @relation("enquiry_assigned_partner", fields: [assigned_partner_id], references: [partner_id], onDelete: SetNull)
-  assignedOwner         VehicleOwner?   @relation("enquiry_assigned_owner", fields: [assigned_owner_id], references: [owner_id], onDelete: SetNull)
-  quotedByAdmin         Admin?          @relation("enquiry_quoted_by", fields: [quoted_by_admin_id], references: [admin_id], onDelete: SetNull)
+  customer         User?             @relation("enquiry_customer", fields: [customer_id], references: [user_id], onDelete: SetNull)
+  requestedVehicle TransportVehicle? @relation("enquiry_requested_vehicle", fields: [requested_vehicle_id], references: [vehicle_id], onDelete: SetNull)
+  assignedVehicle  TransportVehicle? @relation("enquiry_assigned_vehicle", fields: [assigned_vehicle_id], references: [vehicle_id], onDelete: SetNull)
+  assignedDriver   Driver?           @relation("enquiry_assigned_driver", fields: [assigned_driver_id], references: [driver_id], onDelete: SetNull)
+  assignedPartner  Partner?          @relation("enquiry_assigned_partner", fields: [assigned_partner_id], references: [partner_id], onDelete: SetNull)
+  assignedOwner    VehicleOwner?     @relation("enquiry_assigned_owner", fields: [assigned_owner_id], references: [owner_id], onDelete: SetNull)
+  quotedByAdmin    Admin?            @relation("enquiry_quoted_by", fields: [quoted_by_admin_id], references: [admin_id], onDelete: SetNull)
   // The canonical operational Booking created when the customer accepted the
   // final quote. Unique — one Booking is the operational record of exactly one
   // Enquiry. Nullable so an enquiry always survives its Booking.
-  booking_id            Int?            @unique
-  booking               Booking?        @relation("enquiry_booking", fields: [booking_id], references: [booking_id], onDelete: SetNull)
-  events                EnquiryEvent[]
+  booking_id       Int?              @unique
+  booking          Booking?          @relation("enquiry_booking", fields: [booking_id], references: [booking_id], onDelete: SetNull)
+  events           EnquiryEvent[]
+  // The ONE canonical commercial quotation for this enquiry (client document
+  // §2 "QUOTATION / RATE"). Exactly one Enquiry → one Quotation: the rate is
+  // amended in place while it is still a draft, and once it has been sent or
+  // converted it becomes immutable and a NEW enquiry-and-quotation record is
+  // required to re-quote. See QuotationVersion below.
+  quotation_id     Int?              @unique
 
   @@index([enquiry_number], name: "idx_enquiries_number")
   @@index([customer_id], name: "idx_enquiries_customer")
@@ -1753,26 +2129,305 @@ model Enquiry {
 // Append-only. Every meaningful transition writes exactly one row, which
 // powers BOTH the admin audit history and the customer "Request Timeline".
 model EnquiryEvent {
-  enquiry_event_id  Int               @id @default(autoincrement())
-  enquiry_id        Int
-  event_type        EnquiryEventType
-  actor_type        EnquiryActorType  @default(SYSTEM)
-  actor_id          Int?              // admin_id / user_id / driver_id (nullable)
-  actor_name        String?
-  message           String
+  enquiry_event_id Int              @id @default(autoincrement())
+  enquiry_id       Int
+  enquiry          Enquiry                        @relation(fields: [enquiry_id], references: [enquiry_id], onDelete: Cascade)
+  event_type       EnquiryEventType
+  actor_type       EnquiryActorType @default(SYSTEM)
+  actor_id         Int? // admin_id / user_id / driver_id (nullable)
+  actor_name       String?
+  message          String
   // JSON payload for extra context (e.g. { from, to, vehicle_number }).
   // MUST NEVER contain driver mobile numbers.
-  metadata          Json?
+  metadata         Json?
   // False for internal-only events that must not appear on the customer feed.
-  customer_visible  Boolean           @default(true)
-  created_at        DateTime          @default(now())
+  customer_visible Boolean          @default(true)
+  created_at       DateTime         @default(now())
 
   // Relations
-  enquiry Enquiry @relation(fields: [enquiry_id], references: [enquiry_id], onDelete: Cascade)
 
-  @@index([enquiry_id, created_at], name: "idx_enquiry_events_enquiry")
   @@index([event_type], name: "idx_enquiry_events_type")
   @@index([created_at], name: "idx_enquiry_events_created")
   @@map("enquiry_events")
 }
+
+// =========================================================================
+// QUOTATION / RATE  (client document §2)
+// =========================================================================
+//
+// THE CANONICAL QUOTATION SOURCE IS THE ENQUIRY, NOT THE BOOKING.
+//
+//   ENQUIRY → GIVE RATE → RATE QUOTED → CONFIRM ORDER → ORDER CONFIRMED
+//
+// The client document makes this explicit:
+//   • "Save Quotation — saves the rate."
+//   • "If the customer wants time, use Send Quotation and leave the enquiry open."
+//   • "If the customer confirms on the call, select Confirm Order right there on
+//      the quotation screen."
+//
+// So Send must NOT create an order, and Confirm Order must be reachable from the
+// quotation. Both operate on THIS model. The Booking stores only the confirmed
+// financial SNAPSHOT required for operational execution — it is never the
+// commercial source of truth. See BookingSnapshot below.
+//
+// ONE ENQUIRY → ONE CURRENT CANONICAL QUOTATION
+//   `Enquiry.quotation_id` is @unique. A draft is amended in place. Once the
+//   quotation has been SENT or CONVERTED it is frozen (see QuotationVersion for
+//   the explicit amendment path) rather than silently overwritten.
+
+// How the rate is expressed. The client document specifies only "FIXED"
+// (document §2 "Rate Type :- FIXED"). PER_UNIT is retained because the
+// repository ALREADY models per-unit vehicle hire (VehicleHireRateBasis)
+// and a rate cannot be represented without a basis — but it is not a
+// client-documented quotation rate type.
+
+// GST treatment as recorded on the quotation. The client document names RCM
+// (document §2 "GST Type:- RCM"). The remaining values are the standard GST
+// counterpart terms; ONLY RCM is specified by the client.
+//
+// ⚠ THE ARITHMETIC OF RCM IS "NOT SPECIFIED IN CLIENT DOCUMENT".
+// The document's worked example (Freight 6000, GST 5%, Total Freight 6000,
+// additional charge 3000, Total Billing Amount 9000) is CONSISTENT WITH GST
+// being EXCLUDED from Total Billing Amount, but the document never states the
+// rule. GST is therefore STORED and DISPLAYED but is deliberately NOT added
+// into any total. See QuotationService.calculateTotals.
+
+// Quotation lifecycle. Kept deliberately small — the document names only
+// "RATE QUOTED" as a status, and describes Save / Send / Confirm Order.
+//
+//   DRAFT        saved internally, customer has NOT been told anything
+//   RATE_QUOTED  the rate exists (document §2 status)
+//   SENT         published to the customer, enquiry STILL OPEN
+//   CONVERTED    the customer confirmed; an order now exists
+//
+// SENT → CONVERTED is one-way. A converted quotation is the contract.
+
+// Payment schedule options (client document §2, exactly three).
+
+// How one custom milestone is expressed.
+
+// A quotation rate as it currently stands.
+
+// An additional charge line (client document §2 "Additional charges").
+//   Charges Name / Rate / Quantity / Total
+// Quantity is stored as a NUMBER with a separate unit so "2 Days" is
+// quantity = 2 and quantity_unit = 'Days' — never the string "2 Days".
+
+// One custom-schedule milestone (client document §2 "For Custom Schedule, add
+// milestones, choose when each is due, and enter a fixed amount or percentage.
+//The software shows the remaining balance.").
+
+// EXPLICIT AMENDMENT PATH — never a silent overwrite.
+//
+// A DRAFT quotation is edited in place. Once a quotation has been SENT or
+// CONVERTED its money is frozen: every subsequent save writes a new
+// QuotationVersion row so the audit trail keeps every number the customer was
+// ever shown, while `quotations` keeps the current canonical row.
+
+// CONFIRMED BOOKING SNAPSHOT
+//
+// The Booking stores the agreed money so operational execution never has to
+// read a mutable commercial record. This is a SNAPSHOT, not a source of truth:
+// the Quotation is the commercial source before confirmation, exactly as the
+// client document requires ("The enquiry and order remain linked").
+
+// ============================================================================
+// DISPATCH WORKSPACE (Phase 9)
+// ============================================================================
+//
+// WHAT THIS IS NOT
+//   There is already exactly ONE Trip, ONE Vehicle, ONE Driver, ONE Vendor
+//   (VehicleOwner), ONE document set (TripDocument), ONE financial ledger
+//   (FinancialTransaction) and ONE append-only history (TripTimeline +
+//   AuditLog) in this schema. Phase 9 adds NONE of those a second time.
+//
+// WHAT THIS IS
+//   The operational RECORD OF AN ACT: "this vehicle left the loading point
+//   under these paperwork facts, on this date, witnessed by these documents".
+//   Everything below is either
+//     (a) an event that genuinely has no other home (an e-way bill's
+//         internal-vs-government split, a transit insurance policy, a vehicle
+//         change on the road, an incident), or
+//     (b) a foreign key to a master that already exists.
+//
+// IT IS NOT A SECOND TRIP
+//   `trip_dispatches.trip_id` is UNIQUE. A consignment is dispatched at most
+//   once, enforced by PostgreSQL rather than by discipline, so a double click
+//   or an API retry cannot manufacture a second dispatch record.
+
+/// The dispatch act for one consignment. One row per trip, ever.
+model TripDispatch {
+  dispatch_id Int @id @default(autoincrement())
+  trip_id     Int @unique
+
+  // The instant of departure. `trips.dispatched_at` records the same FACT on
+  // the trip; this is the record of the act itself, kept together with
+  // everything that was true at the moment of departure.
+  dispatched_at   DateTime
+  dispatch_origin String   @default("ADMIN") // ADMIN | DRIVER_APP | PARTNER
+
+  // ── LR / GR ───────────────────────────────────────────────────────────
+  // The NUMBER is the operator's own record. The document is the existing
+  // `trip_documents` row of type LR (or GR) — never a second file store.
+  lr_gr_number      String?
+  lr_gr_document_id Int?
+  lr_gr_remarks     String?
+
+  // ── Delivery facts captured BEFORE the vehicle leaves ──────────────────
+  delivery_number   String?
+  consignee_name    String?
+  consignee_contact String?
+  consignee_address String?
+
+  // ── Goods facts at dispatch ───────────────────────────────────────────
+  // Mirrors of `trips.actual_*`, snapshotted onto the act so a later
+  // correction at loading cannot silently rewrite what was dispatched.
+  value_of_goods       Float?
+  actual_quantity      Float?
+  actual_quantity_unit String?
+  actual_weight_kg     Float?
+
+  // ── Linked records (foreign keys, not copies) ──────────────────────────
+  eway_bill_id Int? @unique
+  insurance_id Int? @unique
+
+  // POD REQUIRED is captured HERE because it is decided at dispatch: it is the
+  // operator stating, before the vehicle leaves, whether proof of delivery will
+  // be collected. `trips.pod_required` mirrors it for the delivery workflow so
+  // that the POD gate reads a trip column, not a dispatch join.
+  pod_required Boolean @default(false)
+
+  status String @default("DISPATCHED") // DISPATCHED | CANCELLED
+
+  created_by Int?
+  created_at DateTime? @default(now())
+  updated_at DateTime? @default(now())
+
+  trip      Trip           @relation(fields: [trip_id], references: [trip_id], onDelete: Cascade)
+  ewayBill  EwayBill?      @relation(fields: [eway_bill_id], references: [eway_bill_id], onDelete: SetNull)
+  insurance TripInsurance? @relation(fields: [insurance_id], references: [insurance_id], onDelete: SetNull)
+  lrGrDoc   TripDocument?  @relation("dispatch_lr_gr", fields: [lr_gr_document_id], references: [document_id], onDelete: SetNull)
+
+  @@index([dispatched_at], name: "idx_trip_dispatch_at")
+  @@map("trip_dispatches")
+}
+
+// ============================================================================
+// E-WAY BILL — INTERNAL RECORD vs GOVERNMENT CONFIRMATION
+// ============================================================================
+//
+// THE HONESTY CONTRACT THIS MODEL EXISTS TO ENFORCE
+//   Bihar Transport has NO government e-way bill API integration. An operator
+//   recording a number in this software records an INTERNAL FACT ("this is the
+//   e-way bill number our office is working against"). It does NOT, and must
+//   never appear to, mean that the Government of India was told anything.
+//
+//   Therefore the two live in SEPARATE COLUMNS on the same row:
+//     • eway_bill_number / eway_bill_date / expiry_at  → INTERNAL record
+//     • gov_eway_bill_number / gov_synced_at /
+//       gov_response + gov_sync_status                 → GOVERNMENT confirmation
+//
+//   `gov_sync_status` is NOT_CONNECTED until a real API integration exists, and
+//   nothing in this codebase may set it to SYNCED without one. When the vehicle
+//   changes, `previous_vehicle_number` is kept and `vehicle_update_required` is
+//   raised — an honest "we know the paper no longer matches the truck", NOT a
+//   claim that the government record was amended.
+
+/// One internal e-way bill record per trip.
+model EwayBill {
+  eway_bill_id Int @id @default(autoincrement())
+  trip_id      Int @unique
+
+  // ── INTERNAL RECORD (what Bihar Transport's office has on paper) ───────
+  eway_bill_number String?
+  eway_bill_date   DateTime?
+  expiry_at        DateTime?
+  internal_status  String    @default("PENDING") // PENDING | VALID | EXPIRING | EXPIRED
+  document_id      Int? // trip_documents row of type E_WAY_BILL
+  remarks          String?
+
+  // ── VEHICLE ON THE PAPER ──────────────────────────────────────────────
+  current_vehicle_number  String?
+  previous_vehicle_number String?
+  // Raised when the dispatched vehicle no longer matches the recorded one.
+  // This is an INTERNAL flag: it means "an operator must amend the paper".
+  vehicle_update_required Boolean @default(false)
+
+  // ── GOVERNMENT CONFIRMATION (empty until a real API exists) ────────────
+  gov_sync_status      String    @default("NOT_CONNECTED") // NOT_CONNECTED | SYNCED | FAILED
+  gov_eway_bill_number String?
+  gov_synced_at        DateTime?
+  gov_response         String? // raw acknowledgement payload, when one ever exists
+
+  created_by Int?
+  created_at DateTime? @default(now())
+  updated_at DateTime? @default(now())
+
+  trip     Trip          @relation(fields: [trip_id], references: [trip_id], onDelete: Cascade)
+  document TripDocument? @relation("eway_bill_document", fields: [document_id], references: [document_id], onDelete: SetNull)
+  dispatch TripDispatch?
+
+  @@index([eway_bill_number], name: "idx_eway_bill_number")
+  @@map("eway_bills")
+}
+
+// ============================================================================
+// TRANSIT INSURANCE
+// ============================================================================
+//
+// Whether insurance is MANDATORY is a per-trip decision expressed by
+// `trips.insurance_required`, and the repository default lives in
+// config/dispatchPolicy.js — never hard-coded here and never hard-coded in a
+// service. A trip that does not require insurance simply leaves
+// `insured = false`, which is a true statement, not a missing one.
+
+model TripInsurance {
+  insurance_id Int @id @default(autoincrement())
+  trip_id      Int @unique
+
+  insured Boolean @default(false)
+
+  insurance_company String?
+  policy_number     String?
+  sum_insured       Float?
+  goods_value       Float?
+  claim_contact     String?
+
+  valid_from DateTime?
+  valid_to   DateTime?
+
+  // The certificate is the existing `trip_documents` row of type INSURANCE.
+  document_id Int?
+  status      String  @default("NOT_APPLICABLE") // NOT_APPLICABLE | PENDING | VALID | EXPIRING | EXPIRED
+  remarks     String?
+
+  created_by Int?
+  created_at DateTime? @default(now())
+  updated_at DateTime? @default(now())
+
+  trip     Trip          @relation(fields: [trip_id], references: [trip_id], onDelete: Cascade)
+  document TripDocument? @relation("insurance_document", fields: [document_id], references: [document_id], onDelete: SetNull)
+  dispatch TripDispatch?
+
+  @@map("trip_insurances")
+}
+
+// ============================================================================
+// VEHICLE CHANGE ON THE ROAD
+// ============================================================================
+//
+// §27: "Do not overwrite the original vehicle."
+// The ORIGINAL assignment stays on `trips.vehicle_id` / `trips.driver_id`
+// until a change is recorded here; every change appends a row. Trip history,
+// vendor money and the e-way bill can therefore all answer "which truck was on
+// this load at 10:00 and which one at 16:05" from one table, forever.
+
+
+// ============================================================================
+// INCIDENTS
+// ============================================================================
+//
+// §28: "Do not implement incidents as temporary notes." Every incident is a
+// persistent row that survives the session, is listed on the transit
+// workspace, and can raise a vehicle change.
 

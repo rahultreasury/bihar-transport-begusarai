@@ -59,6 +59,7 @@ const AdminSettlements = lazy(() => import('./pages/AdminSettlements'));
 const AdminTrips = lazy(() => import('./pages/AdminTrips'));
 const AdminCreateTrip = lazy(() => import('./pages/AdminCreateTrip'));
 const AdminTripWorkspace = lazy(() => import('./pages/AdminTripWorkspace'));
+const AdminTripProcess = lazy(() => import('./pages/AdminTripProcess'));
 const AdminFinancials = lazy(() => import('./pages/AdminFinancials'));
 const AdminClients = lazy(() => import('./pages/AdminClients'));
 const AdminClientDetail = lazy(() => import('./pages/AdminClientDetail'));
@@ -414,6 +415,26 @@ function AppContent() {
           element={
             <ProtectedRoute>
               <Suspense fallback={<PageLoader label="Loading Trip Workspace..." />}><AdminTripWorkspace /></Suspense>
+            </ProtectedRoute>
+          }
+        />
+        {/*
+            THE PROCESS WORKSPACES — one Trip, addressed by a second segment.
+
+            This is the fix for "every step in the stepper shows the same page".
+            `/admin/trips/:tripId` stays the Trip OVERVIEW; this route renders a
+            DIFFERENT COMPONENT per process, so clicking Loading shows loading,
+            Dispatch shows dispatch, and so on. Same trip id, same data, one
+            master record — only the workspace changes.
+
+            Declared AFTER `/admin/trips/:tripId` deliberately: they occupy
+            different segment counts, so neither can shadow the other.
+        */}
+        <Route
+          path="/admin/trips/:tripId/:process"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading Trip Process..." />}><AdminTripProcess /></Suspense>
             </ProtectedRoute>
           }
         />

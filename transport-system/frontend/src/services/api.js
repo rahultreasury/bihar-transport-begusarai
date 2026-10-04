@@ -166,7 +166,33 @@ getDriversWithVehicles: (params) => api.get('/admin/drivers/drivers-with-vehicle
   // so the assignment survives a refresh. Pass { clear: true } to unassign —
   // this is the only normal path that removes an assignment.
   assignBookingDriver: (bookingId, data) => api.post(`/admin/bookings/${bookingId}/assign-driver`, data),
+  // ---------------------------------------------------------------------------
+  // PHASE B — THE CANONICAL QUOTATION / RATE MODULE
+  // ---------------------------------------------------------------------------
+  // The ENQUIRY owns the quotation:
+  //     ENQUIRY → GIVE RATE → RATE QUOTED → CONFIRM ORDER → ORDER CONFIRMED
+  //
+  // These are the four client document §2 actions. Every one of them is a real
+  // backend call; there is no optimistic local state and no client-side money.
+  // The server recomputes every total and the response is what gets rendered.
+  //
+  //   getQuotation      → read the persisted quotation (null when never quoted)
+  //   saveQuotation     → "[Save Quotation]"    (creates or updates in place)
+  //   sendQuotation     → "[Send Quotation]"   (publishes; enquiry stays OPEN)
+  //   downloadQuotation → "[Download Quotation]" (real PDF from the DB)
+  //   confirmQuotationOrder → "[Confirm Order]" (exactly one order, idempotent)
+  getQuotation: (enquiryId) => api.get(`/admin/enquiries/${enquiryId}/quotation`),
+  saveQuotation: (enquiryId, data) => api.post(`/admin/enquiries/${enquiryId}/quotation`, data),
+  sendQuotation: (enquiryId) => api.post(`/admin/enquiries/${enquiryId}/quotation/send`),
+  confirmQuotationOrder: (enquiryId) => api.post(`/admin/enquiries/${enquiryId}/quotation/confirm-order`),
+  // The PDF is a binary download, so it uses the configured axios instance
+  // directly with responseType 'blob' rather than the JSON helper.
+  downloadQuotation: (enquiryId) =>
+    api.get(`/admin/enquiries/${enquiryId}/quotation/download`, { responseType: 'blob' }),
+
   // Quote workflow — admin reserves driver + vehicle and sends final quote
+  // (BOOKING-level path. Retained untouched for existing booking screens; the
+  //  quotation workflow above is the enquiry-based canonical one.)
   sendQuote: (bookingId, data) => api.post(`/admin/bookings/${bookingId}/send-quote`, data),
   // Send quote using already-assigned driver (no driver selection needed)
   sendAdminQuote: (bookingId, data) => api.post(`/admin/bookings/${bookingId}/quote`, data),
@@ -259,6 +285,95 @@ updateDriver: (id, data) => api.put(`/admin/drivers/${id}`, data),
   getTodayAssignedTrips: (partnerId) => api.get('/admin/partners/today-trips', { params: partnerId ? { partner_id: partnerId } : {} }),
   getOwnerBookings: (id, params) => api.get(`/admin/partners/${id}/bookings`, { params }),
   getCommissionSummary: (id) => api.get(`/admin/partners/${id}/commission`),
+
+  /**
+   * The trip's OPERATIONAL workflow: where it is, where it may go next, its
+   * loading facts, its planned vs actual figures, its document checklist, and
+   * the canonical lifecycle `stage` (current stage, next action, rail nodes).
+   *
+   * This is the ONE call the Order / Trip Master uses to decide what to show and
+   * what to offer. The server resolves it from `Trip.status` alone, so the rail,
+   * the next action and the status cards can never disagree with each other.
+   */
+  getTripWorkflow: (tripId) => api.get(`/trips/${tripId}/workflow`),
+
+  /**
+   * THE OPERATIONAL ACTIONS, one per process workspace.
+   *
+   * These wrap endpoints that ALREADY EXIST on the backend — nothing here is a
+   * new API. They exist as named client methods so each process workspace calls
+   * one obvious function instead of hand-writing a URL, which is what let the
+   * stepper quietly collapse into a single page in the first place.
+   */
+  tripOperations: {
+    // ── LOADING ───────────────────────────────────────────────────────────
+    sendToLoading: (tripId, data) => api.post(`/trips/${tripId}/loading/send`, data),
+    arriveAtLoading: (tripId, data) => api.post(`/trips/${tripId}/loading/arrive`, data),
+    saveLoadingFacts: (tripId, data) => api.post(`/trips/${tripId}/loading/facts`, data),
+    completeLoading: (tripId, data) => api.post(`/trips/${tripId}/loading/complete`, data),
+
+    // ── DISPATCH ──────────────────────────────────────────────────────────
+    // `getDispatchWorkspace` is the ONE call the Dispatch page makes on load.
+    // It returns the header, the readiness report with every blocker, the
+    // shipment facts, the vehicle and its documents, the loading record, the
+    // document checklist, LR/GR, the e-way bill, delivery, insurance, billing,
+    // additional charges, the dispatch record and the movement history — all
+    // read from the database, so the screen can never show a placeholder.
+    getDispatchWorkspace: (tripId) => api.get(`/trips/${tripId}/dispatch`),
+    getDispatchReadiness: (tripId) => api.get(`/trips/${tripId}/dispatch/readiness`),
+    dispatchVehicle: (tripId, data) => api.post(`/trips/${tripId}/dispatch`, data),
+    // Save the paperwork WITHOUT dispatching — what makes a blocker fixable.
+    saveDispatchDetails: (tripId, data) => api.patch(`/trips/${tripId}/dispatch`, data),
+
+    // LR / GR — the existing document module, not a second LR system.
+    getLrGr: (tripId) => api.get(`/trips/${tripId}/dispatch/lr-gr`),
+    saveLrGr: (tripId, data) => api.post(`/trips/${tripId}/dispatch/lr-gr`, data),
+
+    // E-Way Bill. `saveEwayBill` records the INTERNAL record only; the server
+    // has no government API and its response says so explicitly.
+    getEwayBill: (tripId) => api.get(`/trips/${tripId}/dispatch/eway-bill`),
+    saveEwayBill: (tripId, data) => api.post(`/trips/${tripId}/dispatch/eway-bill`, data),
+
+    // Transit insurance.
+    getInsurance: (tripId) => api.get(`/trips/${tripId}/dispatch/insurance`),
+    saveInsurance: (tripId, data) => api.post(`/trips/${tripId}/dispatch/insurance`, data),
+
+    // Delivery information + the POD decision.
+    saveDeliveryInfo: (tripId, data) => api.post(`/trips/${tripId}/dispatch/delivery-info`, data),
+
+    // Persistent document files. `uploadDocument` sends base64 bytes that the
+    // server writes to disk; `documentFileUrl` streams one back, admin-gated.
+    uploadDocument: (tripId, data) => api.post(`/trips/${tripId}/documents/upload`, data),
+    documentFileUrl: (tripId, documentId) => `/api/trips/${tripId}/documents/${documentId}/file`,
+
+
+    // ── DOCUMENTS (loading bills, e-way, LR/GR, POD) ───────────────────────
+    getDocuments: (tripId) => api.get(`/trips/${tripId}/documents`),
+    addDocument: (tripId, data) => api.post(`/trips/${tripId}/documents`, data),
+    verifyDocument: (tripId, documentId) =>
+      api.post(`/trips/${tripId}/documents/${documentId}/verify`),
+
+    // ── TRANSIT ───────────────────────────────────────────────────────────
+    getTracking: (tripId) => api.get(`/trips/${tripId}/tracking`),
+    startTransit: (tripId, data) => api.post(`/trips/${tripId}/transit/start`, data),
+
+    // ── DELIVERY ──────────────────────────────────────────────────────────
+    getDeliveryReadiness: (tripId) => api.get(`/trips/${tripId}/delivery/readiness`),
+    getDelivery: (tripId) => api.get(`/trips/${tripId}/delivery`),
+    arriveAtDestination: (tripId, data) => api.post(`/trips/${tripId}/arrival`, data),
+    markDelivered: (tripId, data) => api.post(`/trips/${tripId}/delivered`, data),
+
+    // ── POD ───────────────────────────────────────────────────────────────
+    submitPod: (tripId, data) => api.post(`/trips/${tripId}/pod`, data),
+    verifyPod: (tripId, documentId) => api.post(`/trips/${tripId}/pod/${documentId}/verify`),
+
+    /**
+     * §16 — MOVEMENT HISTORY. The server writes these events inside the SAME
+     * request that changes a status, so this only ever READS what already
+     * happened. The UI never adds, reorders or invents a row here.
+     */
+    getTimeline: (tripId) => api.get(`/trips/${tripId}/timeline`),
+  },
 
   // Trip Financial (Admin view - FULL visibility including BT Margin)
   getTripFinancial: (bookingId) => api.get(`/trips/${bookingId}/financial`),
@@ -436,14 +551,33 @@ export const appointmentAPI = {
 };
 
 // Financial APIs (canonical financial control center)
+//
+// Every figure here comes from the SAME backend service the dashboard totals
+// use, so a card and the page it opens can never disagree. The list endpoints
+// accept `page` / `limit` for pagination; omitting them returns the full set,
+// which is what the summary-only callers expect.
 export const financialAPI = {
   getSummary: () => api.get('/financials/summary'),
-  getReceivables: () => api.get('/financials/receivables'),
+  // ?status=ALL|DUE|UNPAID|PARTIALLY_PAID|OVERDUE|DUE_SOON
+  // ?search= &sort=OUTSTANDING_DESC|OUTSTANDING_ASC|OLDEST_DUE|NEWEST
+  getReceivables: (params) => api.get('/financials/receivables', { params }),
   getPayables: () => api.get('/financials/payables'),
   getTransactions: (params) => api.get('/financials/transactions', { params }),
   getLedger: (params) => api.get('/financials/transactions/ledger', { params }),
-  getAdvances: () => api.get('/financials/advances'),
-  getSettlements: () => api.get('/financials/settlements'),
+  getAdvances: (params) => api.get('/financials/advances', { params }),
+  getSettlements: (params) => api.get('/financials/settlements', { params }),
+
+  /** Commission earned, per trip — gross / commission / net kept distinct. */
+  getCommission: (params) => api.get('/financials/commission', { params }),
+
+  /**
+   * THE DRILL-DOWNS: "who exactly", behind a total.
+   * Both come from the same aggregation as the list they were opened from.
+   */
+  getClientLedger: (clientId, params) =>
+    api.get(`/financials/client-ledger/${encodeURIComponent(clientId)}`, { params }),
+  getVendorLedger: (ownerId, params) =>
+    api.get(`/financials/vendor-ledger/${encodeURIComponent(ownerId)}`, { params }),
 };
 
 // Client APIs (with financial summary)

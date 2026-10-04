@@ -65,6 +65,9 @@ const partnerSettlementRoutes = require('./routes/partnerSettlementRoutes');
 const partnerSelfServiceRoutes = require('./routes/partnerSelfServiceRoutes');
 const tripFinancialRoutes = require('./routes/tripFinancialRoutes');
 const tripRoutes = require('./routes/tripRoutes');
+// Phase 9 — the Dispatch Workspace API. Mounted AFTER tripRoutes /
+// tripFinancialRoutes; every path it owns is new, so nothing is shadowed.
+const dispatchRoutes = require('./routes/dispatchRoutes');
 const financialRoutes = require('./routes/financialRoutes');
 // Enquiry module (pre-booking customer intake → admin quote → acceptance)
 const enquiryRoutes = require('./routes/enquiryRoutes');
@@ -110,6 +113,15 @@ app.use(cors({
 }));
 
 app.use(compression());
+
+// PHASE 9 — document uploads arrive as base64 inside a JSON body, so the trip
+// paths need a larger body limit than the 2 MB default. This parser is
+// registered FIRST and only for /api/trips; body-parser marks the request as
+// parsed (`req._body`), so the global 2 MB parser below skips it instead of
+// rejecting a perfectly legitimate 4 MB scan of an LR. Every other route keeps
+// the tighter default.
+app.use('/api/trips', express.json({ limit: '12mb' }));
+
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -158,12 +170,44 @@ const loginLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+/**
+ * The PUBLIC, UNAUTHENTICATED booking-creation budget.
+ *
+ * This is deliberately scoped to POST /api/booking — the single route
+ * bookingMvpRoutes actually serves. It used to be attached to the whole `/api`
+ * namespace, which meant EVERY request under /api — admin reads, admin writes,
+ * customer reads, even /api/health — spent a token from this public bucket
+ * before its own limiter ever ran. bookingMvpRoutes falls through with next()
+ * for anything that is not POST /booking, but the token was already spent.
+ *
+ * The consequence was that ordinary admin/customer traffic could exhaust a
+ * bucket that exists to protect an anonymous write endpoint, and the next
+ * request was rejected with 429 before it reached its own route handler:
+ * GET /api/admin/enquiries then reported "Failed to load enquiries" for a
+ * reason that had nothing to do with the admin session.
+ */
 const bookingLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 500,
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+/**
+ * Apply bookingLimiter ONLY to POST /api/booking.
+ *
+ * Everything else under /api falls straight through to its own mount, which is
+ * where the correctly-scoped limiters live: adminLimiter + the per-router
+ * readLimiter/writeLimiter behind protect + adminOnly for /api/admin, and the
+ * per-router limiters on /api/enquiries, /api/bookings, /api/trips and so on.
+ * No protection is removed — the public write keeps its exact same budget.
+ */
+function bookingCreationOnly(req, res, next) {
+  if (req.method === 'POST' && req.path === '/booking') {
+    return bookingLimiter(req, res, next);
+  }
+  return next();
+}
 
 const adminLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -177,7 +221,11 @@ app.use(globalLimiter);
 // API Routes
 app.use('/api/auth', loginLimiter, authRoutes);
 app.use('/api/bookings', bookingLimiter, bookingRoutes);
-app.use('/api', bookingLimiter, bookingMvpRoutes);
+
+// Canonical booking creation (POST /api/booking). The public limiter is applied
+// to that one endpoint only — see bookingCreationOnly above for why the /api
+// namespace must not be charged to the public bucket.
+app.use('/api', bookingCreationOnly, bookingMvpRoutes);
 
 // Driver Management Routes (admin-limited and admin-checked internally).
 // MUST be mounted BEFORE /api/admin so this module is the single source of
@@ -192,7 +240,19 @@ app.use('/api/admin/enquiries', adminLimiter, adminEnquiryRoutes);
 app.use('/api/admin', adminLimiter, adminRoutes);
 
 // Customer Enquiry Routes — the login-free enquiry intake + quote acceptance.
-app.use('/api/enquiries', bookingLimiter, enquiryRoutes);
+//
+// No outer bookingLimiter here. This router already applies its own, stricter,
+// purpose-built limit to every route it serves (see routes/enquiryRoutes.js):
+//   POST /                     createLimiter   10 / 15 min  (public intake)
+//   POST /:id/accept|reject|…  actionLimiter   30 / 10 min
+//   GET  /:id, /:id/quote, …   readLimiter    300 /  5 min
+//
+// Mounting bookingLimiter in front of the whole router meant every customer poll
+// spent a token from the budget reserved for anonymous booking creation — the
+// same cross-contamination that was breaking the admin enquiries screen. Every
+// customer route is now met by a limit TIGHTER than the one it replaces, and
+// the public booking budget is spent only on public booking creation.
+app.use('/api/enquiries', enquiryRoutes);
 
 // Driver Enquiry Routes — assigned jobs, issue reporting, reassignment requests.
 app.use('/api/driver/enquiries', bookingLimiter, driverEnquiryRoutes);
@@ -223,6 +283,13 @@ app.use('/api/trips', bookingLimiter, tripRoutes);
 // Trip Financial Routes (role-based financial data)
 // Mounted after tripRoutes to avoid route conflicts
 app.use('/api/trips', bookingLimiter, tripFinancialRoutes);
+
+// Phase 9 — DISPATCH WORKSPACE. GET /:id/dispatch, PATCH /:id/dispatch, LR/GR,
+// Phase 9 — the Dispatch Workspace: the dispatch act itself, the e-way bill,
+// transit insurance, delivery information and document upload/download.
+// Mounted AFTER tripRoutes so /api/trips/:id/dispatch/readiness and the
+// document endpoints resolve here.
+app.use('/api/trips', bookingLimiter, dispatchRoutes);
 
 // Financial Management Routes (global financial control center)
 app.use('/api/financials', adminLimiter, financialRoutes);
