@@ -633,19 +633,14 @@ model TransportVehicle {
   pollution_certificate String?
   pollution_expiry      String?
 
-  // ── Vehicle Hire (Phase 8): the documents the master did not previously
-  //    capture. Added by migration 20260930120000 as NULLABLE TEXT — the same
-  //    type the three expiry columns above already use, because a mixed
-  //    representation would mean two parsers for one concept. NULL means "not
-  //    recorded", which is the truth; nothing is backfilled.
-  //    READ-ONLY from the Vehicle Hire page: it reports these dates, it never
-  //    writes them.
-  tax_number             String? // road tax / cess receipt
-  tax_expiry             String?
-  fitness_number         String?
-  fitness_expiry         String?
-  national_permit_number String? // only held by vehicles that cross states
-  national_permit_expiry String?
+  // NOTE: the Vehicle Hire "document" columns (tax_number, tax_expiry,
+  //    fitness_number, fitness_expiry, national_permit_number,
+  //    national_permit_expiry) are DELIBERATELY NOT DECLARED here.
+  //    They are added by migration 20260930120000_vehicle_hire_rate_basis_and_documents,
+  //    which is NOT part of this deployment. Declaring a column the production
+  //    database does not have makes every prisma.transportVehicle query —
+  //    including GET /api/admin/vehicles — fail with Prisma P2022.
+  //    They return with the Vehicle Hire phase.
 
   is_available   Boolean?  @default(true)
   is_verified    Boolean?  @default(false)
@@ -2108,7 +2103,11 @@ model Enquiry {
   // amended in place while it is still a draft, and once it has been sent or
   // converted it becomes immutable and a NEW enquiry-and-quotation record is
   // required to re-quote. See QuotationVersion below.
-  quotation_id     Int?              @unique
+  // NOTE: `quotation_id` is DELIBERATELY NOT DECLARED here. It is added by
+  // migration 20260930000000_phase_b_quotation_module, which is NOT part of
+  // this deployment. Declaring a column the production database does not have
+  // makes every prisma.enquiry query — including GET /api/admin/enquiries —
+  // fail with Prisma P2022. It returns with the Quotation phase.
 
   @@index([enquiry_number], name: "idx_enquiries_number")
   @@index([customer_id], name: "idx_enquiries_customer")
