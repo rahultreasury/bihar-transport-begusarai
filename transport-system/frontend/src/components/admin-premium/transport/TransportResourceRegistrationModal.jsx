@@ -42,6 +42,12 @@ export default function TransportResourceRegistrationModal({
     vehicle: {},
   });
 
+  // Ref for synchronous form data access (fixes React 18 batching causing stale reads in validation)
+  const formDataRef = useRef(formData);
+  useEffect(() => {
+    formDataRef.current = formData;
+  }, [formData]);
+
   // Validation errors for each resource
   const [errors, setErrors] = useState({
     owner: {},
@@ -168,12 +174,14 @@ export default function TransportResourceRegistrationModal({
   }, []);
 
   const validateAll = useCallback(() => {
+    // Use ref for synchronous access (avoids React 18 batching stale reads)
+    const currentFormData = formDataRef.current;
     const newErrors = { owner: {}, driver: {}, vehicle: {} };
     let isValid = true;
 
     if (selectedResources.owner) {
       const ownerErrors = {};
-      const ownerForm = formData.owner;
+      const ownerForm = currentFormData.owner;
       if (!ownerForm.owner_name?.trim()) ownerErrors.owner_name = 'Owner name is required';
       const rawPhone = ownerForm.phone?.replace(/\D/g, '') || '';
       if (!rawPhone) ownerErrors.phone = 'Phone number is required';
@@ -190,7 +198,7 @@ export default function TransportResourceRegistrationModal({
 
     if (selectedResources.driver) {
       const driverErrors = {};
-      const driverForm = formData.driver;
+      const driverForm = currentFormData.driver;
       if (!driverForm.driver_name?.trim()) driverErrors.driver_name = 'Driver name is required';
       const rawMobile = driverForm.mobile?.replace(/\D/g, '') || '';
       if (!rawMobile) driverErrors.mobile = 'Mobile number is required';
@@ -207,7 +215,7 @@ export default function TransportResourceRegistrationModal({
 
     if (selectedResources.vehicle) {
       const vehicleErrors = {};
-      const vehicleForm = formData.vehicle || {};
+      const vehicleForm = currentFormData.vehicle || {};
       if (!vehicleForm.vehicle_number?.trim()) vehicleErrors.vehicle_number = 'Vehicle number is required';
       if (!vehicleForm.vehicle_type?.trim()) vehicleErrors.vehicle_type = 'Vehicle type is required';
       if (!vehicleForm.vehicle_name?.trim()) vehicleErrors.vehicle_name = 'Vehicle name is required';
@@ -224,17 +232,20 @@ export default function TransportResourceRegistrationModal({
     return isValid;
   }, [selectedResources, formData]);
 
-  const handleSubmit = useCallback(async (e) => {
+const handleSubmit = useCallback(async (e) => {
     e.preventDefault();
     if (!validateAll()) return;
 
+    // Use ref for synchronous access to latest form data
+    const currentFormData = formDataRef.current;
+  
     setSubmitting(true);
     setServerError(null);
     const newEntities = {};
- 
+  
     try {
       if (isEdit) {
-        const vehicleForm = formData.vehicle;
+        const vehicleForm = currentFormData.vehicle;
         const vehiclePayload = {
           vehicle_number: vehicleForm.vehicle_number.trim(),
           vehicle_type: vehicleForm.vehicle_type.trim(),
@@ -275,7 +286,7 @@ export default function TransportResourceRegistrationModal({
       // Create Owner first (if selected)
       if (selectedResources.owner) {
         const ownerPayload = {
-          owner_name: formData.owner.owner_name.trim(),
+          owner_name: currentFormData.owner.owner_name.trim(),
           mobile: formData.owner.phone.replace(/\D/g, ''),
           city: formData.owner.city.trim(),
           commission_percentage: parseFloat(formData.owner.commission_percentage) || 10,
@@ -303,24 +314,24 @@ export default function TransportResourceRegistrationModal({
       // Create Driver (if selected)
       if (selectedResources.driver) {
         // Auto-enable self-owner if no owner is being created/selected and driver doesn't have explicit owner
-        const hasOwner = selectedResources.owner || formData.driver.transport_owner_id;
-        const useSelfOwner = formData.driver.is_self_owner || (!hasOwner && !selectedResources.owner);
+        const hasOwner = selectedResources.owner || currentFormData.driver.transport_owner_id;
+        const useSelfOwner = currentFormData.driver.is_self_owner || (!hasOwner && !selectedResources.owner);
         
         const driverPayload = {
-          driver_name: formData.driver.driver_name.trim(),
-          mobile: formData.driver.mobile.trim(),
-          alternate_mobile: formData.driver.alternate_mobile?.trim() || undefined,
-          vehicle_type: formData.driver.vehicle_type?.trim() || undefined,
-          vehicle_number: formData.driver.vehicle_number?.trim().toUpperCase() || undefined,
-          license_number: formData.driver.license_number?.trim() || undefined,
-          license_expiry: formData.driver.license_expiry?.trim() || undefined,
-          city: formData.driver.city?.trim() || undefined,
-          state: formData.driver.state || 'Bihar',
-          address: formData.driver.address?.trim() || undefined,
-          emergency_contact: formData.driver.emergency_contact?.trim() || undefined,
+          driver_name: currentFormData.driver.driver_name.trim(),
+          mobile: currentFormData.driver.mobile.trim(),
+          alternate_mobile: currentFormData.driver.alternate_mobile?.trim() || undefined,
+          vehicle_type: currentFormData.driver.vehicle_type?.trim() || undefined,
+          vehicle_number: currentFormData.driver.vehicle_number?.trim().toUpperCase() || undefined,
+          license_number: currentFormData.driver.license_number?.trim() || undefined,
+          license_expiry: currentFormData.driver.license_expiry?.trim() || undefined,
+          city: currentFormData.driver.city?.trim() || undefined,
+          state: currentFormData.driver.state || 'Bihar',
+          address: currentFormData.driver.address?.trim() || undefined,
+          emergency_contact: currentFormData.driver.emergency_contact?.trim() || undefined,
           ...(useSelfOwner
             ? { is_self_owner: true }
-            : { transport_owner_id: formData.driver.transport_owner_id ? parseInt(formData.driver.transport_owner_id) : (newEntities.owner?.owner_id || undefined) }),
+            : { transport_owner_id: currentFormData.driver.transport_owner_id ? parseInt(currentFormData.driver.transport_owner_id) : (newEntities.owner?.owner_id || undefined) }),
         };
         const res = await adminAPI.createDriver(driverPayload);
         if (res.data?.success) {
@@ -343,30 +354,30 @@ export default function TransportResourceRegistrationModal({
       // Create Vehicle (if selected)
       if (selectedResources.vehicle) {
         const vehiclePayload = {
-          vehicle_number: formData.vehicle.vehicle_number.trim(),
-          vehicle_type: formData.vehicle.vehicle_type.trim(),
-          vehicle_name: formData.vehicle.vehicle_name.trim(),
-          capacity_kg: formData.vehicle.capacity_kg ? Number(formData.vehicle.capacity_kg) : null,
-          capacity_volume: formData.vehicle.capacity_volume ? Number(formData.vehicle.capacity_volume) : null,
-          vehicle_make: formData.vehicle.vehicle_make?.trim() || null,
-          vehicle_model: formData.vehicle.vehicle_model?.trim() || null,
-          manufacturing_year: formData.vehicle.manufacturing_year ? Number(formData.vehicle.manufacturing_year) : null,
-          registration_date: formData.vehicle.registration_date?.trim() || null,
-          insurance_number: formData.vehicle.insurance_number?.trim() || null,
-          insurance_expiry: formData.vehicle.insurance_expiry?.trim() || null,
-          permit_number: formData.vehicle.permit_number?.trim() || null,
-          permit_expiry: formData.vehicle.permit_expiry?.trim() || null,
-          pollution_certificate: formData.vehicle.pollution_certificate?.trim() || null,
-          pollution_expiry: formData.vehicle.pollution_expiry?.trim() || null,
-          base_location: formData.vehicle.base_location?.trim() || null,
-          hourly_rate: formData.vehicle.hourly_rate ? Number(formData.vehicle.hourly_rate) : null,
-          per_km_rate: formData.vehicle.per_km_rate ? Number(formData.vehicle.per_km_rate) : null,
-          driver_id: formData.vehicle.driver_id ? Number(formData.vehicle.driver_id) : (newEntities.driver?.driver_id || null),
-          current_status: formData.vehicle.current_status,
-          assign_owner_driver: formData.vehicle.assign_owner_driver,
+          vehicle_number: currentFormData.vehicle.vehicle_number.trim(),
+          vehicle_type: currentFormData.vehicle.vehicle_type.trim(),
+          vehicle_name: currentFormData.vehicle.vehicle_name.trim(),
+          capacity_kg: currentFormData.vehicle.capacity_kg ? Number(currentFormData.vehicle.capacity_kg) : null,
+          capacity_volume: currentFormData.vehicle.capacity_volume ? Number(currentFormData.vehicle.capacity_volume) : null,
+          vehicle_make: currentFormData.vehicle.vehicle_make?.trim() || null,
+          vehicle_model: currentFormData.vehicle.vehicle_model?.trim() || null,
+          manufacturing_year: currentFormData.vehicle.manufacturing_year ? Number(currentFormData.vehicle.manufacturing_year) : null,
+          registration_date: currentFormData.vehicle.registration_date?.trim() || null,
+          insurance_number: currentFormData.vehicle.insurance_number?.trim() || null,
+          insurance_expiry: currentFormData.vehicle.insurance_expiry?.trim() || null,
+          permit_number: currentFormData.vehicle.permit_number?.trim() || null,
+          permit_expiry: currentFormData.vehicle.permit_expiry?.trim() || null,
+          pollution_certificate: currentFormData.vehicle.pollution_certificate?.trim() || null,
+          pollution_expiry: currentFormData.vehicle.pollution_expiry?.trim() || null,
+          base_location: currentFormData.vehicle.base_location?.trim() || null,
+          hourly_rate: currentFormData.vehicle.hourly_rate ? Number(currentFormData.vehicle.hourly_rate) : null,
+          per_km_rate: currentFormData.vehicle.per_km_rate ? Number(currentFormData.vehicle.per_km_rate) : null,
+          driver_id: currentFormData.vehicle.driver_id ? Number(currentFormData.vehicle.driver_id) : (newEntities.driver?.driver_id || null),
+          current_status: currentFormData.vehicle.current_status,
+          assign_owner_driver: currentFormData.vehicle.assign_owner_driver,
         };
         // Owner is optional - vehicle can be created independently
-        const ownerId = formData.vehicle.owner_id ? parseInt(formData.vehicle.owner_id) : (newEntities.owner?.owner_id);
+        const ownerId = currentFormData.vehicle.owner_id ? parseInt(currentFormData.vehicle.owner_id) : (newEntities.owner?.owner_id);
         let res;
         if (ownerId) {
           // Create vehicle under a specific owner

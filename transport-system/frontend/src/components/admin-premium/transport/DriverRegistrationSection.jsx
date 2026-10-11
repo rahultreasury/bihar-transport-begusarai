@@ -100,6 +100,10 @@ export default function DriverRegistrationSection({
   const [showOwnerModal, setShowOwnerModal] = useState(false);
   const ownerWrapperRef = useRef(null);
 
+  // Vehicles for the selected owner (for vehicle assignment dropdown)
+  const [vehicles, setVehicles] = useState([]);
+  const [vehiclesLoading, setVehiclesLoading] = useState(false);
+
   // Fetch transport owners for searchable dropdown
   useEffect(() => {
     let active = true;
@@ -135,6 +139,31 @@ export default function DriverRegistrationSection({
       }
     }
   }, [createdOwner, context.ownerId, owners, onChange]);
+
+  // Load vehicles when selectedOwner changes
+  useEffect(() => {
+    let active = true;
+    const fetchVehicles = async () => {
+      if (!selectedOwner) {
+        setVehicles([]);
+        return;
+      }
+      setVehiclesLoading(true);
+      try {
+        const res = await adminAPI.getVehicleOwnerVehicles(selectedOwner.owner_id, { limit: 100 });
+        if (active && res.data?.success) {
+          setVehicles(res.data.data || []);
+        }
+      } catch (err) {
+        console.error('Failed to fetch vehicles for owner:', err);
+        if (active) setVehicles([]);
+      } finally {
+        if (active) setVehiclesLoading(false);
+      }
+    };
+    fetchVehicles();
+    return () => { active = false; };
+  }, [selectedOwner]);
 
   // Close owner dropdown on outside click
   useEffect(() => {
@@ -176,12 +205,17 @@ export default function DriverRegistrationSection({
 
   const handleVehicleSelect = useCallback((e) => {
     const vehicleId = e.target.value;
+    const selectedVehicle = vehicles.find(v => String(v.vehicle_id) === String(vehicleId));
     onChange('vehicle_id', vehicleId);
     onChange('no_vehicle_assigned', !vehicleId);
+    if (selectedVehicle) {
+      onChange('vehicle_type', selectedVehicle.vehicle_type);
+      onChange('vehicle_number', selectedVehicle.vehicle_number);
+    }
     if (errors.vehicle_id) {
       onErrorsChange(prev => ({ ...prev, vehicle_id: '' }));
     }
-  }, [errors, onChange, onErrorsChange]);
+  }, [vehicles, errors, onChange, onErrorsChange]);
 
   const handleNoVehicleChange = useCallback((e) => {
     const checked = e.target.checked;
@@ -429,51 +463,6 @@ export default function DriverRegistrationSection({
         )}
       </div>
 
-      {/* Vehicle Assignment */}
-      <div className="border-t border-border/40 pt-4">
-        <div className="flex items-center gap-2 mb-3">
-          <div className="h-1.5 w-1.5 rounded-full bg-blue-500" />
-          <span className="text-xs font-semibold text-muted uppercase tracking-wider">Vehicle Assignment (Optional)</span>
-        </div>
-
-        <label className="flex items-center gap-3 p-3 rounded-xl border border-dashed border-gray-300 dark:border-gray-600 bg-gray-50/50 dark:bg-gray-800/30 cursor-pointer mb-3">
-          <input
-            type="checkbox"
-            name="no_vehicle_assigned"
-            checked={formData.no_vehicle_assigned}
-            onChange={(e) => {
-              const checked = e.target.checked;
-              onChange('no_vehicle_assigned', checked);
-              onChange('vehicle_id', checked ? '' : formData.vehicle_id);
-              onChange('vehicle_type', checked ? '' : formData.vehicle_type);
-              onChange('vehicle_number', checked ? '' : formData.vehicle_number);
-            }}
-            className="w-5 h-5 text-amber-500 border-border/60 rounded focus:ring-amber-500/30"
-          />
-          <div className="flex-1">
-            <div className="font-medium text-text">No vehicle assigned to this driver</div>
-            <div className="text-sm text-muted">Driver will be created without a vehicle assignment</div>
-          </div>
-        </label>
-
-        {!formData.no_vehicle_assigned && (
-          <div className="space-y-3">
-            <label className={labelCls}>
-              Vehicle
-            </label>
-            <select
-              name="vehicle_id"
-              value={formData.vehicle_id || ''}
-              onChange={(e) => handleVehicleSelect(e)}
-              className={inputCls('vehicle_id')}
-            >
-              <option value="">Select a vehicle</option>
-              {/* Vehicles would be loaded based on selected owner - for now placeholder */}
-            </select>
-            {errors.vehicle_id && <p className="mt-1.5 text-sm text-red-500">{errors.vehicle_id}</p>}
-          </div>
-        )}
-      </div>
-    </fieldset>
+      </fieldset>
   );
 }
