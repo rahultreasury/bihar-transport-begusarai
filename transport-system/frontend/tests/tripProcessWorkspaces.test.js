@@ -89,12 +89,18 @@ describe('26. every process is a REAL route, not the same page', () => {
   });
 
   test('the process page does NOT render the excluded workspaces', () => {
-    // Vehicle Hire, Transit, Delivery, POD and Completion ship with their own
-    // phases. Rendering them here would render screens whose endpoints and
-    // tables do not exist in this deployment.
+    // Transit, Delivery, POD and Completion ship with their own phases.
+    // Rendering them here would render screens whose endpoints and tables do not
+    // exist in this deployment.
+    //
+    // `VehicleWorkspace` is deliberately NOT in this list any more. It used to be,
+    // because the Vehicle stage shipped without its hire workspace and this page
+    // could only show a read-only summary of it. The hire workspace now exists and
+    // has its endpoints, so the trip's own Vehicle page renders it — which is the
+    // whole point of a process page. `tripVehicleProcessWiring.test.js` pins that
+    // wiring; the two guards used to contradict each other.
     const page = withoutComments(read('pages/AdminTripProcess.jsx'));
     for (const component of [
-      'VehicleWorkspace',
       'TransitWorkspace',
       'DeliveryWorkspace',
       'PodWorkspace',
@@ -102,8 +108,15 @@ describe('26. every process is a REAL route, not the same page', () => {
     ]) {
       assert.doesNotMatch(page, new RegExp(`<${component}`), `${component} must not be in the L/D boundary`);
     }
-    // The process page must not read the Vehicle Hire API at all.
-    assert.doesNotMatch(page, /vehicleHireAPI/, 'the Loading -> Dispatch page must not depend on Vehicle Hire');
+  });
+
+  test('the vehicle stage renders the hire workspace, not a summary', () => {
+    // Reading the canonical assignment is what the stage summary was built on,
+    // and it still is — the hire workspace simply replaces the summary as what
+    // the operator sees.
+    const page = withoutComments(read('pages/AdminTripProcess.jsx'));
+    assert.match(page, /<VehicleWorkspace/);
+    assert.match(page, /vehicleHireAPI\.getAssignment\(tripId\)/);
   });
 
   test('the two workspaces exist as separate files', () => {

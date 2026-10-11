@@ -33,6 +33,61 @@
 
 const { toProgressStage, isQuoteVisibleToCustomer } = require('../utils/EnquiryStateMachine');
 const { getCustomerCare } = require('../config/customerCare');
+const { Prisma } = require('@prisma/client');
+
+/**
+ * The field names the GENERATED Prisma Client actually knows for a model.
+ *
+ * WHY THIS EXISTS
+ *   Prisma validates `include` at query time against the schema the client was
+ *   generated from. Selecting a relation that the current schema does not
+ *   declare throws `PrismaClientValidationError: Unknown field \`x\` for include
+ *   statement` — a 500 on a page that otherwise works perfectly.
+ *
+ *   The enquiry module gained its Phase B `quotation` relation, and the Quotation
+ *   models were later removed from the deployed schema (that phase is not
+ *   deployed). The DTO kept asking for `quotation`, so EVERY admin enquiry read
+ *   — the list AND the detail page — died with a 500 that looked like a
+ *   database problem and was not one.
+ *
+ *   Rather than deleting the relation (which would silently drop quotation data
+ *   the day the Quotation phase IS deployed), the include is filtered against
+ *   the client that is actually running. Where the relation exists it is loaded
+ *   exactly as before; where it does not, it is simply not requested and the DTO
+ *   renders its normal empty state.
+ *
+ *   If the DMMF cannot be read we do NOT filter — the declared include is used
+ *   as-is, so this helper can never make things worse than the code it replaces.
+ *
+ * @param {string} modelName
+ * @returns {Set<string>|null} null when the model/DMMF cannot be resolved
+ */
+function knownModelFields(modelName) {
+  try {
+    const model = Prisma.dmmf.datamodel.models.find((m) => m.name === modelName);
+    if (!model) return null;
+    return new Set(model.fields.map((f) => f.name));
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Drop any relation in `relations` that the running Prisma Client does not know.
+ *
+ * @param {string} modelName
+ * @param {Record<string, any>} relations
+ * @returns {Record<string, any>}
+ */
+function onlyKnownRelations(modelName, relations) {
+  const known = knownModelFields(modelName);
+  if (!known) return relations;
+  const out = {};
+  for (const [name, value] of Object.entries(relations)) {
+    if (known.has(name)) out[name] = value;
+  }
+  return out;
+}
 
 // Keys that must never appear anywhere in a customer-facing payload.
 const FORBIDDEN_CUSTOMER_KEYS = new Set([
@@ -107,20 +162,39 @@ const partnerSelect = {
  * The standard `include`/`select` used when loading an enquiry for a CUSTOMER.
  * The driver relation is pinned to customerDriverSelect.
  */
-const customerRelationSelect = {
+const customerRelationSelect = onlyKnownRelations('Enquiry', {
   customer: { select: { user_id: true, first_name: true, last_name: true } },
   assignedDriver: { select: customerDriverSelect },
   assignedVehicle: { select: vehicleSelect },
   assignedOwner: { select: ownerSelect },
   assignedPartner: { select: partnerSelect },
   requestedVehicle: { select: vehicleSelect },
-};
+});
 
 /**
  * The standard relation select used for ADMIN / internal reads.
  */
-const adminRelationSelect = {
+const adminRelationSelect = onlyKnownRelations('Enquiry', {
   customer: { select: { user_id: true, first_name: true, last_name: true, email: true, phone: true } },
+  // PHASE B — the canonical quotation relation. Loading it here means the admin
+  // workspace's commercial timeline can be derived from PERSISTED state in the
+  // single response the page already fetches, with no second request and no
+  // parallel status.
+  //
+  // onlyKnownRelations drops this when the Quotation models are not part of the
+  // deployed schema. `toAdminEnquiry` already renders `commercial.quotation_*`
+  // as null when the relation is absent, so the admin workspace simply shows
+  // "no quotation yet" instead of failing.
+  quotation: {
+    select: {
+      quotation_id: true,
+      quotation_number: true,
+      status: true,
+      sent_at: true,
+      confirmed_at: true,
+      total_billing_amount: true,
+    },
+  },
   assignedDriver: { select: adminDriverSelect },
   assignedVehicle: { select: vehicleSelect },
   assignedOwner: { select: ownerSelect },
@@ -128,7 +202,7 @@ const adminRelationSelect = {
   requestedVehicle: { select: vehicleSelect },
   quotedByAdmin: { select: { admin_id: true, full_name: true, email: true } },
   booking: { select: { booking_id: true, booking_number: true, status: true } },
-};
+});
 
 /** @param {*} v @returns {number|null} */
 function num(v) {
@@ -382,6 +456,39 @@ function toAdminEnquiry(e, events = []) {
     ...buildCore(e),
     customer_id: e.customer_id || null,
     session_key: e.session_key || null,
+    // PHASE B — the canonical COMMERCIAL state of this enquiry.
+    //
+    // The admin enquiry timeline renders from exactly these persisted values,
+    // so it is identical after a browser refresh and after any process restart.
+    // Nothing here is derived from whether a form input happens to contain a
+    // number, and nothing here introduces a parallel status: every field below
+    // is already a column the backend writes.
+    //
+    // Deliberately NOT included: vehicle, driver, loading, dispatch, transit,
+    // POD, customer-payment or vendor-payment state. Those are separate status
+    // axes and must never drive the commercial Enquiry → Order progression.
+    commercial: {
+      // The customer's latest decision, if any.
+      customer_decision:
+        e.accepted_at && !e.rejected_at
+          ? 'ACCEPTED'
+          : e.rejected_at
+            ? 'REJECTED'
+            : null,
+      // True once an order exists. The single strongest commercial signal.
+      has_order: Boolean(e.booking_id),
+      booking_id: e.booking_id || null,
+      // Phase B quotation status when one exists: DRAFT | RATE_QUOTED | SENT |
+      // CONVERTED. Null when the enquiry has never been quoted.
+      quotation_status: e.quotation ? e.quotation.status : null,
+      quotation_number: e.quotation ? e.quotation.quotation_number : null,
+      quotation_sent_at: e.quotation ? e.quotation.sent_at : null,
+      quotation_confirmed_at: e.quotation ? e.quotation.confirmed_at : null,
+      total_billing_amount: e.quotation ? num(e.quotation.total_billing_amount) : null,
+      // Legacy pricing axis, kept because Enquiry.price_status is still written
+      // by the pre-Phase-B quote endpoints.
+      price_status: e.price_status || null,
+    },
     vehicle: {
       requested_vehicle_id: e.requested_vehicle_id || null,
       requested_vehicle_name: e.requested_vehicle_name || null,

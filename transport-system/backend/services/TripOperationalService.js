@@ -61,6 +61,11 @@ const OPERATIONS = Object.freeze({
   DISPATCH: 'DISPATCH',
   // Phase 5 — the canonical DISPATCHED → IN_TRANSIT step.
   START_TRANSIT: 'START_TRANSIT',
+  // Cancellation — terminal. The reason is preserved in the
+  // append-only timeline event metadata (the Trip row has no
+  // free-text cancellation column), so the audit trail is the
+  // source of truth for WHY a trip was cancelled.
+  CANCEL: 'CANCEL',
 });
 
 /** What each operation sets the status to. */
@@ -71,6 +76,7 @@ const OPERATION_TARGET = Object.freeze({
   [OPERATIONS.COMPLETE_LOADING]: 'LOADED',
   [OPERATIONS.DISPATCH]: 'DISPATCHED',
   [OPERATIONS.START_TRANSIT]: 'IN_TRANSIT',
+  [OPERATIONS.CANCEL]: 'CANCELLED',
 });
 
 /** Human labels used in the timeline and audit entries. */
@@ -81,6 +87,7 @@ const OPERATION_LABEL = Object.freeze({
   [OPERATIONS.COMPLETE_LOADING]: 'Loaded',
   [OPERATIONS.DISPATCH]: 'Dispatched',
   [OPERATIONS.START_TRANSIT]: 'Started transit',
+  [OPERATIONS.CANCEL]: 'Cancelled',
 });
 
 /**
@@ -102,6 +109,9 @@ const OPERATION_SATISFIED_BY = Object.freeze({
   ],
   [OPERATIONS.START_TRANSIT]: [
     'IN_TRANSIT', 'DELIVERED', 'COMPLETED',
+  ],
+  [OPERATIONS.CANCEL]: [
+    'CANCELLED',
   ],
 });
 
@@ -467,6 +477,28 @@ class TripOperationalService {
     return this._perform(tripId, OPERATIONS.START_TRANSIT, input, user);
   }
 
+  /**
+   * Cancel a trip. Terminal — the state machine refuses any further
+   * transition once a trip is CANCELLED.
+   *
+   * The reason is NOT written to a free-text column on the Trip row
+   * (there is none); it is preserved in the append-only timeline event
+   * metadata, which is the audit trail for WHY the trip was cancelled.
+   * Re-cancelling an already-cancelled trip is an idempotent no-op.
+   *
+   * @param {number} tripId
+   * @param {Object} [input] - { reason: string }
+   * @param {Object|null} user
+   * @returns {Promise<{trip:Object, idempotent:boolean, status:string}>}
+   */
+  async cancelTrip(tripId, input = {}, user = null) {
+    const reason = String(input.reason || '').trim();
+    if (!reason) {
+      throw new ValidationError('A cancellation reason is required');
+    }
+    return this._perform(tripId, OPERATIONS.CANCEL, { reason }, user);
+  }
+
   // =========================================================================
   // VALIDATION
   // =========================================================================
@@ -586,6 +618,12 @@ class TripOperationalService {
       case OPERATIONS.START_TRANSIT:
         // Nothing extra to record: the vehicle's position and ETA live on
         // TripTrackingService, and the movement itself is the status change.
+        break;
+
+      case OPERATIONS.CANCEL:
+        patch.cancelled_at = now;
+        metadata.reason = input.reason || null;
+        metadata.cancelled_at = now;
         break;
 
       default:

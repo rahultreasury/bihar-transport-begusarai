@@ -44,6 +44,25 @@ const realtime = require('../realtime/enquiryRealtime');
 const { adminRelationSelect, customerRelationSelect } = require('../dtos/EnquiryDTO');
 
 const BookingService = require('./BookingService');
+const TripVehicleAssignmentService = require('./TripVehicleAssignmentService');
+const TripProvisioningService = require('./TripProvisioningService');
+const ResourceAvailabilityService = require('./ResourceAvailabilityService');
+const TripTimelineRepository = require('../repositories/TripTimelineRepository');
+
+/**
+ * Read the vehicle that was actually committed on an enquiry row.
+ *
+ * These are thin readers, not business rules: `adminAssign` has already
+ * validated and persisted the assignment, so the only job here is to hand the
+ * committed ids to the shared Trip-assignment service without inventing or
+ * defaulting anything.
+ */
+const validatedVehicleId = (enquiry) =>
+  enquiry?.assigned_vehicle_id ?? undefined;
+const validatedDriverId = (enquiry) =>
+  enquiry?.assigned_driver_id ?? undefined;
+const validatedOwnerId = (enquiry) =>
+  enquiry?.assigned_owner_id ?? undefined;
 
 /** Guards against a pathological quote that would let an admin "sell" a ₹1 trip. */
 const MIN_QUOTE_AMOUNT = 1;
@@ -180,9 +199,17 @@ class EnquiryService {
    */
   constructor(deps = {}) {
     this.prisma = deps.prisma || prisma;
+    // THE canonical vehicle/driver/vendor writer for the consignment — the same
+    // class the Vehicle Hire routes use. Injectable so tests can substitute it.
+    this.tripAssignment = deps.tripAssignment || new TripVehicleAssignmentService({ prisma: this.prisma });
+    this.tripProvisioning = deps.tripProvisioning || new TripProvisioningService({ prisma: this.prisma });
     this.bookingService = deps.bookingService || new BookingService();
     this.events = deps.events || eventService;
     this.assignments = deps.assignments || assignmentService;
+    // The availability / conflict rules (rules 1-8). Reused, never restated, so
+    // a reservation re-check at customer acceptance and the check that allowed
+    // the reservation are literally the same code.
+    this.enquiryAssignment = deps.enquiryAssignment || assignmentService;
     this.realtime = deps.realtime || realtime;
   }
 
@@ -485,14 +512,23 @@ class EnquiryService {
    * @param {number} enquiryId
    * @returns {Promise<object>}
    */
-  async loadForAdmin(enquiryId) {
-    const enquiry = await this.prisma.enquiry.findUnique({
-      where: { enquiry_id: Number(enquiryId) },
-      include: adminRelationSelect,
-    });
-    if (!enquiry) throw new NotFoundError({ message: 'Enquiry not found' });
-    return enquiry;
-  }
+    async loadForAdmin(enquiryId) {
+      // `enquiry_id` is an integer column. Coercing a non-numeric value with
+      // Number() yields NaN, which Prisma rejects with a raw client validation
+      // error — and an unhandled Prisma error surfaces as HTTP 500. A malformed
+      // id is a client mistake, so it is reported as a 400 with a clear message.
+      const id = Number(enquiryId);
+      if (!Number.isInteger(id) || id <= 0) {
+        throw new ValidationError({ message: 'Invalid enquiry id' });
+      }
+
+      const enquiry = await this.prisma.enquiry.findUnique({
+        where: { enquiry_id: id },
+        include: adminRelationSelect,
+      });
+      if (!enquiry) throw new NotFoundError({ message: 'Enquiry not found' });
+      return enquiry;
+    }
 
   /**
    * Resolve an enquiry by its canonical number (used by the confirmation page,
@@ -563,6 +599,18 @@ class EnquiryService {
    * All eight assignment rules run inside the transaction. Any partial value
    * already on the enquiry is carried forward and re-validated, so assigning a
    * driver without a vehicle still gets the coherence + capacity checks.
+   *
+   * ── WHY THIS NOW ALSO TOUCHES THE TRIP ────────────────────────────────────
+   * This method used to write ONLY to `enquiries.assigned_*`. The Vehicle Hire
+   * page reads the canonical assignment from the operational `trips` row, so an
+   * enquiry with a vehicle assigned here was invisible there — two screens,
+   * two columns, one disagreement. That was the reported bug.
+   *
+   * The canonical write now happens through `TripVehicleAssignmentService`,
+   * which is the SAME service the Vehicle Hire page's `/assign` endpoint calls.
+   * The enquiry-level columns and audit events below are kept because the
+   * customer-facing enquiry timeline depends on them — they are mirrors of the
+   * one current assignment, not a second source of truth.
    *
    * @param {number} enquiryId
    * @param {{vehicle_id?:number, driver_id?:number, partner_id?:number, owner_id?:number, note?:string}} input
@@ -737,6 +785,46 @@ class EnquiryService {
 
       return updated;
     });
+
+    // ── THE CANONICAL WRITE ─────────────────────────────────────────────────
+    // The enquiry columns above are the customer-facing mirror. The operational
+    // assignment lives on the Trip, which is what Vehicle Hire reads. Both are
+    // written, in that order, through the ONE shared service — so this screen
+    // and the Vehicle Hire screen cannot drift apart again.
+    try {
+      // (a) Make sure the operational record EXISTS. Trip creation used to be a
+      //     manual admin action, so a consignment could sit outside Vehicle Hire
+      //     entirely — which is exactly how the reported consignment went missing.
+      //
+      //     Since vehicle + driver are now reserved BEFORE the customer accepts,
+      //     this must also work for an enquiry that has no Booking yet: the
+      //     reservation trip is anchored on `trips.enquiry_id` and is linked to the
+      //     Booking the moment acceptance creates one. Idempotent either way.
+      const { trip } = await this.tripProvisioning.ensureTripForEnquiry(result.enquiry_id);
+
+      // (b) Write the canonical assignment onto it. With the reservation path in
+      //     place this is no longer a no-op for an un-accepted enquiry — it is
+      //     exactly how a vehicle and driver are held for a quote that has not
+      //     been sent yet.
+      if (trip) {
+        await this.tripAssignment.assign(
+          { tripId: trip.trip_id },
+          {
+            vehicle_id: validatedVehicleId(result),
+            driver_id: validatedDriverId(result),
+            vendor_id: validatedOwnerId(result),
+          },
+          { userId: admin?.adminId ?? null, role: admin?.role ?? null }
+        );
+      }
+    } catch (syncError) {
+      // The enquiry-level assignment has already committed. A failure to mirror
+      // it onto the Trip must not lose the operator's work, but it MUST be
+      // visible: an enquiry that looks assigned while Vehicle Hire disagrees is
+      // exactly the bug this change exists to prevent.
+      console.error('Enquiry → Trip vehicle assignment sync failed:', syncError);
+      throw syncError;
+    }
 
     await this._broadcastAfterChange(result.enquiry_id, 'vehicle:assigned', {
       vehicle_assigned: Boolean(result.assigned_vehicle_id),
@@ -1080,6 +1168,21 @@ class EnquiryService {
       throw new ConflictError({ message: 'No final quote is available for this enquiry yet' });
     }
 
+    // ── PRE-ACCEPTANCE RESERVATION RE-CHECK ────────────────────────────────
+    // A vehicle and driver may now be reserved BEFORE the customer accepts, so
+    // the quote they were sent described a specific truck and a specific driver.
+    // Between that reservation and this tap another booking may have taken the
+    // same resources, so the reservation is NOT trusted blindly.
+    //
+    // The rules are NOT re-implemented here: `_assertReservedResourcesStillFree`
+    // delegates to the same `EnquiryAssignmentService` that validated the
+    // reservation in the first place. A genuine conflict raises a ConflictError
+    // with an actionable message, which releases the customer's claim by simply
+    // never taking it — the enquiry stays AWAITING_CUSTOMER_ACCEPTANCE and an
+    // operator reassigns on the Vehicle Hire page. Confirming with a truck that
+    // is already on another job is exactly what this refuses to do.
+    await this._assertReservedResourcesStillFree(enquiry);
+
     const finalPrice = Number(enquiry.final_quoted_price);
     const acceptedAt = new Date();
 
@@ -1129,12 +1232,51 @@ class EnquiryService {
     const updated = await this.prisma.$transaction(async (tx) => {
       assertTransition('CUSTOMER_ACCEPTED', 'CONFIRMED');
 
+      // ── THE ATOMIC RE-CHECK (§8) ─────────────────────────────────────────
+      // The read above was a fast, friendly pre-check. THIS is the one that
+      // decides.
+      //
+      // Between the reservation and this tap another booking may have taken the
+      // truck or the driver. Running the same availability rules INSIDE the
+      // transaction that writes CONFIRMED means that either both hold — the
+      // claim, the Booking and the assignment are committed together — or the
+      // whole transaction rolls back with an operational conflict and the
+      // customer is never given a confirmation that cannot be honoured.
+      //
+      // No vehicle or driver is ever searched for here: the ones already
+      // assigned are the ones used.
+      await this._assertReservedResourcesStillFree(enquiry, tx);
+
       const row = await tx.enquiry.update({
         where: { enquiry_id: enquiry.enquiry_id },
         data: {
           status: 'CONFIRMED',
           confirmed_at: acceptedAt,
           booking_id: booking.booking_id,
+        },
+      });
+
+      // ── THE RESERVATION HAND-OFF ─────────────────────────────────────────
+      // The vehicle and driver were reserved on a trip that existed BEFORE this
+      // Booking did. Bind it now so the consignment has exactly ONE operational
+      // trip for the rest of its life, and so the Vehicle Hire page keeps showing
+      // the same truck and driver the customer accepted.
+      //
+      // Narrowly scoped on purpose:
+      //   • only the trip whose `enquiry_id` is this enquiry;
+      //   • only a NULL `booking_id` is filled, so a trip already bound to an
+      //     order is never repointed;
+      //   • vehicle, driver and vendor are NEVER touched — the reservation the
+      //     customer agreed to is preserved exactly as offered;
+      //   • no hire money is created. Agreeing what the vendor is owed stays an
+      //     explicit operator action in the Vehicle Hire workflow.
+      await tx.trip.updateMany({
+        where: { enquiry_id: enquiry.enquiry_id, booking_id: null },
+        data: {
+          booking_id: booking.booking_id,
+          // Resources are committed for this consignment from here on.
+          status: 'ASSIGNED',
+          updated_at: acceptedAt,
         },
       });
 
@@ -1205,6 +1347,373 @@ class EnquiryService {
     );
 
     return { enquiry: updated, booking };
+  }
+
+  /**
+   * RE-CHECK A PRE-ACCEPTANCE RESERVATION AT THE MOMENT THE CUSTOMER ACCEPTS.
+   *
+   * A vehicle and driver can now be reserved BEFORE the customer decides, so
+   * this is the point where "reserved" has to become "still true". The rules are
+   * NOT restated: this delegates to `EnquiryAssignmentService`, the same module
+   * that validated the reservation, so there is exactly one conflict algorithm.
+   *
+   * NO RESERVATION → NO-OP. An enquiry that never had a vehicle assigned simply
+   * accepts, which is what every pre-existing enquiry does.
+   *
+   * A CONFLICT RAISES, and it raises BEFORE the claim is taken. That ordering is
+   * the whole point: the enquiry therefore stays AWAITING_CUSTOMER_ACCEPTANCE,
+   * no Booking is created, and nothing has to be undone. The message names the
+   * resource so an operator knows exactly what to reassign.
+   *
+   * @param {object} enquiry
+   * @param {object} [tx] — when supplied, the check runs INSIDE the caller's
+   *   transaction, so a conflict rolls the acceptance back rather than being
+   *   discovered after the fact.
+   */
+  async _assertReservedResourcesStillFree(enquiry, tx = null) {
+    const vehicleId = enquiry.assigned_vehicle_id ?? null;
+    const driverId = enquiry.assigned_driver_id ?? null;
+    if (!vehicleId && !driverId) return true;
+
+    try {
+      await this.enquiryAssignment.validateAssignment(
+        {
+          enquiry,
+          vehicleId,
+          driverId,
+          partnerId: null,
+          ownerId: enquiry.assigned_owner_id ?? null,
+          // The consignment's own reservation is not a conflict with itself; this
+          // is a re-check, not a replacement.
+          isReassignment: true,
+        },
+        tx,
+      );
+      return true;
+    } catch (err) {
+      // Only a genuine resource conflict becomes an operational conflict. A
+      // missing master record is handled the same way, because confirming with a
+      // vehicle or driver that no longer exists is the same failure the customer
+      // would experience — being told to wait.
+      throw new ConflictError({
+        message:
+          err?.message ||
+          'The vehicle or driver held for this quote is no longer available. Our team is reassigning it now.',
+        errorCode: 'RESERVATION_CONFLICT',
+      });
+    }
+  }
+
+  /**
+   * RELEASE A PRE-ACCEPTANCE RESERVATION.
+   *
+   * When a customer rejects the quote, or the enquiry is cancelled or expires,
+   * the truck and driver that were being held for it must become free again. A
+   * reservation that outlives its quote would silently keep a vehicle off the
+   * road for a consignment that is never happening.
+   *
+   * WHAT IT DOES
+   *   • Clears vehicle / driver / vendor on the reservation trip and on the
+   *     enquiry mirror, and records a `vehicle_assignment_changed` entry on the
+   *     trip timeline so the release is auditable rather than a silent undo.
+   *   • Never creates, edits or cancels hire money. Releasing a reservation is
+   *     not a financial event.
+   *   • Never touches a consignment that has already been accepted — an
+   *     accepted order's resources are the operator's to keep.
+   *
+   * FAIL-SAFE
+   *   A missing reservation, a missing trip or a partially-built row all resolve
+   *   to "nothing was held", which is the truth. It never throws and never
+   *   blocks the reject or cancel that triggered it.
+   *
+   * @param {number} enquiryId
+   * @param {string} reason
+   * @returns {Promise<{released:boolean, vehicle_id?:number, driver_id?:number}>}
+   */
+  async _releaseReservation(enquiryId, reason) {
+    let trip = null;
+    try {
+      trip = await this.tripAssignment.findTrip({ enquiryId });
+    } catch (err) {
+      logger.warn({ err: err.message, enquiryId }, 'enquiry.reservation_release_lookup_failed');
+    }
+    if (!trip) return { released: false };
+
+    // An accepted order keeps its resources. Only an un-accepted reservation is
+    // released, so this can never un-assign a confirmed consignment.
+    const tripIsLive = trip.status !== 'CANCELLED' && trip.status !== 'COMPLETED';
+    if (!tripIsLive) return { released: false };
+
+    const vehicleId = trip.vehicle_id ?? null;
+    const driverId = trip.driver_id ?? null;
+    if (!vehicleId && !driverId) return { released: false };
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.trip.update({
+        where: { trip_id: trip.trip_id },
+        data: {
+          vehicle_id: null,
+          driver_id: null,
+          transport_owner_id: null,
+          updated_at: new Date(),
+        },
+      });
+
+      await tx.enquiry.updateMany({
+        where: { enquiry_id: enquiryId },
+        data: {
+          assigned_vehicle_id: null,
+          assigned_vehicle_number: null,
+          assigned_vehicle_type: null,
+          assigned_driver_id: null,
+          assigned_driver_name: null,
+          assigned_owner_id: null,
+          vehicle_assigned_at: null,
+          driver_assigned_at: null,
+        },
+      });
+
+      await new TripTimelineRepository({ prisma: tx }).create(
+        {
+          trip_id: trip.trip_id,
+          event_type: 'vehicle_assignment_released',
+          description: `Reservation released — ${reason}`,
+          reference_type: 'vehicle_assignment',
+          metadata: {
+            released_vehicle_id: vehicleId,
+            released_driver_id: driverId,
+            reason,
+          },
+          created_by: null,
+        },
+        tx,
+      );
+    });
+
+    // The vehicle/driver MASTERS are freed through the EXISTING availability
+    // service, so `is_available` and `status` can never drift apart. That module
+    // re-checks for other active trips, so a truck still on a live job stays
+    // busy — releasing one consignment never frees a vehicle that is needed.
+    try {
+      await new ResourceAvailabilityService({ prisma: this.prisma }).releaseResourcesIfNoActiveTrip(
+        driverId,
+        vehicleId,
+        trip.trip_id,
+      );
+    } catch (err) {
+      logger.warn({ err: err.message, enquiryId }, 'enquiry.reservation_release_master_failed');
+    }
+
+    return { released: true, vehicle_id: vehicleId, driver_id: driverId };
+  }
+
+  /**
+   * ADMIN-ACTED CONFIRMATION (Phase B).
+   *
+   * The client document §2 is explicit:
+   *   "If the customer confirms on the call, select Confirm Order right there
+   *    on the quotation screen."
+   *
+   * So an authenticated operator may record a confirmation the customer gave
+   * verbally. This is the SAME conversion as customerAccept() — same atomic
+   * claim, same single Booking, same unique booking_id, same claim-release on
+   * failure — because both delegate to one shared core below. It is NOT a
+   * second order-creation mechanism.
+   *
+   * WHY THE CUSTOMER TOKEN IS NOT REQUIRED HERE
+   *   customerAccept() demands proof that the caller OWNS the enquiry, because
+   *   any anonymous visitor must not be able to accept somebody else's quote.
+   *   That guard is untouched. This path is reachable only through an endpoint
+   *   already behind `protect` + `adminOnly`, and the acting admin identity is
+   *   recorded in the audit trail — which is the correct authority for
+   *   "the customer told us on the phone".
+   *
+   * @param {number} enquiryId
+   * @param {{adminId?:number, adminName?:string}} admin
+   * @returns {Promise<{enquiry:object, booking:object|null, alreadyAccepted:boolean}>}
+   */
+  async adminConfirmOrder(enquiryId, admin = {}) {
+    const enquiry = await this.loadForAdmin(enquiryId);
+    return this._convertEnquiryToOrder(enquiry, {
+      actorType: 'ADMIN',
+      actorId: admin.adminId ?? null,
+      actorName: admin.adminName || 'Bihar Transport Admin',
+      eventType: 'QUOTATION_CONFIRMED',
+      message: `Order confirmed by ${admin.adminName || 'admin'} on the customer's confirmation`,
+    });
+  }
+
+  /**
+   * THE ONE ORDER-CONVERSION CORE.
+   *
+   * Shared by customerAccept() (the customer taps Accept) and
+   * adminConfirmOrder() (the operator records a confirmation taken on the
+   * call). There is deliberately no second implementation of this logic.
+   *
+   * @private
+   */
+  async _convertEnquiryToOrder(enquiry, { actorType, actorId, actorName, eventType, message } = {}) {
+    if (enquiry.status === 'CUSTOMER_ACCEPTED' || enquiry.status === 'CONFIRMED') {
+      // Idempotent: a repeated confirmation returns the same outcome, never a
+      // 2nd booking.
+      const booking = enquiry.booking_id
+        ? await this.prisma.booking.findUnique({
+            where: { booking_id: enquiry.booking_id },
+            select: { booking_id: true, booking_number: true, status: true },
+          })
+        : null;
+      return { enquiry, booking, alreadyAccepted: true };
+    }
+
+    if (enquiry.status !== 'AWAITING_CUSTOMER_ACCEPTANCE') {
+      throw new ConflictError({
+        message: `This enquiry is not awaiting your approval (current status: ${enquiry.status})`,
+      });
+    }
+
+    if (enquiry.final_quoted_price === null || !Number.isFinite(Number(enquiry.final_quoted_price))) {
+      throw new ConflictError({ message: 'No final quote is available for this enquiry yet' });
+    }
+
+    const finalPrice = Number(enquiry.final_quoted_price);
+    const acceptedAt = new Date();
+
+    // ── Atomically claim ───────────────────────────────────────────────────
+    const claim = await this.prisma.enquiry.updateMany({
+      where: { enquiry_id: enquiry.enquiry_id, status: 'AWAITING_CUSTOMER_ACCEPTANCE' },
+      data: { status: 'CUSTOMER_ACCEPTED', accepted_at: acceptedAt, price_status: 'ACCEPTED' },
+    });
+
+    if (claim.count === 0) {
+      throw new ConflictError({
+        message: 'This quote was just updated or already responded to. Please refresh.',
+      });
+    }
+
+    // ── Create the canonical Booking via the EXISTING service ──────────────
+    let booking;
+    try {
+      booking = await this._createBookingFromEnquiry(enquiry, finalPrice, {});
+    } catch (err) {
+      // Release the claim so the confirmation can be retried.
+      await this.prisma.enquiry.updateMany({
+        where: { enquiry_id: enquiry.enquiry_id, status: 'CUSTOMER_ACCEPTED' },
+        data: { status: 'AWAITING_CUSTOMER_ACCEPTANCE', accepted_at: null, price_status: 'SENT' },
+      });
+      logger.error(
+        { err: err.message, enquiryId: enquiry.enquiry_id },
+        'enquiry.accept_booking_creation_failed_claim_released'
+      );
+      throw err instanceof AppError
+        ? err
+        : new AppError({
+            message: 'We could not confirm your booking. Please try again in a moment.',
+            errorCode: 'BOOKING_CREATION_FAILED',
+            statusCode: 500,
+          });
+    }
+
+    // ── Link + advance to CONFIRMED + audit ────────────────────────────────
+    const updated = await this.prisma.$transaction(async (tx) => {
+      assertTransition('CUSTOMER_ACCEPTED', 'CONFIRMED');
+
+      const row = await tx.enquiry.update({
+        where: { enquiry_id: enquiry.enquiry_id },
+        data: { status: 'CONFIRMED', confirmed_at: acceptedAt, booking_id: booking.booking_id },
+      });
+
+      // ── THE RESERVATION HAND-OFF ─────────────────────────────────────────
+      // The vehicle and driver were reserved on a trip that existed BEFORE this
+      // Booking did. Bind it now so the consignment has exactly ONE operational
+      // trip for the rest of its life, and so the Vehicle Hire page keeps showing
+      // the same truck and driver the customer accepted.
+      //
+      // Narrowly scoped on purpose:
+      //   • only the trip whose `enquiry_id` is this enquiry;
+      //   • only a NULL `booking_id` is filled, so a trip already bound to an
+      //     order is never repointed;
+      //   • vehicle, driver and vendor are NEVER touched — the reservation the
+      //     customer agreed to is preserved exactly as offered;
+      //   • no hire money is created. Agreeing what the vendor is owed stays an
+      //     explicit operator action in the Vehicle Hire workflow.
+      await tx.trip.updateMany({
+        where: { enquiry_id: enquiry.enquiry_id, booking_id: null },
+        data: {
+          booking_id: booking.booking_id,
+          // Resources are committed for this consignment from here on.
+          status: 'ASSIGNED',
+          updated_at: acceptedAt,
+        },
+      });
+
+      await this.events.addEvent(
+        {
+          enquiryId: enquiry.enquiry_id,
+          eventType: eventType || 'CUSTOMER_ACCEPTED',
+          actorType: actorType || 'CUSTOMER',
+          actorId: actorId ?? null,
+          actorName: actorName || enquiry.customer_name,
+          message:
+            message ||
+            `You accepted the final quote of ₹${Math.round(finalPrice).toLocaleString('en-IN')}`,
+          metadata: { final_quoted_price: finalPrice },
+        },
+        tx
+      );
+
+      await this.events.addEvent(
+        {
+          enquiryId: enquiry.enquiry_id,
+          eventType: 'BOOKING_CREATED',
+          actorType: 'SYSTEM',
+          message: `Booking ${booking.booking_number} created`,
+          metadata: { booking_id: booking.booking_id, booking_number: booking.booking_number },
+        },
+        tx
+      );
+
+      await this.events.addEvent(
+        {
+          enquiryId: enquiry.enquiry_id,
+          eventType: 'STATUS_CHANGED',
+          actorType: 'SYSTEM',
+          message: 'Trip confirmed',
+          metadata: { from: 'CUSTOMER_ACCEPTED', to: 'CONFIRMED' },
+        },
+        tx
+      );
+
+      return row;
+    });
+
+    this.realtime.emitEnquiryToAdmins(enquiry.enquiry_id, 'customer:accepted');
+    await this._broadcastAfterChange(enquiry.enquiry_id, 'booking:confirmed');
+
+    if (enquiry.assigned_driver_id) {
+      this.realtime.emitToDriver(enquiry.assigned_driver_id, 'booking:confirmed', {
+        enquiry_id: enquiry.enquiry_id,
+        enquiry_number: enquiry.enquiry_number,
+        pickup_location: enquiry.pickup_location,
+        drop_location: enquiry.drop_location,
+        pickup_date: enquiry.pickup_date,
+        pickup_time: enquiry.pickup_time,
+        // PRIVACY: no customer mobile, no final price.
+      });
+    }
+    if (enquiry.assigned_partner_id) {
+      this.realtime.emitToPartner(enquiry.assigned_partner_id, 'booking:confirmed', {
+        enquiry_id: enquiry.enquiry_id,
+        enquiry_number: enquiry.enquiry_number,
+        booking_number: booking.booking_number,
+      });
+    }
+
+    logger.info(
+      { enquiryId: enquiry.enquiry_id, bookingId: booking.booking_id, finalPrice, actorType },
+      'enquiry.accepted'
+    );
+
+    return { enquiry: updated, booking, alreadyAccepted: false };
   }
 
   /**
@@ -1412,10 +1921,29 @@ class EnquiryService {
       return row;
     });
 
+    // ── RELEASE THE RESERVATION ───────────────────────────────────────────
+    // The customer declined the quote, so the truck and driver being held for it
+    // must go back on the road. Without this a rejected consignment would keep
+    // a vehicle reserved for something that is never happening.
+    //
+    // Deliberately AFTER the rejection has been committed and never allowed to
+    // fail the rejection: a customer's decision to decline is recorded even if
+    // freeing the vehicle hits a problem, which is logged rather than swallowed.
+    const release = await this._releaseReservation(enquiry.enquiry_id, 'Customer rejected the quote');
+    if (release.released) {
+      await this.events.addEvent({
+        enquiryId: enquiry.enquiry_id,
+        eventType: 'ASSIGNMENT_RELEASED',
+        actorType: 'SYSTEM',
+        message: 'Reserved vehicle and driver released back to the fleet',
+        metadata: { vehicle_id: release.vehicle_id, driver_id: release.driver_id },
+      });
+    }
+
     this.realtime.emitEnquiryToAdmins(enquiry.enquiry_id, 'customer:rejected');
     await this._broadcastAfterChange(enquiry.enquiry_id, 'customer:rejected');
 
-    return { enquiry: updated };
+    return { enquiry: updated, released: release.released };
   }
 
   /**
@@ -1472,6 +2000,11 @@ class EnquiryService {
 
       return row;
     });
+
+    // The cancellation is committed, so any vehicle and driver held for this
+    // enquiry must go back on the road — same rule as a rejection, because the
+    // operational consequence is identical.
+    await this._releaseReservation(enquiry.enquiry_id, reason);
 
     this.realtime.emitEnquiryToAdmins(enquiry.enquiry_id, 'booking:cancelled');
     await this._broadcastAfterChange(enquiry.enquiry_id, 'booking:cancelled');
@@ -1629,6 +2162,11 @@ class EnquiryService {
 
       return row;
     });
+
+    // An admin cancelling an enquiry releases any vehicle/driver being held for
+    // it, for the same reason a customer rejection does: the consignment is not
+    // happening, so nothing should stay reserved for it.
+    await this._releaseReservation(enquiry.enquiry_id, reason);
 
     this.realtime.emitEnquiryToAdmins(enquiry.enquiry_id, 'booking:cancelled');
     await this._broadcastAfterChange(enquiry.enquiry_id, 'booking:cancelled');

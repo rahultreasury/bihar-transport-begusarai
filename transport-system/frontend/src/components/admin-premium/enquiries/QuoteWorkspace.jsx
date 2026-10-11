@@ -1,15 +1,32 @@
 /**
  * QuoteWorkspace.jsx
  * ---------------------------------------------------------------------------
- * "QUOTE & ASSIGNMENT" — the operational core of the enquiry workspace.
+ * "QUOTATION" — the pricing core of the enquiry workspace.
  *
- * THIS IS THE ORIGINAL, APPROVED CARD. Its layout, spacing, typography and
- * order are unchanged; only its ACTIONS are now backed by the six-stage
- * workflow API.
+ * SCOPE: THIS CARD QUOTES. IT DOES NOT HIRE.
+ *   The Driver / Vehicle picker, the "Change"/"Clear" assignment buttons and the
+ *   "Current assignment" summary that used to live here have been REMOVED. They
+ *   were a second vehicle-hiring form competing with the canonical one, and they
+ *   duplicated the Vehicle Hire workflow.
+ *
+*   Hiring happens in exactly one place: the Universal Vehicle Hire workspace at
+*   /admin/trips/:tripId/vehicle-hire, which owns vehicle, driver, owner/vendor, billing
+*   model, contract/commission, hire amount, commission and net vendor payable.
+ *
+ *   What remains here is the read-only `VehicleHireStatusCard` — a status and
+ *   handoff card that reads the canonical assignment and links to that one
+ *   workflow. It contains no hiring form.
+ *
+ * WHY driver_id IS STILL SENT IN THE PAYLOAD
+ *   The booking quote endpoints (`prepare-quote` / `send-quote`) require a
+ *   driver_id. That is an EXISTING backend contract and it is not changed here.
+ *   The value posted is the PERSISTED `booking.driver_id` — i.e. whatever the
+ *   single assignment writer (`TripVehicleAssignmentService`, driven from the
+ *   Vehicle Hire page) already stored. This card never lets an operator choose a
+ *   driver, so it can never create a competing assignment; it only forwards the
+ *   server's own current one, for backwards compatibility.
  *
  * REAL ENDPOINTS ONLY
- *   Driver   : GET  /api/admin/booking-drivers            (driver + their vehicle)
- *   Vehicle  : GET  /api/admin/vehicles?driver_id=&status= (real available vehicles)
  *   Prepare  : POST /api/admin/bookings/:id/prepare-quote  (UNDER_REVIEW → QUOTE_PREPARED)
  *   Send     : POST /api/admin/bookings/:id/send-quote     (QUOTE_PREPARED → QUOTE_SENT)
  *
@@ -17,10 +34,6 @@
  *   At stage 2 the primary button is "Prepare Quote" (saves the draft, notifies
  *   nobody). At stage 3 it is "Send Quote to Customer". The stage comes from
  *   stageForBooking(), never from local state.
- *
- * The send payload matches the existing backend contract exactly:
- *   { driver_id (required), vehicle_id (optional), final_price (required),
- *     quote_validity_hours, remarks }
  *
  * Pricing is never recomputed here. The estimated price is whatever the backend
  * already calculated for this booking; the admin only sets the final amount.
@@ -31,24 +44,18 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   BadgeIndianRupee,
-  CheckCircle2,
   ClipboardCheck,
   FileText,
   MapPinned,
   Send,
   Timer,
-  Truck,
-  UserRound,
 } from 'lucide-react';
 
 import { adminAPI } from '../../../services/api';
-import DriverPickerModal from './DriverPickerModal';
+import VehicleHireStatusCard from './VehicleHireStatusCard';
 import {
-  EmptyBlock,
-  ErrorBlock,
   Field,
   GhostButton,
-  LoadingBlock,
   Notice,
   Panel,
   PrimaryButton,
@@ -56,8 +63,6 @@ import {
 } from './EnquiryUI';
 import {
   apiErrorMessage,
-  assignedDriverName,
-  assignedVehicleNumber,
   fmtDistance,
   inr,
 } from './enquiryStatus';
@@ -76,7 +81,6 @@ const VALIDITY_OPTIONS = [
 export default function QuoteWorkspace({
   booking,
   onSent,
-  onAssigned,
   stage: stageOverride,
   feedback,
   onDismissFeedback,
@@ -97,35 +101,30 @@ export default function QuoteWorkspace({
   const stage = stageOverride || stageForBooking(booking);
   const isPreparedStage = stage === STAGE.QUOTE_PREPARED;
 
-  const [driver, setDriver] = useState(null);
-  const [driverId, setDriverId] = useState(null);
-  const [pickerOpen, setPickerOpen] = useState(false);
-
-  const [vehicles, setVehicles] = useState([]);
-  const [vehiclesLoading, setVehiclesLoading] = useState(false);
-  const [vehiclesError, setVehiclesError] = useState(null);
-  const [vehicleId, setVehicleId] = useState('');
-
   const [finalPrice, setFinalPrice] = useState('');
   const [validity, setValidity] = useState('24');
   const [remarks, setRemarks] = useState('');
 
   const [sending, setSending] = useState(false);
-  const [assigning, setAssigning] = useState(false);
   const [sendError, setSendError] = useState(null);
   const [sendSuccess, setSendSuccess] = useState(null);
   const [validation, setValidation] = useState([]);
 
   const bookingKey = booking?.booking_id;
 
+  /**
+   * THE PERSISTED ASSIGNMENT — read, never written.
+   * This is the driver/vehicle the backend already stored through the single
+   * assignment writer. It is forwarded to the quote endpoints for contract
+   * compatibility and displayed in the Vehicle Hire status card. There is no
+   * picker, no "Change" and no "Clear" here any more.
+   */
+  const assignedDriverId = booking?.driver_id || null;
+  const assignedVehicleId = booking?.vehicle_id || null;
+
   /* Re-seed the form from PERSISTED state, not from anything the browser held. */
   useEffect(() => {
     if (!booking) return;
-    setDriver(null);
-    setDriverId(booking.driver_id || null);
-    setVehicleId('');
-    setVehicles([]);
-    setVehiclesError(null);
     setFinalPrice(booking.final_price ? String(booking.final_price) : '');
     setValidity('24');
     setRemarks(booking.quote_remarks || '');
@@ -133,117 +132,6 @@ export default function QuoteWorkspace({
     setSendSuccess(null);
     setValidation([]);
   }, [bookingKey, booking]);
-
-  /* Real available vehicles that belong to the selected driver. */
-  const loadVehicles = useCallback(async (id) => {
-    if (!id) {
-      setVehicles([]);
-      return;
-    }
-    setVehiclesLoading(true);
-    setVehiclesError(null);
-    try {
-      const res = await adminAPI.getVehicles({ driver_id: id, status: 'available', limit: 50 });
-      setVehicles(res?.data?.data || []);
-    } catch (err) {
-      setVehiclesError(apiErrorMessage(err, 'Unable to load vehicles for this driver.'));
-    } finally {
-      setVehiclesLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!editable) {
-      setVehicles([]);
-      return;
-    }
-    loadVehicles(driverId);
-  }, [driverId, editable, loadVehicles]);
-
-  const driverVehicle = driver?.vehicle || null;
-  const effectiveVehicleId =
-    vehicleId || (driverVehicle?.vehicle_id ? String(driverVehicle.vehicle_id) : '');
-
-  /**
-   * SELECTING A DRIVER IS A REAL, PERSISTED OPERATION.
-   *
-   * It used to be `setDriver(...)` + `setDriverId(...)` only — pure React
-   * state — so the assignment vanished on the next render, the next workflow
-   * step, and any browser refresh. The database was never written.
-   *
-   * It now calls the canonical assignment endpoint
-   * (POST /api/admin/bookings/:id/assign-driver), which persists
-   * driver_id + the vehicle resolved from the driver's registered vehicle +
-   * the owner/partner on the booking row, and then re-reads the booking.
-   * The summary below is rendered from that re-read, not from local state.
-   */
-  const handleSelectDriver = useCallback(
-    async (picked) => {
-      if (!picked?.driver_id || !booking?.booking_id) return;
-
-      setAssigning(true);
-      setSendError(null);
-      setSendSuccess(null);
-      setPickerOpen(false);
-
-      try {
-        const res = await adminAPI.assignBookingDriver(booking.booking_id, {
-          driver_id: picked.driver_id,
-          // Optional override: only sent when the admin explicitly picked a
-          // different vehicle than the driver's registered one.
-          ...(picked.vehicle?.vehicle_id ? { vehicle_id: picked.vehicle.vehicle_id } : {}),
-        });
-
-        if (!res?.data?.success) {
-          setSendError(res?.data?.message || 'The server could not save this driver.');
-          return;
-        }
-
-        // Keep the picked driver for the label only; every displayed fact is
-        // re-read from the booking by onAssigned() below.
-        setDriver(picked);
-        setDriverId(picked.driver_id);
-        setVehicleId(picked?.vehicle?.vehicle_id ? String(picked.vehicle.vehicle_id) : '');
-        setSendSuccess('Driver assigned and saved.');
-        await onAssigned?.();
-      } catch (err) {
-        setSendError(
-          apiErrorMessage(err, 'Unable to assign driver. Please try again.'),
-        );
-      } finally {
-        setAssigning(false);
-      }
-    },
-    [booking?.booking_id, onAssigned],
-  );
-
-  /**
-   * The ONLY normal action that removes an assignment. It calls the same
-   * endpoint with `clear: true` so the database is updated too — clearing only
-   * local state would leave the booking still assigned after a refresh.
-   */
-  const clearDriver = useCallback(async () => {
-    if (!booking?.booking_id) return;
-    setAssigning(true);
-    setSendError(null);
-    setSendSuccess(null);
-    try {
-      const res = await adminAPI.assignBookingDriver(booking.booking_id, { clear: true });
-      if (!res?.data?.success) {
-        setSendError(res?.data?.message || 'The server could not clear this assignment.');
-        return;
-      }
-      setDriver(null);
-      setDriverId(null);
-      setVehicleId('');
-      setSendSuccess('Assignment cleared.');
-      await onAssigned?.();
-    } catch (err) {
-      setSendError(apiErrorMessage(err, 'Unable to clear the assignment. Please try again.'));
-    } finally {
-      setAssigning(false);
-    }
-  }, [booking?.booking_id, onAssigned]);
 
   /* Validation mirrors the backend's own contract for both endpoints. */
   const computeValidation = useCallback(() => {
@@ -253,14 +141,16 @@ export default function QuoteWorkspace({
     if (!finalPrice || !Number.isFinite(price) || price <= 0) {
       issues.push('Enter a final quote amount greater than ₹0.');
     }
-    if (!driverId) {
-      issues.push('Select a driver — the quote API requires one.');
+    if (!assignedDriverId) {
+      issues.push(
+        'No driver is assigned to this consignment yet — assign one in the Vehicle Hire workspace, then prepare the quote.',
+      );
     }
     if (!validity || Number(validity) <= 0) {
       issues.push('Choose how long this quote stays valid.');
     }
     return issues;
-  }, [booking, finalPrice, driverId, validity]);
+  }, [booking, finalPrice, assignedDriverId, validity]);
 
   /**
    * The one submit handler for BOTH buttons. `send` picks which real endpoint
@@ -282,12 +172,12 @@ export default function QuoteWorkspace({
       setSendSuccess(null);
       try {
         const payload = {
-          driver_id: driverId,
+          driver_id: assignedDriverId,
           final_price: Number(finalPrice),
           quote_validity_hours: Number(validity),
           remarks: remarks.trim() ? remarks.trim() : null,
         };
-        if (effectiveVehicleId) payload.vehicle_id = Number(effectiveVehicleId);
+        if (assignedVehicleId) payload.vehicle_id = Number(assignedVehicleId);
 
         if (send) {
           const res = await adminAPI.sendQuote(booking.booking_id, payload);
@@ -318,46 +208,10 @@ export default function QuoteWorkspace({
         setSending(false);
       }
     },
-    [booking, computeValidation, driverId, finalPrice, validity, remarks, effectiveVehicleId, onSent],
+    [booking, computeValidation, assignedDriverId, assignedVehicleId, finalPrice, validity, remarks, onSent],
   );
 
   const estimated = booking?.estimated_price ? inr(booking.estimated_price) : '—';
-
-  const readOnlyDriverName = assignedDriverName(booking);
-  const readOnlyVehicle = assignedVehicleNumber(booking);
-
-  /**
-   * THE DATABASE IS THE SOURCE OF TRUTH FOR WHAT IS DISPLAYED.
-   *
-   * The `driver` object from the picker is used only for the driver code and
-   * as an instant label. Name, phone, vehicle and owner/partner all come from
-   * the booking row, which is re-read from the API after every mutation — that
-   * is what makes the assignment survive a refresh, a workflow step change and
-   * navigating away and back.
-   */
-  const assignmentSummary = useMemo(() => {
-    const persistedName =
-      readOnlyDriverName || (driver ? driver.driver_name || `Driver #${driver.driver_id}` : null);
-
-    // The persisted relation wins; the picker's payload is only a bridge for
-    // the instant between choosing and the re-read landing.
-    const persistedVehicle =
-      booking?.vehicle_number || readOnlyVehicle || driverVehicle?.vehicle_number || null;
-
-    return {
-      name: persistedName,
-      phone: booking?.mobile_snapshot || driver?.mobile || booking?.driver_phone || null,
-      vehicle: persistedVehicle || 'No vehicle assigned to this driver',
-      vehicleType: booking?.vehicle_type || driverVehicle?.vehicle_type || null,
-      owner:
-        booking?.assigned_owner_name ||
-        booking?.owner_name_snapshot ||
-        driver?.owner_name ||
-        driver?.owner?.owner_name ||
-        driver?.partner?.partner_name ||
-        null,
-    };
-  }, [driver, driverVehicle, readOnlyDriverName, readOnlyVehicle, booking]);
 
   /** External feedback (from a stage action elsewhere on the page). */
   const externalNotice = feedback ? (
@@ -375,40 +229,22 @@ export default function QuoteWorkspace({
   ) : null;
 
   return (
-    <Panel title="Quote & Assignment" icon={FileText} subtitle="Assign resources, set the final quote and publish it to the customer">
-      {/* ── Current assignment — read from the persisted booking row ───── */}
-      <div className="mb-4 rounded-lg border border-border bg-slate-50/70 p-3">
-        <p className="text-[10.5px] font-bold uppercase tracking-[0.12em] text-muted">Current assignment</p>
-        {assignmentSummary.name || assignmentSummary.vehicle ? (
-          <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2 text-[12.5px]">
-            <div className="min-w-0">
-              <dt className="text-[10.5px] font-semibold uppercase tracking-wider text-muted">Driver</dt>
-              <dd className="truncate font-semibold text-text">{assignmentSummary.name || 'Not assigned'}</dd>
-            </div>
-            <div className="min-w-0">
-              <dt className="text-[10.5px] font-semibold uppercase tracking-wider text-muted">Driver phone</dt>
-              <dd className="truncate text-text">{assignmentSummary.phone || '—'}</dd>
-            </div>
-            <div className="min-w-0">
-              <dt className="text-[10.5px] font-semibold uppercase tracking-wider text-muted">Vehicle</dt>
-              <dd className="truncate font-semibold text-text">
-                {assignmentSummary.vehicle}
-                {assignmentSummary.vehicleType ? (
-                  <span className="ml-1.5 font-normal text-muted">
-                    · {String(assignmentSummary.vehicleType).replace(/_/g, ' ')}
-                  </span>
-                ) : null}
-              </dd>
-            </div>
-            <div className="min-w-0">
-              <dt className="text-[10.5px] font-semibold uppercase tracking-wider text-muted">Owner / partner</dt>
-              <dd className="truncate text-text">{assignmentSummary.owner || '—'}</dd>
-            </div>
-          </dl>
-        ) : (
-          <p className="mt-1.5 text-[12.5px] text-muted">No driver assigned yet.</p>
-        )}
-      </div>
+    <Panel
+      title="Quotation"
+      icon={FileText}
+      subtitle="Set the final quote and publish it to the customer"
+    >
+      {/* ── VEHICLE HIRE — a status/handoff card, never a hiring form ────────
+        *
+        * Rendered from the SAME Trip record the Vehicle Hire page reads, via
+        * `GET /api/vehicle-hire/assignment?booking_id=`. It performs no hire
+        * arithmetic, infers no state and writes no assignment: it shows what the
+        * backend stored and its buttons navigate to the one universal Vehicle
+        * Hire workflow. */}
+      <VehicleHireStatusCard
+        bookingId={booking?.booking_id}
+        enquiryId={booking?.enquiry_id}
+      />
 
       {!editable ? (
         <div className="space-y-3">
@@ -426,107 +262,6 @@ export default function QuoteWorkspace({
         </div>
       ) : (
         <div className="space-y-3.5">
-          {/* ── Driver ─────────────────────────────────────────────────── */}
-          <Field label="Driver" required htmlFor="enquiry-driver-button" hint="One driver, one vehicle — the vehicle below is resolved from the driver you choose.">
-            {driverId ? (
-              <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50/60 px-3 py-2.5">
-                <div className="min-w-0">
-                  <p className="truncate text-[13px] font-bold text-text">
-                    {assignmentSummary.name}
-                    {driver?.driver_code ? (
-                      <span className="ml-1.5 font-mono text-[11px] font-normal text-muted">
-                        {driver.driver_code}
-                      </span>
-                    ) : null}
-                  </p>
-                  <p className="truncate text-[11.5px] text-muted">
-                    {assigning ? 'Saving assignment…' : `${assignmentSummary.phone || '—'} · ${assignmentSummary.vehicle}`}
-                  </p>
-                </div>
-                <div className="flex shrink-0 gap-1.5">
-                  <GhostButton
-                    onClick={() => setPickerOpen(true)}
-                    disabled={assigning}
-                    className="px-2 py-1 text-[12px]"
-                  >
-                    Change
-                  </GhostButton>
-                  {/* Shown whenever a driver is PERSISTED, not only when the
-                      picker happens to be holding one — after a refresh the
-                      local `driver` is null but the assignment is real, and
-                      "Clear" must still be reachable. */}
-                  {assignmentSummary.name ? (
-                    <GhostButton
-                      onClick={clearDriver}
-                      disabled={assigning}
-                      className="px-2 py-1 text-[12px]"
-                    >
-                      Clear
-                    </GhostButton>
-                  ) : null}
-                </div>
-              </div>
-            ) : (
-              <button
-                id="enquiry-driver-button"
-                type="button"
-                onClick={() => setPickerOpen(true)}
-                disabled={assigning}
-                className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-amber-400 bg-amber-50/40 px-3 py-2.5 text-[13px] font-bold text-amber-700 transition hover:bg-amber-50"
-              >
-                <UserRound className="h-4 w-4" strokeWidth={2.5} aria-hidden="true" />
-                {assigning ? 'Saving assignment…' : 'Search & select driver'}
-              </button>
-            )}
-          </Field>
-
-          {/* ── Vehicle ─────────────────────────────────────────────────── */}
-          <Field
-            label="Vehicle"
-            htmlFor="enquiry-vehicle-select"
-            hint="Real fleet vehicles registered to this driver. Leave on auto to use the driver's registered vehicle."
-          >
-            {!driverId ? (
-              <p className="rounded-lg border border-dashed border-border px-3 py-2.5 text-[12.5px] text-muted">
-                Select a driver to load their available vehicles.
-              </p>
-            ) : vehiclesLoading ? (
-              <div className="rounded-lg border border-border px-3 py-2.5">
-                <LoadingBlock label="Loading vehicles" rows={2} />
-              </div>
-            ) : vehiclesError ? (
-              <ErrorBlock
-                message={vehiclesError}
-                onRetry={() => loadVehicles(driverId)}
-                retryLabel="Retry"
-              />
-            ) : vehicles.length === 0 ? (
-              <EmptyBlock
-                title="No fleet vehicle listed"
-                subtitle="This driver's own registered vehicle is used automatically when the quote is sent."
-              />
-            ) : (
-              <select
-                id="enquiry-vehicle-select"
-                value={effectiveVehicleId}
-                onChange={(e) => setVehicleId(e.target.value)}
-                className={inputClass}
-              >
-                <option value="">
-                  Auto — use the driver's registered vehicle
-                </option>
-                {vehicles.map((v) => (
-                  <option key={v.vehicle_id} value={v.vehicle_id}>
-                    {v.vehicle_number}
-                    {v.vehicle_type ? ` · ${String(v.vehicle_type).replace(/_/g, ' ')}` : ''}
-                    {v.capacity_kg ? ` · ${v.capacity_kg} kg` : ''}
-                    {v.owner_name ? ` · ${v.owner_name}` : ''}
-                  </option>
-                ))}
-              </select>
-            )}
-          </Field>
-
           {/* ── Pricing ─────────────────────────────────────────────────── */}
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="rounded-lg border border-border bg-white px-3 py-2.5">
@@ -669,20 +404,18 @@ export default function QuoteWorkspace({
 
           {externalNotice}
 
+          {/* ── THE BOUNDARY, stated on the card itself ───────────────────
+            A customer accepting this price does NOT hire a vehicle, and this
+            amount is NEVER a hire amount, a vendor payable or a commission.
+            Those belong to the Vehicle Hire workflow. */}
           <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-muted">
-            <Truck className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
-            The booking is not confirmed until the customer accepts. Driver and vehicle are reserved for the
-            validity window.
+            <MapPinned className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
+            The booking is not confirmed until the customer accepts. This amount is the customer
+            transport price only — vehicle hire money is agreed separately in the Vehicle Hire
+            workspace.
           </p>
         </div>
       )}
-
-      <DriverPickerModal
-        open={pickerOpen}
-        onClose={() => setPickerOpen(false)}
-        onSelect={handleSelectDriver}
-        selectedDriverId={driverId}
-      />
     </Panel>
   );
 }

@@ -45,6 +45,13 @@ export function toneFor(state) {
   if (['PENDING', 'NOT_RECORDED', 'NOT_APPLICABLE', 'NOT_CONNECTED', 'UNPAID', 'UNBILLED', 'ONGOING'].includes(s)) {
     return 'grey';
   }
+  // E-Way Bill internal record statuses.
+  if (s === 'RECORDED') {
+    return 'grey';
+  }
+  if (s === 'ACTIVE') {
+    return 'green';
+  }
   return 'grey';
 }
 
@@ -190,7 +197,7 @@ export function YesNo({ value, onChange, name, disabled }) {
  * A banner that says something the operator must not miss.
  *
  * `tone` is 'info' | 'warn' | 'danger' | 'success'. This is the one place the
- * e-way bill's honesty notice and the "not a government e-invoice" statement are
+ * e-way bill's internal record notice and the "internal customer invoice" statement are
  * rendered, so those sentences cannot drift between screens.
  */
 export function Notice({ tone = 'info', title, children, icon }) {

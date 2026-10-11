@@ -125,6 +125,50 @@ const bookingResult = await prisma.$transaction(async (tx) => {
         },
       });
 
+      // ── PHASE 7: the customer bill ────────────────────────────────────
+      // A booking that arrives ALREADY quote-accepted has a committed
+      // customer price, so it must be billed here.
+      //
+      // This closes the gap Phase 7 was opened to close: the live
+      // Enquiry → Quote → Customer Acceptance → Booking path calls
+      // createBooking() with quote_status ACCEPTED, and createBooking()
+      // created NO invoice. Only the separate respondToQuote() → acceptQuote()
+      // path ever did. Result on the live database before this change: 33
+      // bookings, 0 invoices — the operational lifecycle never billed a
+      // customer at all.
+      //
+      // A booking that arrives NOT yet accepted is deliberately NOT billed:
+      // there is no agreed price yet, and the client has NOT specified when
+      // an invoice should be raised (docs/PHASE2C_BUSINESS_RULES.md:434
+      // "When is invoice generated?" — CLIENT CLARIFICATION REQUIRED).
+      // Basing it on the one event that IS confirmed — customer acceptance —
+      // is the one rule that is not an invented business rule.
+      //
+      // The amount is read back from the PERSISTED booking row, never from
+      // `input`, so a browser-supplied amount can never reach the invoice.
+      let invoiceNumber = null;
+      if (input.quote_status === 'ACCEPTED') {
+        const persisted = await tx.booking.findUnique({
+          where: { booking_id: booking.booking_id },
+          select: { final_price: true },
+        });
+        const authoritativeAmount = Number(persisted?.final_price);
+        if (Number.isFinite(authoritativeAmount) && authoritativeAmount > 0) {
+          // ensureForBooking is idempotent, so this is safe even if a booking
+          // somehow already carries an invoice from an earlier attempt.
+          const invoice = await this.invoiceRepo.ensureForBooking(
+            {
+              booking_id: booking.booking_id,
+              booking_number: canonicalNumber,
+              amount: authoritativeAmount,
+              status: 'PENDING',
+            },
+            tx
+          );
+          invoiceNumber = invoice.invoice_number;
+        }
+      }
+
       await this.timelineRepo.addEvent(
         booking.booking_id,
         'booking_created',
@@ -132,51 +176,35 @@ const bookingResult = await prisma.$transaction(async (tx) => {
         tx
       );
 
-      return { ...booking, booking_number: canonicalNumber, booking_reference: canonicalNumber };
+      return {
+        ...booking,
+        booking_number: canonicalNumber,
+        booking_reference: canonicalNumber,
+        invoice_number: invoiceNumber,
+      };
     });
 
     // ── COMMITTED ────────────────────────────────────────────────────────
-    // The transaction above has resolved, so the booking row is durable. From
-    // here on nothing may roll it back.
-    await this._notifyOwnerOfNewBooking(bookingResult, input);
+    // The transaction above has resolved, so the booking row is durable.
+
+    // NOTE: the automatic "🚚 New Booking Received - BTB-…" owner email has been
+    // REMOVED. There is deliberately NO notification call here any more: nothing
+    // is sent, queued, retried or logged for later delivery on booking creation.
+    // See services/BookingNotificationService.js and services/emailService.js,
+    // where both the dispatch point and the sender are hard no-ops.
+    //
+    // Nothing else about booking creation changes: the transaction, the invoice
+    // and the timeline event above are untouched, and the saved booking is
+    // returned exactly as before.
 
     return bookingResult;
   }
 
   /**
-   * Post-commit owner notification for a newly created booking.
+   * Human-readable label for the entry point that created this booking.
    *
-   * Private, and deliberately defensive in BOTH directions:
-   *   - it never throws, so no notification problem can fail a saved booking;
-   *   - it is awaited, so no notification problem can be lost when the host
-   *     closes the request.
-   *
-   * @private
-   */
-  async _notifyOwnerOfNewBooking(created, input) {
-    const bookingId = created?.booking_id;
-    if (!bookingId) return;
-
-    try {
-      await this.notificationService.notifyOwnerOfNewBooking(bookingId, {
-        source: this._describeCreationSource(input),
-      });
-    } catch (err) {
-      // Booking = SUCCESS, Notification = FAILED. Log and continue.
-      logger.error(
-        {
-          bookingId,
-          message: err?.message,
-          code: err?.code,
-        },
-        '[booking] Notification FAILED — booking is saved and unaffected'
-      );
-    }
-  }
-
-  /**
-   * Human-readable label for the entry point that created this booking, used
-   * only in the notification log line so an operator can tell the flows apart.
+   * Retained for operators reading logs; it no longer drives any notification,
+   * because the booking-created email has been removed.
    * @private
    */
   _describeCreationSource(input) {
@@ -580,7 +608,14 @@ const bookingResult = await prisma.$transaction(async (tx) => {
     }
 
     const now = new Date();
-    const invoiceNumber = `INV-${existing.booking_reference || bookingId}-${Date.now().toString().slice(-6)}`;
+    // PHASE 7: deterministic, collision-free invoice number. The old
+    // generator appended the last 6 digits of the wall clock, so two
+    // invoices raised for one booking inside the same second produced the
+    // same number. Keying off the (already unique) booking number makes
+    // re-running this path idempotent at the number level too.
+    const invoiceNumber = this.invoiceRepo.buildInvoiceNumber(
+      existing.booking_number || existing.booking_reference || bookingId
+    );
 
     const result = await prisma.$transaction(async (tx) => {
       // CONCURRENCY PROTECTION: conditional update ensures only one request
@@ -668,9 +703,14 @@ const bookingResult = await prisma.$transaction(async (tx) => {
         await tx.delivery.create({ data: deliveryData });
       }
 
-      await this.invoiceRepo.create({
+      // PHASE 7: idempotent. If this booking already carries an invoice — for
+      // example because it was created already-accepted and billed by
+      // createBooking() — this returns that invoice instead of raising a
+      // second bill. The database enforces the same rule via
+      // invoices_booking_id_key.
+      await this.invoiceRepo.ensureForBooking({
         booking_id: bookingId,
-        invoice_number: invoiceNumber,
+        booking_number: existing.booking_number || existing.booking_reference || bookingId,
         amount: finalPrice,
         status: 'PENDING',
       }, tx);
@@ -1607,6 +1647,19 @@ const bookingResult = await prisma.$transaction(async (tx) => {
       select: { trip_id: true, trip_number: true, status: true, trip_date: true },
     });
 
+    // The enquiry this order was created from. Enquiry.booking_id is UNIQUE, so
+    // this is the same link EnquiryService.customerAccept wrote — it is read
+    // back rather than re-derived, which is what makes the
+    // Enquiry → Booking → Trip chain provable end-to-end. It is exposed on the
+    // draft envelope (NOT inside `trip`) because `trip` is posted verbatim to
+    // POST /api/trips and Prisma rejects any key that is not a real column.
+    // null for a booking that did not originate from an enquiry (e.g. an
+    // offline/direct order) — left null rather than backfilled.
+    const sourceEnquiry = await prisma.enquiry.findFirst({
+      where: { booking_id: Number(bookingId) },
+      select: { enquiry_id: true, enquiry_number: true, status: true, price_status: true },
+    });
+
     const blockers = [];
     if (String(booking.quote_status || '').toUpperCase() !== 'ACCEPTED') {
       blockers.push('The customer must accept the quote before a trip can be created.');
@@ -1619,7 +1672,13 @@ const bookingResult = await prisma.$transaction(async (tx) => {
     }
 
     if (blockers.length > 0) {
-      return { ready: false, blockers, trip: null, existing_trip: existingTrip || null };
+      return {
+        ready: false,
+        blockers,
+        trip: null,
+        existing_trip: existingTrip || null,
+        enquiry: sourceEnquiry || null,
+      };
     }
 
     const [driver, vehicle] = await Promise.all([
@@ -1641,7 +1700,13 @@ const bookingResult = await prisma.$transaction(async (tx) => {
       blockers.push('No transport owner could be resolved from the assigned vehicle or driver.');
     }
     if (blockers.length > 0) {
-      return { ready: false, blockers, trip: null, existing_trip: existingTrip || null };
+      return {
+        ready: false,
+        blockers,
+        trip: null,
+        existing_trip: existingTrip || null,
+        enquiry: sourceEnquiry || null,
+      };
     }
 
     const tripDate = booking.pickup_date ? new Date(booking.pickup_date) : new Date();
@@ -1652,6 +1717,8 @@ const bookingResult = await prisma.$transaction(async (tx) => {
       ready: true,
       blockers: [],
       existing_trip: existingTrip || null,
+      // Provenance of the order this operational trip will belong to.
+      enquiry: sourceEnquiry || null,
       // Every key below is a real `Trip` column — TripService.createTrip()
       // passes this object straight to the repository, so a stray key would
       // make Prisma reject the whole request.

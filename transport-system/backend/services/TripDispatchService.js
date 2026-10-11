@@ -211,6 +211,45 @@ class TripDispatchService {
     return { trip, dispatch, ewayBill, insurance, invoice };
   }
 
+  /**
+   * Classify the internal e-way bill status. These states describe only our
+   * internal record — they are never driven by, or reported to, any government
+   * portal.
+   *
+   * @private
+   * @param {Object|null} ewayBill
+   * @param {string|null} number
+   * @param {Date|null} expiry
+   * @returns {'RECORDED'|'ACTIVE'|'EXPIRING_SOON'|'EXPIRED'|'CANCELLED'}
+   */
+  _classifyEwayBillStatus(ewayBill, number, expiry) {
+    const now = new Date();
+
+    // An explicit cancellation always wins.
+    if (String(ewayBill?.internal_status || '').toUpperCase() === 'CANCELLED') {
+      return 'CANCELLED';
+    }
+
+    // No number at all: a record exists but has no e-way bill number yet.
+    if (!number) {
+      return 'RECORDED';
+    }
+
+    // Number present, no expiry: recorded, validity unbounded in our records.
+    if (!expiry) {
+      return 'RECORDED';
+    }
+
+    const days = (expiry.getTime() - now.getTime()) / 86400000;
+    if (days < 0) {
+      return 'EXPIRED';
+    }
+    if (days <= dispatchPolicy.E_WAY_BILL_EXPIRING_WITHIN_DAYS) {
+      return 'EXPIRING_SOON';
+    }
+    return 'ACTIVE';
+  }
+
   // =========================================================================
   // READINESS
   // =========================================================================
@@ -542,7 +581,7 @@ class TripDispatchService {
         failed: checks.filter((c) => c.state === 'failed').length,
         warning: checks.filter((c) => c.state === 'warning').length,
       },
-      eway_bill_integration: EWAY_BILL_INTEGRATION_NOTICE,
+       eway_bill_integration: 'E-Way Bill is maintained as an internal operational record.',
     };
   }
 
@@ -593,7 +632,6 @@ class TripDispatchService {
 
     const context = {
       required,
-      government_api_connected: false,
       integration_notice: EWAY_BILL_INTEGRATION_NOTICE,
       consignment_value: value.value,
       consignment_value_source: value.source,
@@ -631,9 +669,6 @@ class TripDispatchService {
     context.current_vehicle_number = ewayBill.current_vehicle_number;
     context.previous_vehicle_number = ewayBill.previous_vehicle_number;
     context.vehicle_update_required = Boolean(ewayBill.vehicle_update_required || vehicleMismatch);
-    context.gov_sync_status = ewayBill.gov_sync_status;
-    context.gov_eway_bill_number = ewayBill.gov_eway_bill_number;
-    context.gov_synced_at = ewayBill.gov_synced_at;
 
     if (classification === 'EXPIRED') {
       return {
@@ -729,20 +764,19 @@ class TripDispatchService {
   evaluateDeliveryInfo(trip, dispatch) {
     // The consignee is a PERSON AT THE OTHER END, and this schema has never
     // captured one: `Booking` stores the drop PLACE (drop_location / drop_city /
-    // drop_address) but no consignee contact. Substituting the customer's own
-    // name would be inventing the single most operationally important fact on
-    // this screen, so the value comes from the dispatch record only — which is
-    // precisely why it is a field captured before the vehicle departs.
+    // drop_address) but no consignee contact. These are recorded at dispatch time,
+    // not pre-requisites for dispatch readiness.
     const consigneeName = dispatch?.consignee_name || null;
     const consigneeContact = dispatch?.consignee_contact || null;
     const pod = dispatchPolicy.resolvePodRequirement(trip);
 
+    // Consignee details are captured during dispatch, not required before dispatch.
+    // The only delivery requirement that could block dispatch is POD requirement
+    // if configured, which is handled separately.
     const missing = [];
-    if (!consigneeName) missing.push('consignee_name');
-    if (!consigneeContact) missing.push('consignee_contact');
 
     return {
-      complete: missing.length === 0,
+      complete: true,
       missing,
       consignee_name: consigneeName,
       consignee_contact: consigneeContact,
@@ -754,9 +788,7 @@ class TripDispatchService {
       expected_delivery_date: trip.expected_delivery_date || null,
       pod_required: pod.required,
       pod_source: pod.source,
-      message: missing.length === 0
-        ? `Delivery is booked to ${consigneeName}${pod.required ? ' and proof of delivery is required' : ''}.`
-        : `Delivery information is incomplete: ${missing.join(', ')}.`,
+      message: `Delivery information will be recorded at dispatch. ${pod.required ? 'Proof of delivery is required.' : ''}`,
     };
   }
 
@@ -876,11 +908,9 @@ class TripDispatchService {
         remarks: dispatch?.lr_gr_remarks || null,
       },
 
-      eway_bill: {
-        // Explicitly separated: `internal` is what our office has on paper;
-        // `government` is what the NIC portal would confirm, and it is empty.
-        internal: ewayBill
-          ? {
+      eway_bill: ewayBill
+        ? {
+          internal: {
             eway_bill_id: ewayBill.eway_bill_id,
             number: ewayBill.eway_bill_number,
             date: ewayBill.eway_bill_date,
@@ -893,18 +923,9 @@ class TripDispatchService {
               this._document(trip.documents, ['E_WAY_BILL']),
             ),
             remarks: ewayBill.remarks,
-          }
-          : null,
-        government: ewayBill
-          ? {
-            sync_status: ewayBill.gov_sync_status,
-            eway_bill_number: ewayBill.gov_eway_bill_number,
-            synced_at: ewayBill.gov_synced_at,
-          }
-          : { sync_status: 'NOT_CONNECTED', eway_bill_number: null, synced_at: null },
-        api_connected: false,
-        integration_notice: EWAY_BILL_INTEGRATION_NOTICE,
-      },
+          },
+        }
+        : null,
 
       delivery: {
         delivery_number: dispatch?.delivery_number || null,
@@ -1035,9 +1056,8 @@ class TripDispatchService {
   /**
    * Record or update the INTERNAL e-way bill.
    *
-   * This method is explicitly incapable of asserting a government
-   * confirmation: `gov_sync_status` is only ever set to NOT_CONNECTED or
-   * FAILED here, and the government columns are never written.
+   * This is an INTERNAL RECORD ONLY — no government/NIC API integration exists.
+   * The government columns have been removed from the schema.
    *
    * @param {number} tripId
    * @param {Object} input
@@ -1073,9 +1093,10 @@ class TripDispatchService {
       || (input.vehicle_update_required === true),
     );
 
-    const classification = expiry
-      ? dispatchPolicy.classifyExpiry(expiry, dispatchPolicy.E_WAY_BILL_EXPIRING_WITHIN_DAYS)
-      : 'PENDING';
+    // Internal-status classification: RECORDED, ACTIVE, EXPIRING_SOON,
+    // EXPIRED, CANCELLED. These describe only our internal record; they are
+    // never driven by, or reported to, any government portal.
+    const classification = this._classifyEwayBillStatus(ewayBill, number, expiry);
 
     const now = new Date();
     const result = await this.prisma.$transaction(async (tx) => {
@@ -1092,14 +1113,6 @@ class TripDispatchService {
         vehicle_update_required: updateRequired,
         remarks: input.remarks ?? ewayBill?.remarks ?? null,
         updated_at: now,
-        // The government columns are written EXPLICITLY as NULL on create, not
-        // merely omitted. "Undefined" and "we have no government confirmation"
-        // are different states, and a record that leaves the distinction open
-        // is exactly the record that later gets misread as "synced".
-        gov_sync_status: ewayBill?.gov_sync_status || 'NOT_CONNECTED',
-        gov_eway_bill_number: ewayBill?.gov_eway_bill_number ?? null,
-        gov_synced_at: ewayBill?.gov_synced_at ?? null,
-        gov_response: ewayBill?.gov_response ?? null,
         created_by: ewayBill?.created_by ?? user?.user_id ?? null,
         created_at: ewayBill?.created_at ?? now,
       };
@@ -1127,6 +1140,7 @@ class TripDispatchService {
           issued_at: date,
           expires_at: expiry,
           file_url: input.file_url || null,
+          file_name: input.file_name || null,
           remarks: input.remarks || null,
         }, user);
         saved.document_id = document.document_id;
@@ -1144,7 +1158,6 @@ class TripDispatchService {
           eway_bill_number: number,
           vehicle_changed: vehicleChanged,
           previous_vehicle_number: vehicleChanged ? previousVehicleNumber : null,
-          government_api_connected: false,
         },
         created_by: user?.user_id || null,
       }, tx);
@@ -1163,7 +1176,6 @@ class TripDispatchService {
           eway_bill_number: number,
           current_vehicle_number: vehicleNumber,
           previous_vehicle_number: vehicleChanged ? previousVehicleNumber : null,
-          gov_sync_status: 'NOT_CONNECTED',
         }),
       }, tx);
 
@@ -1173,12 +1185,7 @@ class TripDispatchService {
     return {
       eway_bill: result.saved,
       document: result.document,
-      government: {
-        sync_status: result.saved.gov_sync_status,
-        eway_bill_number: result.saved.gov_eway_bill_number,
-        synced_at: result.saved.gov_synced_at,
-        notice: EWAY_BILL_INTEGRATION_NOTICE,
-      },
+      integration_notice: EWAY_BILL_INTEGRATION_NOTICE,
     };
   }
 
@@ -1474,10 +1481,7 @@ class TripDispatchService {
           driver_name: trip.driver?.driver_name || null,
           lr_gr_number: lrGrNumber,
           eway_bill_number: ewayBillNumber,
-          // Recorded on the event so a reader years later knows the number in
-          // this entry was OUR office record, not a government confirmation.
           eway_bill_source: 'INTERNAL_RECORD',
-          government_eway_bill_api_connected: false,
           invoice_id: clean.invoice_id || null,
           pod_required: dispatchRow.pod_required,
           location: placeLine(trip.pickup_location, trip.pickup_city),
@@ -1781,6 +1785,7 @@ class TripDispatchService {
       status: doc.document_status,
       reference_number: doc.reference_number,
       file_url: doc.file_url,
+      file_name: doc.file_name,
       is_uploaded: Boolean(doc.is_uploaded),
       verified: Boolean(doc.is_verified),
       uploaded_at: doc.created_at,
@@ -1963,11 +1968,12 @@ class TripDispatchService {
  * The honest, single sentence the UI shows wherever an e-way bill appears.
  *
  * It is a CONSTANT rather than a per-trip string so that no screen can ever
- * drift into implying that the government portal was contacted. There is no
- * government e-way bill API in this system.
+ * drift into implying that the government portal was contacted. This system
+ * maintains the E-Way Bill as an internal record only.
  */
 const EWAY_BILL_INTEGRATION_NOTICE =
-  'Internal record only — Government E-Way Bill API not connected.';
+  'E-Way Bill is maintained as an internal operational record. This information is '
+  + 'stored against this Trip for operational and record-keeping purposes.';
 
 /**
  * The date an LR/GR was issued.

@@ -75,10 +75,17 @@ router.get('/summary', protect, adminOnly, async (req, res) => {
 /**
  * GET /api/financials/receivables
  * Get receivables grouped by client.
+ *
+ * QUERY: ?status=ALL|DUE|UNPAID|PARTIALLY_PAID|OVERDUE|DUE_SOON
+ *        &search= &sort=OUTSTANDING_DESC|OUTSTANDING_ASC|OLDEST_DUE|NEWEST
+ *
+ * `status=DUE` is the "Client Due" view — only parties money is actually
+ * pending from. The filters run on the SAME per-client balance the summary uses,
+ * so whatever this returns still totals to the dashboard figure.
  */
 router.get('/receivables', protect, adminOnly, async (req, res) => {
   try {
-    const receivables = await canonicalFinancialService.getReceivablesByClient();
+    const receivables = await canonicalFinancialService.getReceivablesByClient(req.query || {});
 
     const totalOutstanding = receivables.reduce((sum, r) => sum + r.outstanding, 0);
 
@@ -103,6 +110,9 @@ router.get('/receivables', protect, adminOnly, async (req, res) => {
 /**
  * GET /api/financials/payables
  * Get payables grouped by owner and driver.
+ *
+ * Each owner row carries `ownerId`, which is what the vendor-ledger drill-down
+ * is addressed by.
  */
 router.get('/payables', protect, adminOnly, async (req, res) => {
   try {
@@ -167,6 +177,59 @@ router.get('/transactions/ledger', protect, adminOnly, async (req, res) => {
     });
   } catch (error) {
     console.error('Get transaction ledger error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Server error' });
+  }
+});
+
+// ============================================================
+// LEDGER DRILL-DOWNS — the "who exactly" behind a total
+// ============================================================
+
+/**
+ * GET /api/financials/client-ledger/:clientId
+ *
+ * ONE customer's complete statement: identity, every trip they were billed for,
+ * every payment they actually made, and a running balance.
+ *
+ * SECURITY: `protect` + `adminOnly`, exactly like every other route in this
+ * file. No vendor or customer contact detail is exposed to anyone else.
+ */
+router.get('/client-ledger/:clientId', protect, adminOnly, async (req, res) => {
+  try {
+    const ledger = await canonicalFinancialService.getClientLedger(req.params.clientId, req.query || {});
+    res.json({ success: true, data: ledger });
+  } catch (error) {
+    console.error('Get client ledger error:', error);
+    res.status(error.statusCode || 500).json({ success: false, message: error.message || 'Server error' });
+  }
+});
+
+/**
+ * GET /api/financials/vendor-ledger/:ownerId
+ *
+ * ONE vehicle owner's complete statement, with gross hire, commission and net
+ * payable preserved as three separate figures and a running balance.
+ */
+router.get('/vendor-ledger/:ownerId', protect, adminOnly, async (req, res) => {
+  try {
+    const ledger = await canonicalFinancialService.getVendorLedger(req.params.ownerId, req.query || {});
+    res.json({ success: true, data: ledger });
+  } catch (error) {
+    console.error('Get vendor ledger error:', error);
+    res.status(error.statusCode || 500).json({ success: false, message: error.message || 'Server error' });
+  }
+});
+
+/**
+ * GET /api/financials/commission
+ * Commission earned, per trip, with gross / commission / net kept distinct.
+ */
+router.get('/commission', protect, adminOnly, async (req, res) => {
+  try {
+    const data = await canonicalFinancialService.getCommissionEarned(req.query || {});
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Get commission error:', error);
     res.status(500).json({ success: false, message: error.message || 'Server error' });
   }
 });

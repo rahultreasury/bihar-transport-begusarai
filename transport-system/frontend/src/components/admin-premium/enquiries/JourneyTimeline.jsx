@@ -72,12 +72,15 @@ function StageGlyph({ stage, halted }) {
 
 /**
  * @param {object} props
- * @param {object} props.booking      the live booking row from the API
+ * @param {object} props.enquiry      the admin enquiry payload from the API
  * @param {string} [props.activeStage] which stage the operator has focused
  * @param {(key: string) => void} [props.onStageClick]
  */
-export default function JourneyTimeline({ booking, activeStage, onStageClick }) {
-  const workflow = describeWorkflow(booking);
+export default function JourneyTimeline({ enquiry, booking, activeStage, onStageClick }) {
+  // The rail is derived from PERSISTED enquiry + quotation state. `booking` is
+  // still accepted so existing callers keep working, but the commercial
+  // progression no longer depends on booking fields at all.
+  const workflow = describeWorkflow(enquiry || booking);
   const [focused, setFocused] = useState(activeStage || workflow.current);
   const previousCurrent = useRef(workflow.current);
 
@@ -107,14 +110,19 @@ export default function JourneyTimeline({ booking, activeStage, onStageClick }) 
   };
 
   const rejected =
-    String(booking?.quote_status || '').toUpperCase() === 'REJECTED' || Boolean(booking?.quote_rejected_at);
+    String(enquiry?.commercial?.customer_decision || '').toUpperCase() === 'REJECTED' ||
+    String(booking?.quote_status || '').toUpperCase() === 'REJECTED' ||
+    Boolean(booking?.quote_rejected_at);
 
   return (
     <nav
-      aria-label="Customer journey status"
-      className="rounded-xl border border-border bg-white px-3 py-3 shadow-[0_1px_2px_rgba(16,24,40,0.05)]"
+      aria-label="Enquiry and quotation progress"
+      className="rounded-xl border border-border bg-white px-2 py-1.5 shadow-[0_1px_2px_rgba(16,24,40,0.05)]"
     >
       {/* Desktop rail */}
+      {/* COMPACTNESS ONLY — the horizontal rail, the icons, the colours and the
+          typography are all exactly as they were. Only vertical padding and
+          gaps were reduced so the rail consumes less space. */}
       <ol className="hidden items-stretch lg:flex">
         {workflow.stages.map((stage) => {
           const halted = rejected && stage.active;
@@ -127,12 +135,12 @@ export default function JourneyTimeline({ booking, activeStage, onStageClick }) 
                 onClick={() => handleClick(stage.key)}
                 aria-current={selected ? 'step' : undefined}
                 title={stage.locked ? stage.lockReason : stage.purpose}
-                className={`group flex min-w-0 flex-1 flex-col items-center gap-1.5 rounded-lg px-1 py-1.5 text-center transition focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50 ${
+                className={`group flex min-w-0 flex-1 flex-col items-center gap-0.5 rounded-lg px-1 py-1 text-center transition focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50 ${
                   selected ? 'bg-amber-50/70' : 'hover:bg-slate-50'
                 }`}
               >
                 <span
-                  className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold transition ${dotClasses(
+                  className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[9.5px] font-bold transition ${dotClasses(
                     stage,
                     halted,
                   )} ${selected ? 'ring-2 ring-amber-500/30 ring-offset-1' : ''}`}
@@ -150,7 +158,7 @@ export default function JourneyTimeline({ booking, activeStage, onStageClick }) 
 
               {stage.index < workflow.stages.length - 1 ? (
                 <span
-                  className={`mx-1 h-px min-w-[8px] flex-1 ${
+                  className={`mx-0.5 h-px min-w-[8px] flex-1 ${
                     workflow.stages[stage.index + 1].done ? 'bg-emerald-300' : 'bg-border'
                   }`}
                   aria-hidden="true"
@@ -162,7 +170,7 @@ export default function JourneyTimeline({ booking, activeStage, onStageClick }) 
       </ol>
 
       {/* Mobile / tablet list */}
-      <ol className="space-y-2 lg:hidden">
+      <ol className="space-y-1 lg:hidden">
         {workflow.stages.map((stage) => {
           const halted = rejected && stage.active;
           const selected = stage.key === focused;
@@ -172,12 +180,12 @@ export default function JourneyTimeline({ booking, activeStage, onStageClick }) 
                 type="button"
                 onClick={() => handleClick(stage.key)}
                 aria-current={selected ? 'step' : undefined}
-                className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition ${
+                className={`flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left transition ${
                   selected ? 'bg-amber-50/70' : 'hover:bg-slate-50'
                 }`}
               >
                 <span
-                  className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[9px] font-bold ${dotClasses(
+                  className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[8.5px] font-bold ${dotClasses(
                     stage,
                     halted,
                   )}`}

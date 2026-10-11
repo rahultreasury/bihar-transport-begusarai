@@ -8,18 +8,37 @@
  * A customer who has just handed over a form is asking three things, in order:
  *
  *   1. Did you get it, and can I quote a number?  → hero + Request ID
- *   2. Is a human on it?                          → Customer Care card
- *   3. Is anything actually happening?            → the live route map
+ *   2. What is the price, and what truck/crew is it? → final quote + assignment
+ *   3. What do I have to do?                      → Accept / Decline
  *
- * So the page is built in THAT order, and the vertical rhythm is deliberately
- * tight: the reassurance, the identifier and the "we are working on it" proof
- * all sit above the fold, and everything else (route, shipment, schedule, fare)
- * lives behind one-line accordions. There is no decorative whitespace on this
- * page — a customer who is waiting for a truck should never have to scroll past
- * empty space to find out what is happening.
+ * Once a quotation has actually been SENT, questions 2 and 3 are the reason the
+ * customer came back — so the final quote and the assigned vehicle/driver render
+ * immediately under the Request ID, above the map. Previously the quote sat at
+ * the BOTTOM of the column, underneath a 400–520px map, so a customer whose
+ * quotation was ready still had to scroll past the whole page to find the
+ * amount they were being asked to approve. The sections were REPOSITIONED; the
+ * cards, their styling, the map, Customer Care and the accept/decline controls
+ * are the same components as before.
+ *
+ * When nothing has been published yet the quote and assignment blocks simply do
+ * not render, and the page is exactly the "being processed" view it always was:
+ *
+ *   received → Request ID → live map → Customer Care → status → details
+ *
+ * There is no decorative whitespace on this page — a customer who is waiting for
+ * a truck should never have to scroll past empty space to find out what is
+ * happening, and a customer with a quote in hand should never have to scroll
+ * past the map to find out what it costs.
  *
  * DESIGN CONSTRAINTS HONOURED
  *   • Every value comes from the API. No literals, no mock state.
+ *   • The quoted amount comes from the CANONICAL persisted Quotation
+ *     (GET /enquiries/:idOrNumber/quote → data.quotation), which the backend
+ *     returns only once that row is SENT or CONVERTED. A quotation an admin has
+ *     merely SAVED is a draft: it is absent from the payload, so it cannot reach
+ *     the customer, and the page keeps showing the processing state.
+ *   • Accept / Decline stay wired to the real customer-acceptance endpoints and
+ *     render only while the server reports AWAITING_CUSTOMER_ACCEPTANCE.
  *   • The "searching" animation is driven by the real `enquiry.status` via
  *     utils/enquirySearchStage.js — it stops the moment the backend reports an
  *     assignment. There is no second state machine here.
@@ -45,6 +64,8 @@ import {
   Printer,
   XCircle,
   ChevronRight,
+  ChevronDown,
+  Info,
   Sparkles,
   Radio,
   Phone,
@@ -74,16 +95,31 @@ const ENQUIRY_RETRY_DELAYS = [300, 700, 1500];
 /**
  * Is this failure worth retrying?
  *
- * Retryable : no response at all (offline / DNS / timeout / CORS), 404 (the
- *             create may not be visible to this connection yet), 408/425/429,
- *             and any 5xx.
- * Permanent: 400, 401, 403, 422 — a bad id or a missing/revoked guest token
- *             will not fix itself, and retrying only delays a real message.
+ * Retryable : no response at all (offline / DNS / timeout / CORS), 408/425, and
+ *             any 5xx — plus a 404 ONLY while the page has never yet had data
+ *             for this enquiry (the create may not be visible to this connection
+ *             yet). Once the page has shown this enquiry, a 404 is permanent:
+ *             the number is wrong or the record is gone, and retrying it on every
+ *             poll tick is pure load.
+ * Permanent: 400, 401, 403, 422 (a bad id or a missing/revoked guest token) and
+ *             429.
+ *
+ * WHY 429 IS NEVER RETRIED HERE
+ * 429 is the server saying "you are asking too often, stop". Re-asking it after
+ * 300ms/700ms/1500ms against a five-minute window cannot succeed, and each
+ * attempt is another request charged to the same bucket. It is reported
+ * immediately instead, and the page suspends its automatic refresh (see `paused`
+ * below) until the customer deliberately presses Retry.
+ *
+ * @param {object} error
+ * @param {boolean} hasData - has this page ever resolved data for this enquiry?
  */
-function isTransientEnquiryError(error) {
+function isTransientEnquiryError(error, hasData) {
   const status = error?.response?.status;
   if (!status) return true; // network / timeout — no HTTP status was reached
-  if (status === 404 || status === 408 || status === 425 || status === 429) return true;
+  if (status === 429) return false;
+  if (status === 404) return !hasData;
+  if (status === 408 || status === 425) return true;
   return status >= 500;
 }
 
@@ -100,8 +136,25 @@ function enquiryRetryDelay(attemptIndex = 0) {
  * unconditionally, even for a failure it is about to give up on, so a log inside
  * `retryDelay` alone would announce a retry that never happens.
  */
-function shouldRetryEnquiry(failureCount, error) {
-  return failureCount < ENQUIRY_RETRY_DELAYS.length && isTransientEnquiryError(error);
+function shouldRetryEnquiry(failureCount, error, hasData) {
+  return failureCount < ENQUIRY_RETRY_DELAYS.length && isTransientEnquiryError(error, hasData);
+}
+
+/**
+ * Coerce a persisted money field into a usable number, or null when it is absent.
+ *
+ * A quoted amount is NOT the same as a missing amount, so this never collapses
+ * the two: `null`, `undefined`, `''` and `NaN` all become null (nothing was
+ * quoted), while a real number — including 0 — is returned as-is. Formatting
+ * helpers such as Number() would silently turn "no quote" into ₹0.
+ *
+ * @param {*} value
+ * @returns {number|null}
+ */
+function toAmount(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 import { FALLBACK_CUSTOMER_CARE, buildWhatsAppUrl, buildCallUrl } from '../config/customerCare';
 import { useEnquiryRealtime } from '../hooks/useEnquiryRealtime';
@@ -124,6 +177,71 @@ import RequestIdCard from '../components/enquiry/RequestIdCard';
 import RouteMapExperience from '../components/enquiry/RouteMapExperience';
 import EnquiryStatusSteps from '../components/enquiry/EnquiryStatusSteps';
 import DetailAccordion, { DetailRow, DetailBlock } from '../components/enquiry/DetailAccordion';
+
+/* ── Retention / detention disclosure ──────────────────────────────────────
+   The customer is told, in the quotation section itself, that a per-day charge
+   applies if the assigned vehicle is held back. It is printed here, on the
+   quotation, so nobody can read the approved amount without reading it.
+
+   TERMINOLOGY. The client document's own charge category for "the truck is held
+   / vacant for a day" is DETENTION — its example additional-charge line reads
+   "Detention rate ₹1500 × 2 Days = ₹3000", which is exactly this charge. That
+   existing term is preserved, so the disclosure names it as "Retention
+   (detention)" instead of introducing a third name for one charge.
+
+   WHAT THIS IS NOT. It is a CONDITIONAL possibility, not a line item:
+     • ₹1,000 is never added to the quoted amount — `finalPrice` still comes
+       from Quotation.total_billing_amount and nothing else;
+     • no retention row is written to the database to justify the sentence;
+     • GST and Total Billing Amount are untouched;
+     • if a genuine retention event ever occurs it is raised separately through
+       the normal financial workflow, never by this sentence.
+   The disclosure is copy, not arithmetic. */
+const RETENTION_RATE_PER_DAY = 1000;
+
+/** One-line statement, rendered in the quotation card next to the amount. */
+const RETENTION_HEADLINE = `Retention (detention): ${formatINR(RETENTION_RATE_PER_DAY)}/day may apply if the vehicle is retained/vacant.`;
+
+/** The explanatory version that sits directly beneath it. */
+const RETENTION_DISCLOSURE = `Retention (detention) charges of ${formatINR(
+  RETENTION_RATE_PER_DAY
+)} per day may apply if the assigned vehicle is retained/vacant beyond the agreed schedule. Any applicable retention charge will be communicated by Bihar Transport before being applied.`;
+
+/* ── Collapsible presentation of the same disclosure ───────────────────────
+   LAYOUT ONLY. The paragraphs above are unchanged in meaning, rate and wording;
+   what changed is WHEN the customer sees them. Printed permanently, the full
+   paragraph pushed the quotation card — the thing the customer opened the page
+   to see — far down the fold, so the card was reduced to a one-line summary and
+   the full text revealed on demand.
+
+   This is still a DISCLOSURE, not a smaller claim:
+     • the collapsed row names the category ("Additional / Conditional
+       Charges") and states plainly that retention may apply, so nothing is
+       hidden behind the interaction;
+     • the rate is the same RETENTION_RATE_PER_DAY, never summed into anything;
+     • Accept / Decline are NOT inside the collapsible. They stay outside it, so
+       approving a quotation never requires opening (or being blocked by) the
+       disclosure, and the decision stays the last thing on the card.
+
+   WHAT IT IS NOT: an arithmetic control. Nothing here reads `finalPrice` to
+   build a number, and no figure below it is ever added to the quote. */
+
+/** Sub-label on the collapsed row. Names the possibility without the wall of text. */
+const RETENTION_COLLAPSED_SUMMARY = 'Retention charges may apply';
+
+/** Heading of the expanded panel — the category and its rate. */
+const RETENTION_PANEL_HEADING = `Retention (Detention): ${formatINR(
+  RETENTION_RATE_PER_DAY
+)}/day`;
+
+/** The body of the expanded panel — the full explanation, on demand. */
+const RETENTION_PANEL_BODY = `${formatINR(
+  RETENTION_RATE_PER_DAY
+)} per day may apply if the assigned vehicle is retained/vacant beyond the agreed schedule. Any applicable retention charge will be communicated by Bihar Transport before being applied.`;
+
+/** Closing assurance: the conditional charge is outside the quoted amount. */
+const RETENTION_PANEL_FOOTNOTE =
+  'This charge is not included in the quoted amount above.';
 
 /* ── Loading skeleton ───────────────────────────────────────────────────
    A blank screen after submitting a form reads as failure. The skeleton
@@ -190,6 +308,39 @@ function ErrorState({ message, onRetry }) {
   );
 }
 
+/**
+ * A driver-sensitive value inside the "Vehicle & Driver Assigned" card.
+ *
+ * Until the customer has ACCEPTED the quotation, the driver's identity — name,
+ * rating, transport owner — is masked rather than shown: the card still says a
+ * vehicle and driver are assigned (that fact is not secret), but who they are is
+ * not readable. Once the server confirms the acceptance the mask lifts and the
+ * value is simply there.
+ *
+ * The transition is a blur + opacity fade, ~700ms, ease-out. Short enough to feel
+ * like the information arriving, long enough to read as deliberate. Nothing is
+ * animated in from off-screen, scaled, or bounced.
+ *
+ * This is a PRESENTATION effect and nothing more. The same values are still in
+ * the JSON the API returned — the backend's job is to decide what may be SENT at
+ * all, and it continues to withhold every driver and owner phone number from
+ * the customer payload before this component ever runs.
+ */
+function DriverIdentityValue({ masked, children }) {
+  return (
+    <span
+      aria-hidden={masked ? 'true' : undefined}
+      className={
+        masked
+          ? 'select-none blur-[7px] opacity-55 transition-[filter,opacity] duration-700 ease-out'
+          : 'transition-[filter,opacity] duration-700 ease-out'
+      }
+    >
+      {children}
+    </span>
+  );
+}
+
 /* ── Page ─────────────────────────────────────────────────────────────── */
 export default function EnquiryConfirmation() {
   const { enquiryNumber } = useParams();
@@ -199,9 +350,31 @@ export default function EnquiryConfirmation() {
 
   const [action, setAction] = useState(null); // 'accept' | 'reject' | 'cancel'
   const [actionBusy, setActionBusy] = useState(false);
+  // { kind: 'accept' | 'reject' | 'cancel', message: string } | null — the kind
+  // is stored with the message so a failure is reported NEXT TO the control the
+  // customer actually pressed (the quotation card for Accept/Decline, the page
+  // for Cancel) instead of one shared error slot elsewhere on the column.
   const [actionError, setActionError] = useState(null);
   const [showDeclineReason, setShowDeclineReason] = useState(false);
   const [declineReason, setDeclineReason] = useState('');
+
+  /* ── Retention / conditional-charge disclosure visibility ─────────────────
+     PRESENTATION ONLY, DEFAULTING TO COLLAPSED.
+     `false` on first render is the whole point: the quotation card opens on the
+     amount, the route and the decision, and the full retention paragraph is one
+     click away instead of permanently pushing them down the page.
+
+     Deliberately plain component state with no persistence and no side effects:
+       • nothing is derived from it, so no render path can turn it into money —
+         `finalPrice` is Quotation.total_billing_amount whether this is true or
+         false, which is why the expansion cannot alter the quoted amount;
+       • Accept / Decline are rendered OUTSIDE the collapsible, so toggling this
+         neither reveals nor blocks the decision;
+       • it is not written to localStorage/sessionStorage or the URL, so a
+         refresh — or opening the same quotation in a new tab — returns to the
+         default collapsed view rather than restoring a stale open panel.
+     `aria-expanded` on the row is driven from this single source of truth. */
+  const [showRetentionInfo, setShowRetentionInfo] = useState(false);
 
   /**
    * The enquiry handed over by /book-transport in router state.
@@ -222,21 +395,39 @@ export default function EnquiryConfirmation() {
       : undefined;
 
   /**
+   * Has this page EVER resolved data for this enquiry?
+   *
+   * Read straight from the query cache rather than from a state flag, because the
+   * retry predicate runs outside render. It is what separates "a 404 that raced
+   * the create, worth one more try" from "a 404 for a number that does not
+   * exist, which must not be retried on every poll tick forever".
+   */
+  const enquiryHasData = () =>
+    Boolean(
+      queryClient.getQueryData([ENQUIRY_QUERY_KEY, enquiryNumber]) ?? seededEnquiry
+    );
+
+  /**
    * The single source of truth for this page's data.
    *
-   * `retry` is deliberately narrow: only transient failures are retried, three
-   * times, on a ~300 / ~700 / ~1500ms backoff. A 401/403 (this device no longer
-   * holds the scoped guest token) and a malformed id are reported immediately.
+   * `retry` is deliberately narrow: only genuinely transient failures are
+   * retried, three times, on a ~300 / ~700 / ~1500ms backoff. A 401/403 (this
+   * device no longer holds the scoped guest token), a 429 (the server asked us to
+   * stop), a 404 for a page that has already loaded, and a malformed id are all
+   * reported immediately instead of being retried into more load.
    */
   const enquiryQuery = useQuery({
     queryKey: [ENQUIRY_QUERY_KEY, enquiryNumber],
     enabled: Boolean(enquiryNumber),
     initialData: seededEnquiry,
     staleTime: 0,
-    retry: shouldRetryEnquiry,
+    // A single automatic re-read on window focus. The 12s realtime poll below is
+    // the steady-state refresh; refocusing must not stack another chain on top.
+    refetchOnWindowFocus: true,
+    retry: (failureCount, error) => shouldRetryEnquiry(failureCount, error, enquiryHasData()),
     retryDelay: (attemptIndex, error) => {
       const delay = enquiryRetryDelay(attemptIndex);
-      if (import.meta.env.DEV && shouldRetryEnquiry(attemptIndex, error)) {
+      if (import.meta.env.DEV && shouldRetryEnquiry(attemptIndex, error, enquiryHasData())) {
         console.info(
           `[enquiry] GET /enquiries/${enquiryNumber} failed (${error?.response?.status ?? 'network'}) — retrying in ${delay}ms`
         );
@@ -257,14 +448,71 @@ export default function EnquiryConfirmation() {
     },
   });
 
+  /**
+   * THE CANONICAL PERSISTED QUOTATION.
+   *
+   * The enquiry DTO carries `pricing.final_quoted_price`, which the backend
+   * nulls for the customer until an admin has published a price. The Phase B
+   * commercial record lives behind GET /enquiries/:idOrNumber/quote, and
+   * QuotationService returns it ONLY when the persisted Quotation row is SENT or
+   * CONVERTED — a saved-but-unsent DRAFT is never in this payload.
+   *
+   * This query is therefore what makes "saved ≠ sent" true on the customer's
+   * screen rather than merely assumed by it:
+   *   CASE 1  quote saved, not sent → data.quotation === null → nothing rendered
+   *   CASE 2  quote sent           → data.quotation is the persisted row
+   *
+   * There is no local quote state anywhere on this page: every rupee below comes
+   * out of this response or out of the enquiry DTO, both server-owned.
+   */
+  const quoteQuery = useQuery({
+    queryKey: [ENQUIRY_QUERY_KEY, enquiryNumber, 'quote'],
+    enabled: Boolean(enquiryNumber),
+    staleTime: 0,
+    // Read-only and non-critical — the rest of the page is complete without it,
+    // so a failure must never escalate into an error screen or a retry storm.
+    retry: false,
+    queryFn: async ({ signal }) => {
+      const { data } = await enquiryAPI.getQuote(enquiryNumber, { signal });
+      return data?.data || null;
+    },
+  });
+
   const enquiry = enquiryQuery.data ?? null;
   // `isPending` stays true through every retry, so the loading state — not the
   // error state — is what a customer sees while a recoverable first read settles.
   const isFirstLoad = enquiryQuery.isPending;
   const loadError = enquiryQuery.isError ? enquiryQuery.error : null;
 
-  /** Re-read the authoritative state. Runs on every socket event and poll tick. */
-  const load = useCallback(() => enquiryQuery.refetch(), [enquiryQuery.refetch]);
+  /**
+   * Re-read the authoritative state. Runs on every socket event and poll tick.
+   *
+   * Both reads are refreshed together on purpose: the enquiry status and the
+   * quotation's own published status move together when an admin sends a quote,
+   * so a socket tick that refreshed only one of them could leave the page
+   * showing a decision prompt for a quote that is not published yet — or a
+   * published quote with a stale status. One tick, one consistent render.
+   */
+  const load = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: [ENQUIRY_QUERY_KEY, enquiryNumber, 'quote'] });
+    return enquiryQuery.refetch();
+  }, [enquiryQuery.refetch, queryClient, enquiryNumber]);
+
+  /**
+   * The Retry button: EXACTLY ONE deliberate request.
+   *
+   * It deliberately does not go through `load()`, because a manual refetch would
+   * otherwise re-enter the query's own retry chain and turn one button press into
+   * up to four requests. `retry: false` is passed explicitly so the button can
+   * never be the start of a burst, whatever the query's automatic policy is.
+   */
+  const retryOnce = useCallback(() => {
+    queryClient.refetchQueries(
+      { queryKey: [ENQUIRY_QUERY_KEY, enquiryNumber], exact: true },
+      { retry: false }
+    );
+    queryClient.invalidateQueries({ queryKey: [ENQUIRY_QUERY_KEY, enquiryNumber, 'quote'] });
+  }, [enquiryNumber, queryClient]);
 
   useEffect(() => {
     if (!enquiryQuery.isSuccess) return;
@@ -286,6 +534,12 @@ export default function EnquiryConfirmation() {
     refetch: load,
     currentStatus: enquiry?.status,
     stopWhenStatus: TERMINAL_STATUSES,
+    // While this page's own read is failing it must NOT keep asking. A page that
+    // cannot read the enquiry and keeps polling every 12s is precisely what
+    // exhausted the shared rate-limit bucket and made every other customer on
+    // the same address see this error. Polling resumes by itself the moment a
+    // read succeeds again (e.g. after the customer presses Retry).
+    paused: enquiryQuery.isError,
   });
 
   const runAction = useCallback(
@@ -312,11 +566,20 @@ export default function EnquiryConfirmation() {
         if (updated) {
           queryClient.setQueryData([ENQUIRY_QUERY_KEY, enquiryNumber], updated);
         }
+        // The quotation's own state changes with the decision, so re-read it
+        // from the server instead of assuming what it now says.
+        queryClient.invalidateQueries({ queryKey: [ENQUIRY_QUERY_KEY, enquiryNumber, 'quote'] });
       } catch (err) {
-        setActionError(
-          err?.response?.data?.message ||
-            'We could not complete that action right now. Please try again.'
-        );
+        // The message is stored together with the action that produced it, so the
+        // failure is reported NEXT TO the control the customer pressed — the
+        // quotation card for Accept/Decline, the page for Cancel — instead of one
+        // shared error slot somewhere else on the column.
+        setActionError({
+          kind,
+          message:
+            err?.response?.data?.message ||
+            'We could not complete that action right now. Please try again.',
+        });
       } finally {
         setActionBusy(false);
         setAction(null);
@@ -346,6 +609,19 @@ export default function EnquiryConfirmation() {
     ENQUIRY_STATUS.COMPLETED,
   ].includes(status);
 
+  /* ── Driver identity: blurred until the quotation is accepted ───────────────
+     THE SERVER IS THE ONLY SWITCH. `isQuoteAccepted` is derived from the
+     persisted `enquiry.status`, so the blur can only lift after the acceptance
+     has actually been confirmed by POST /api/enquiries/:idOrNumber/accept (or by
+     an admin confirming the same order). It is never lifted optimistically, and a
+     refresh re-reads the same status, so the reveal survives a reload.
+
+     The reveal is a PRESENTATION effect only. The backend keeps withholding the
+     driver's phone numbers from the customer payload in every state — see
+     `customerDriverSelect` / `assertNoDriverPhone` in dtos/EnquiryDTO.js. Blurring
+     text here never widens what the API is allowed to send. */
+  const isDriverRevealed = isQuoteAccepted;
+
   // The search narrative is derived from the REAL status. When the server says
   // a vehicle is assigned, `searching` flips to false and the map animation
   // stops — no client-side flag can override that.
@@ -355,7 +631,74 @@ export default function EnquiryConfirmation() {
     () => formatFareRange(enquiry?.pricing?.estimated_price_min, enquiry?.pricing?.estimated_price_max),
     [enquiry]
   );
-  const finalPrice = useMemo(() => formatINR(enquiry?.pricing?.final_quoted_price), [enquiry]);
+
+  /**
+   * The canonical persisted quotation — the Phase B Quotation row — or null.
+   *
+   * `null` is meaningful, not a placeholder: QuotationService.getQuotationForCustomer
+   * returns null unless the persisted status is SENT or CONVERTED, so this is
+   * null while an admin's price is still a saved DRAFT, and non-null the instant
+   * POST /api/admin/enquiries/:id/quotation/send succeeds. Nothing here is
+   * inferred from a form input or from optimistic frontend state.
+   */
+  const quotation = quoteQuery.data?.quotation || null;
+
+  /**
+   * The single number the customer is being asked to act on.
+   *
+   * Priority is deliberate: Quotation.total_billing_amount is the commercial
+   * record (freight + the additional charges actually itemised on the quotation
+   * + their tax), so it always wins. Enquiry.final_quoted_price is kept only as
+   * the fallback for the pre-Phase-B send path, and the DTO already nulls it
+   * whenever the price is still an unsent draft — so neither branch can surface
+   * a number the customer was never sent.
+   */
+  const quoteAmount = useMemo(() => {
+    const fromQuotation = toAmount(quotation?.total_billing_amount);
+    if (fromQuotation !== null) return fromQuotation;
+    return toAmount(enquiry?.pricing?.final_quoted_price);
+  }, [quotation, enquiry]);
+
+  /**
+   * Has a quote actually been PUBLISHED to this customer?
+   *
+   * This is the single gate for every "final quote" affordance on the page. It
+   * is false while a quotation is merely saved, so CASE 1 keeps showing only the
+   * processing state and never leaks a draft.
+   */
+  const hasFinalQuote = quoteAmount !== null;
+
+  const finalPrice = useMemo(() => formatINR(quoteAmount), [quoteAmount]);
+
+  /**
+   * Additional-charge disclosure.
+   *
+   * The wording is selected from what is actually PERSISTED on the quotation,
+   * never invented:
+   *   • the quotation itemises additional charges → the sentence names their
+   *     total and says they are already inside the quoted amount, and repeats
+   *     that anything outside this quotation must be communicated first;
+   *   • it itemises none → the amount is stated as covering the charges included
+   *     in this quotation, with anything else conditional on prior disclosure.
+   *
+   * NO charge category is named in either branch. Toll / parking / loading /
+   * detention are never mentioned, because none of them is defined by the
+   * quotation or the client document and inventing them would be exactly the
+   * ambiguity this disclosure exists to remove.
+   */
+  const additionalChargeNote = useMemo(() => {
+    const charges = Array.isArray(quotation?.additional_charges)
+      ? quotation.additional_charges
+      : [];
+    const chargesTotal = toAmount(quotation?.total_additional_charges);
+    const hasCharges = charges.length > 0 || (chargesTotal !== null && chargesTotal > 0);
+
+    return hasCharges
+      ? `${finalPrice} is the final quoted amount for the charges included in this quotation, including ${formatINR(
+          chargesTotal
+        )} of additional charges already applied. Any additional charge that may apply for services or circumstances not included in this quotation will be communicated by Bihar Transport before it is applied.`
+      : `${finalPrice} is the final quoted amount for the charges included in this quotation. Additional charges may apply only if separately applicable and will be communicated by Bihar Transport before being applied.`;
+  }, [quotation, finalPrice]);
 
   const vehicleLabel =
     enquiry?.vehicle?.assigned_vehicle_type || enquiry?.vehicle?.requested_vehicle_name || null;
@@ -379,31 +722,50 @@ export default function EnquiryConfirmation() {
   /* ── Render ─────────────────────────────────────────────────────────── */
   if (isFirstLoad) return <HeroSkeleton />;
   if (loadError || !enquiry) {
-    // 401/403 means the scoped guest token is gone (new device / cleared
-    // storage) — explain how to recover rather than showing a blank page.
+    // Each failure gets the reason the server actually gave, so the customer is
+    // never told "something went wrong" when the real answer is "this request
+    // number does not exist" or "we asked too often".
     const status = loadError?.response?.status;
-    return (
-      <ErrorState
-        message={
-          status === 401 || status === 403
-            ? 'This enquiry link has expired on this device. Please verify your mobile number to view it again.'
-            : 'Something went wrong while loading your request. Please try again.'
-        }
-        onRetry={load}
-      />
-    );
+    const retryAfter = loadError?.response?.headers?.['retry-after'];
+    const serverMessage =
+      typeof loadError?.response?.data?.message === 'string'
+        ? loadError.response.data.message
+        : null;
+
+    let message = 'Something went wrong while loading your request. Please try again.';
+    if (status === 401 || status === 403) {
+      message =
+        'This enquiry link has expired on this device. Please verify your mobile number to view it again.';
+    } else if (status === 404) {
+      message = `We could not find request ${enquiryNumber}. Please check the link, or call customer care.`;
+    } else if (status === 429) {
+      message = retryAfter
+        ? `We are checking your request status a little too often. Please wait ${retryAfter} seconds and then try again.`
+        : 'We are checking your request status a little too often. Please wait a moment and then try again.';
+    } else if (serverMessage) {
+      message = serverMessage;
+    }
+
+    return <ErrorState message={message} onRetry={retryOnce} />;
   }
 
   return (
     <div className="bg-[#F7F8FA] pb-24 md:pb-12">
       <main className="mx-auto max-w-6xl px-4 py-5 sm:px-6 sm:py-7">
         {/* ══ HERO ══════════════════════════════════════════════════════
-            Desktop: Request ID + live map on the left, Customer Care on the
-            right (sticky, so it is always in reach while the customer reads).
-            Mobile:  stacked in the order the customer needs them —
-                      received → ID → map → Customer Care → status → details.
+            READING ORDER (both breakpoints, same sequence):
+              received → Request ID → FINAL QUOTE → Vehicle & Driver
+              → Accept / Decline → map → Customer Care + status
+              → Request Details → Request Timeline
+            The final quote and the assigned crew sit directly under the
+            Request ID, because once a quotation has been sent those are the
+            two things the customer opened the page to see.
 
-            The mobile order is achieved with `order-*` on the flex flow plus
+            Desktop: that commercial column on the left, Customer Care on the
+            right (sticky, so it is always in reach while they read).
+            Mobile:  the same single stack.
+
+            Both orders are expressed with `order-*` on the flex flow plus
             explicit `lg:col-start/row-start` for the desktop grid, because
             DOM order alone cannot express both. */}
         <div className="flex flex-col gap-5 lg:grid lg:grid-cols-[1.45fr_1fr] lg:items-start lg:gap-x-6 lg:gap-y-5">
@@ -476,42 +838,28 @@ export default function EnquiryConfirmation() {
             )}
           </header>
 
-          {/* ── 1. Request ID + the live route map ── */}
+          {/* ── 1. THE COMMERCIAL COLUMN ──
+              Once an admin has PUBLISHED a quotation, this column leads with the
+              money and the crew, because that is what the customer came back to
+              see:
+                  Request ID → Final Quote → Vehicle & Driver → Accept/Decline
+                  → Map → (details below)
+              When nothing has been published the first three blocks simply do not
+              render and the column collapses back to ID → Map → details, which is
+              exactly the CASE 1 processing view.
+
+              Nothing here is duplicated. The vehicle/driver card MOVED up from the
+              right-hand column and still renders from the same `enquiry.assignment`
+              object; the quote card MOVED up from below the map with its styling
+              untouched; the Accept/Decline buttons are the same elements, still
+              wired to enquiryAPI.accept / enquiryAPI.reject. */}
           <div className="order-1 space-y-3.5 lg:col-start-1 lg:row-start-2">
             <RequestIdCard enquiryNumber={enquiry.enquiry_number} />
 
-            {/* Section label — kept to a single line so it costs no vertical
-                space but names what the customer is looking at. */}
-            <div className="flex items-center justify-between gap-3 pt-1">
-              <h2 className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.18em] text-[#172B4D]">
-                {searching ? (
-                  <Radio className="btb-accent-pulse h-3.5 w-3.5 rounded-full text-[#F5A623]" aria-hidden="true" />
-                ) : (
-                  <Check className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" />
-                )}
-                {searching ? 'Finding your truck' : stage.headline}
-              </h2>
-              <p className="truncate text-[11.5px] font-medium text-slate-500">{stage.detail}</p>
-            </div>
-
-            <RouteMapExperience
-              route={enquiry.route}
-              stage={stage}
-              searching={searching}
-              connected={connected}
-              assignedLabel={assignedLabel}
-            />
-
-            {actionError && (
-              <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-                <span>{actionError}</span>
-              </div>
-            )}
-
-            {/* ── Quote ACCEPTED — read-only confirmation, replaces the buttons
-                the moment the backend reports the acceptance. ── */}
-            {isQuoteAccepted && enquiry.pricing?.final_quoted_price != null && (
+            {/* ── Quote ACCEPTED — read-only confirmation, replaces the quote
+                card and the buttons the moment the backend reports the
+                acceptance. ── */}
+            {isQuoteAccepted && hasFinalQuote && (
               <div className="overflow-hidden rounded-3xl border-2 border-emerald-200 bg-emerald-50/50 p-5 shadow-[0_20px_44px_-30px_rgba(11,27,51,0.5)] sm:p-6">
                 <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-700">
                   <Check className="h-3.5 w-3.5" strokeWidth={3} aria-hidden="true" />
@@ -522,6 +870,13 @@ export default function EnquiryConfirmation() {
 
                 <p className="mt-3 text-sm leading-relaxed text-[#172B4D]/80">
                   Your transport request has been accepted. We are preparing your trip confirmation.
+                </p>
+
+                {/* The accepted amount is the same amount the customer approved —
+                    the disclosure stays with it, because a commercial term of an
+                    accepted quotation does not disappear once the buttons do. */}
+                <p className="mt-3 rounded-xl bg-white/70 px-3 py-2.5 text-[11px] leading-relaxed text-slate-500">
+                  {RETENTION_HEADLINE} {RETENTION_DISCLOSURE}
                 </p>
 
                 {enquiry.booking?.booking_number && (
@@ -535,8 +890,17 @@ export default function EnquiryConfirmation() {
               </div>
             )}
 
-            {/* ── Quote decision — the one action that must dominate ── */}
-            {isAwaitingDecision && enquiry.pricing?.final_quoted_price != null && (
+            {/* ══ THE FINAL QUOTE ══════════════════════════════════════════
+                MOVED UP from below the map. Previously the amount the customer
+                was being asked to approve sat underneath a 400–520px map, so the
+                page opened with "being processed" and the quote was only found
+                after scrolling. It now renders immediately after the Request ID.
+
+                VISIBILITY: `hasFinalQuote` is driven by the PERSISTED quotation —
+                the canonical Quotation row once it is SENT/CONVERTED, otherwise
+                the enquiry's published final price. A quotation an admin has only
+                SAVED satisfies neither, so CASE 1 shows no quote at all. */}
+            {hasFinalQuote && !isQuoteAccepted && (
               <div className="overflow-hidden rounded-3xl border-2 border-[#F5A623]/40 bg-[#F5A623]/[0.06] p-5 shadow-[0_20px_44px_-30px_rgba(11,27,51,0.5)] sm:p-6">
                 <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#B26A00]">
                   Your final transport quote is ready
@@ -574,90 +938,341 @@ export default function EnquiryConfirmation() {
                   </div>
                 </dl>
 
-                <div className="mt-5 grid gap-2 sm:grid-cols-2">
+                {/* ── ADDITIONAL-CHARGE DISCLOSURE ──
+                    Sits inside the quote card, immediately under the amount and
+                    the breakdown, so it reads as part of the price rather than as
+                    a warning bolted on. It uses the page's existing muted
+                    informational typography and never names a charge category —
+                    the wording is derived from what the saved quotation actually
+                    contains (see additionalChargeNote). It states a possibility
+                    that must be communicated in advance; it never alleges that
+                    anything is being withheld. */}
+                <p className="mt-4 rounded-xl bg-white/70 px-3 py-2.5 text-[11px] leading-relaxed text-slate-500">
+                  {additionalChargeNote}
+                </p>
+
+                {/* ── RETENTION / DETENTION DISCLOSURE — NOW COLLAPSIBLE ──
+                    Unchanged in POSITION, meaning and rate; changed in FOOTPRINT.
+                    It still sits inside the quotation card between the amount and
+                    the decision — it is the figure it qualifies — but printed open
+                    it spent three permanently-visible paragraphs pushing the very
+                    amount and buttons the customer opened the page for down the
+                    card. So the detail is now revealed on demand.
+
+                    NOTHING IS CONCEALED. The collapsed row is not an empty bar: it
+                    is a real <button> (keyboard-operable, aria-expanded /
+                    aria-controls wired to the panel) that names the category and
+                    states that retention may apply, so the existence of the charge
+                    is visible with zero interaction. Only the detail is deferred.
+
+                    WHY A GRID, NOT A MODAL. `grid-template-rows` 0fr→1fr with a
+                    paired opacity change animates the panel's real height without
+                    measuring it in JS and without unmounting it, so it opens and
+                    closes IN PLACE: no overlay, no route change, no second card,
+                    and the Accept / Decline buttons below never jump out from
+                    under a thumb. `motion-reduce:` drops the transition for anyone
+                    whose OS asks for less motion. The collapsed panel is
+                    aria-hidden so a screen reader is not read text that is
+                    visually clipped to zero height.
+
+                    THE AMOUNT IS UNTOUCHED — the rule that must not drift.
+                    `showRetentionInfo` feeds nothing but these class names and the
+                    chevron rotation; it is never read by `finalPrice` (still
+                    Quotation.total_billing_amount and nothing else), the ₹1,000 is
+                    added to neither Total Billing Amount nor GST, and no retention
+                    row is written to justify it. Retention stays CONDITIONAL — it
+                    applies only if a genuine retention event occurs, and that is
+                    raised separately through the normal financial workflow.
+                    Accept / Decline are deliberately OUTSIDE this block, so
+                    approving a quotation never requires expanding it. */}
+                <div className="mt-3 overflow-hidden rounded-xl border border-[#F5A623]/30 bg-white/70">
                   <button
                     type="button"
-                    onClick={() => runAction('accept')}
-                    disabled={actionBusy}
-                    className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-60"
+                    id="retention-disclosure-toggle"
+                    aria-expanded={showRetentionInfo}
+                    aria-controls="retention-disclosure-panel"
+                    onClick={() => setShowRetentionInfo((v) => !v)}
+                    className="flex w-full items-center justify-between gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-[#F5A623]/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#B26A00]/40"
                   >
-                    {actionBusy && action === 'accept' ? (
-                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                    ) : (
-                      <Check className="h-4 w-4" aria-hidden="true" />
-                    )}
-                    Accept Quote
+                    <span className="flex min-w-0 items-start gap-1.5">
+                      <Info
+                        className="mt-[2px] h-3.5 w-3.5 shrink-0 text-[#B26A00]"
+                        aria-hidden="true"
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-[11.5px] font-semibold leading-snug text-[#172B4D]">
+                          Additional / Conditional Charges
+                        </span>
+                        <span className="mt-0.5 block text-[11px] leading-snug text-slate-500">
+                          {RETENTION_COLLAPSED_SUMMARY}
+                        </span>
+                      </span>
+                    </span>
+
+                    <ChevronDown
+                      className={`h-4 w-4 shrink-0 text-[#B26A00] transition-transform duration-300 ease-out motion-reduce:transition-none ${
+                        showRetentionInfo ? 'rotate-180' : ''
+                      }`}
+                      aria-hidden="true"
+                    />
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={() => setShowDeclineReason((v) => !v)}
-                    disabled={actionBusy}
-                    className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl border border-[#172B4D]/20 bg-white px-4 py-3 text-sm font-semibold text-[#172B4D] transition hover:bg-[#172B4D]/5 disabled:opacity-60"
+                  <div
+                    id="retention-disclosure-panel"
+                    role="region"
+                    aria-labelledby="retention-disclosure-toggle"
+                    aria-hidden={!showRetentionInfo}
+                    className={`grid transition-[grid-template-rows,opacity] duration-300 ease-out motion-reduce:transition-none ${
+                      showRetentionInfo ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
+                    }`}
                   >
-                    <XCircle className="h-4 w-4" aria-hidden="true" />
-                    Decline
-                  </button>
+                    <div className="overflow-hidden">
+                      <div className="border-t border-[#F5A623]/25 px-3 pb-2.5 pt-2.5">
+                        <p className="flex items-start gap-1.5 text-[11.5px] font-semibold leading-relaxed text-[#172B4D]">
+                          <CalendarClock
+                            className="mt-[2px] h-3.5 w-3.5 shrink-0 text-[#B26A00]"
+                            aria-hidden="true"
+                          />
+                          {RETENTION_PANEL_HEADING}
+                        </p>
+                        <p className="mt-1.5 break-words text-[11px] leading-relaxed text-slate-500">
+                          {RETENTION_PANEL_BODY}
+                        </p>
+                        <p className="mt-1.5 text-[11px] leading-relaxed text-slate-400">
+                          {RETENTION_PANEL_FOOTNOTE}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
-                {showDeclineReason && (
-                  <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
-                    <label
-                      htmlFor="decline-reason"
-                      className="mb-1.5 block text-xs font-medium text-slate-600"
-                    >
-                      Tell us why (optional) — helps us improve the quote
-                    </label>
-                    <textarea
-                      id="decline-reason"
-                      rows={2}
-                      value={declineReason}
-                      onChange={(e) => setDeclineReason(e.target.value)}
-                      placeholder="e.g. Price is above my budget"
-                      className="w-full resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[#172B4D] focus:ring-1 focus:ring-[#172B4D]"
-                    />
-                    <div className="mt-2 flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => runAction('reject')}
-                        disabled={actionBusy}
-                        className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-60"
-                      >
-                        {actionBusy && action === 'reject' ? 'Submitting…' : 'Confirm decline'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setShowDeclineReason(false)}
-                        className="rounded-lg px-4 py-2 text-sm font-semibold text-slate-500 transition hover:bg-slate-100"
-                      >
-                        Back
-                      </button>
+                {quotation?.quotation_number && (
+                  <p className="mt-2 text-[11px] text-slate-400">
+                    Quotation reference:{' '}
+                    <span className="font-mono font-semibold text-[#172B4D]">
+                      {quotation.quotation_number}
+                    </span>
+                  </p>
+                )}
+
+                {/* ── THE COMPLETE OFFER — ONE package, approved in one tap ───
+                    *
+                    * The customer is approving a specific truck, driven by a
+                    * specific person, for a specific route on a specific date,
+                    * at a specific price. Those facts are therefore presented
+                    * together, immediately above the Accept button, so what the
+                    * customer approves is exactly what they are shown.
+                    *
+                    * This is a PRESENTATION of data the enquiry already carries
+                    * (`assignment` + `schedule` + `shipment`). It introduces no
+                    * second offer, no second quote and no second notification —
+                    * and it repeats nothing that is already shown in detail
+                    * directly below.
+                    *
+                    * PRIVACY: the driver's NAME is shown; the driver's mobile is
+                    * not, and cannot be — `EnquiryDTO.assertNoDriverPhone()`
+                    * strips it from this payload before it ever reaches the
+                    * browser. Customer care / WhatsApp remains the contact
+                    * channel, exactly as before.
+                    */}
+                {isAwaitingDecision && (
+                  <div className="mt-3 rounded-xl border border-[#172B4D]/15 bg-white p-3.5">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#172B4D]">
+                      Your complete offer
+                    </p>
+
+                    <dl className="mt-2.5 grid grid-cols-2 gap-x-3 gap-y-2.5 text-[12.5px]">
+                      <div className="min-w-0">
+                        <dt className="text-[10.5px] font-semibold uppercase tracking-wider text-slate-400">
+                          Pickup
+                        </dt>
+                        <dd className="truncate font-semibold text-[#172B4D]">
+                          {enquiry?.route?.pickup_location || '—'}
+                        </dd>
+                      </div>
+                      <div className="min-w-0">
+                        <dt className="text-[10.5px] font-semibold uppercase tracking-wider text-slate-400">
+                          Drop
+                        </dt>
+                        <dd className="truncate font-semibold text-[#172B4D]">
+                          {enquiry?.route?.drop_location || '—'}
+                        </dd>
+                      </div>
+                      <div className="min-w-0">
+                        <dt className="text-[10.5px] font-semibold uppercase tracking-wider text-slate-400">
+                          Date & time
+                        </dt>
+                        <dd className="truncate font-semibold text-[#172B4D]">
+                          {[
+                            formatLongDate(enquiry?.schedule?.pickup_date),
+                            formatTime12(enquiry?.schedule?.pickup_time),
+                          ]
+                            .filter(Boolean)
+                            .join(' · ') || '—'}
+                        </dd>
+                      </div>
+                      <div className="min-w-0">
+                        <dt className="text-[10.5px] font-semibold uppercase tracking-wider text-slate-400">
+                          Material
+                        </dt>
+                        <dd className="truncate font-semibold text-[#172B4D]">
+                          {enquiry?.shipment?.material || '—'}
+                        </dd>
+                      </div>
+
+                      {/* The reserved resources. When they exist, the offer is
+                          complete — which is why "Finalize & Send" on the admin
+                          side will not offer this button without them. */}
+                      <div className="min-w-0">
+                        <dt className="text-[10.5px] font-semibold uppercase tracking-wider text-slate-400">
+                          Vehicle
+                        </dt>
+                        <dd className="truncate font-semibold text-[#172B4D]">
+                          {enquiry?.assignment?.vehicle_number
+                            ? `${enquiry.assignment.vehicle_number}${
+                              enquiry.assignment.vehicle_type
+                                ? ` · ${enquiry.assignment.vehicle_type}`
+                                : ''
+                            }`
+                            : 'Being arranged'}
+                        </dd>
+                      </div>
+                      <div className="min-w-0">
+                        <dt className="text-[10.5px] font-semibold uppercase tracking-wider text-slate-400">
+                          Driver
+                        </dt>
+                        <dd className="truncate font-semibold text-[#172B4D]">
+                          {enquiry?.assignment?.driver_name || 'Being arranged'}
+                        </dd>
+                      </div>
+                    </dl>
+
+                    <div className="mt-3 flex items-baseline justify-between gap-3 border-t border-[#172B4D]/10 pt-2.5">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                        Final price
+                      </span>
+                      <span className="text-[20px] font-bold leading-none text-[#172B4D]">
+                        {finalPrice}
+                      </span>
                     </div>
+
+                    <p className="mt-2.5 text-[11px] leading-relaxed text-slate-500">
+                      Accepting confirms this booking with the vehicle and driver shown above. No
+                      separate vehicle-assignment step follows.
+                    </p>
                   </div>
                 )}
 
-                <p className="mt-3 text-[11px] leading-relaxed text-slate-400">
-                  This is an estimate. Final price is confirmed by Bihar Transport after vehicle
-                  and driver assignment.
-                </p>
+                {/* ── ACCEPT / DECLINE — THE QUOTATION DECISION ──
+                    These two buttons MOVED INTO this card. The customer is
+                    approving a COMMERCIAL QUOTATION, not a driver or a truck, so
+                    the decision now sits with the number it decides: amount →
+                    breakdown → charge disclosure → approve/decline. They are the
+                    SAME elements, unchanged, still calling the real
+                    enquiryAPI.accept / enquiryAPI.reject against
+                    POST /api/enquiries/:idOrNumber/accept and …/reject.
+
+                    They render inside the quotation card only while the SERVER
+                    reports AWAITING_CUSTOMER_ACCEPTANCE. That status stays
+                    authoritative: rendering them in any other state would offer a
+                    tap that EnquiryService.customerAccept rejects with a 409. Once
+                    the acceptance is confirmed the whole card — buttons included —
+                    is replaced by the read-only "Quote Accepted" state, so there is
+                    exactly ONE acceptance action on the page and it can never be
+                    pressed twice. */}
+                {isAwaitingDecision && (
+                  <>
+                    <div className="mt-4 border-t border-[#F5A623]/30 pt-4">
+                      <p className="mb-2.5 text-[11px] font-bold uppercase tracking-[0.16em] text-[#B26A00]">
+                        Your decision on this quote
+                      </p>
+
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <button
+                          type="button"
+                          onClick={() => runAction('accept')}
+                          disabled={actionBusy}
+                          className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-60"
+                        >
+                          {actionBusy && action === 'accept' ? (
+                            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                          ) : (
+                            <Check className="h-4 w-4" aria-hidden="true" />
+                          )}
+                          Accept Quote
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setShowDeclineReason((v) => !v)}
+                          disabled={actionBusy}
+                          className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl border border-[#172B4D]/20 bg-white px-4 py-3 text-sm font-semibold text-[#172B4D] transition hover:bg-[#172B4D]/5 disabled:opacity-60"
+                        >
+                          <XCircle className="h-4 w-4" aria-hidden="true" />
+                          Decline
+                        </button>
+                      </div>
+
+                      {showDeclineReason && (
+                        <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+                          <label
+                            htmlFor="decline-reason"
+                            className="mb-1.5 block text-xs font-medium text-slate-600"
+                          >
+                            Tell us why (optional) — helps us improve the quote
+                          </label>
+                          <textarea
+                            id="decline-reason"
+                            rows={2}
+                            value={declineReason}
+                            onChange={(e) => setDeclineReason(e.target.value)}
+                            placeholder="e.g. Price is above my budget"
+                            className="w-full resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[#172B4D] focus:ring-1 focus:ring-[#172B4D]"
+                          />
+                          <div className="mt-2 flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => runAction('reject')}
+                              disabled={actionBusy}
+                              className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-60"
+                            >
+                              {actionBusy && action === 'reject' ? 'Submitting…' : 'Confirm decline'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setShowDeclineReason(false)}
+                              className="rounded-lg px-4 py-2 text-sm font-semibold text-slate-500 transition hover:bg-slate-100"
+                            >
+                              Back
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {actionError && actionError.kind !== 'cancel' && (
+                        <div className="mt-3 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                          <span>{actionError.message}</span>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
             )}
-          </div>
-
-          {/* ── 2. THE SUPPORT CARD + LIVE STATUS ──
-              Mobile: third, directly under the map. Desktop: this is the whole
-              right-hand column, so the page reads as two balanced halves
-              instead of a very tall left column beside a short, empty one. */}
-          <div className="order-2 space-y-5 lg:col-start-2 lg:row-start-2 lg:row-span-2 lg:self-start">
-            <SupportCard enquiryNumber={enquiry.enquiry_number} />
-
-            <EnquiryStatusSteps status={status} connected={connected} />
 
             {/* ── Vehicle / driver, once the backend reports an assignment ──
-                Renders from `enquiry.assignment`, which the API returns as soon
-                as an admin commits resources. Both halves are conditional so a
-                truck-without-a-crew reads honestly as "vehicle assigned" rather
-                than claiming a driver exists. */}
+                MOVED UP from the right-hand column so it reads directly beneath
+                the quote. Renders from `enquiry.assignment`, which the API
+                returns as soon as an admin commits resources. Both halves are
+                conditional so a truck-without-a-crew reads honestly as "vehicle
+                assigned" rather than claiming a driver exists.
+
+                PRIVACY: the field list below is unchanged and remains the
+                allow-list the backend projection defines — driver name, vehicle,
+                vehicle number, capacity, rating, transport owner name, status.
+                No driver mobile and no owner contact number is requested from the
+                API, so none can be rendered here. */}
             {enquiry.assignment && (
               <div className="rounded-3xl border border-emerald-200 bg-emerald-50/40 p-5 shadow-[0_2px_6px_rgba(23,43,77,0.04)]">
                 <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-700">
@@ -667,7 +1282,15 @@ export default function EnquiryConfirmation() {
                 </p>
                 <div className="mt-3">
                   {enquiry.assignment.driver_name && (
-                    <DetailRow label="Driver Name" value={enquiry.assignment.driver_name} strong />
+                    <DetailRow
+                      label="Driver Name"
+                      value={
+                        <DriverIdentityValue masked={!isDriverRevealed}>
+                          {enquiry.assignment.driver_name}
+                        </DriverIdentityValue>
+                      }
+                      strong
+                    />
                   )}
                   <DetailRow label="Vehicle" value={enquiry.assignment.vehicle_type} />
                   <DetailRow
@@ -684,13 +1307,21 @@ export default function EnquiryConfirmation() {
                   {enquiry.assignment.driver_rating > 0 && (
                     <DetailRow
                       label="Driver Rating"
-                      value={`★ ${Number(enquiry.assignment.driver_rating).toFixed(1)}`}
+                      value={
+                        <DriverIdentityValue masked={!isDriverRevealed}>
+                          ★ {Number(enquiry.assignment.driver_rating).toFixed(1)}
+                        </DriverIdentityValue>
+                      }
                     />
                   )}
                   {enquiry.assignment.transport_owner?.name && (
                     <DetailRow
                       label="Transport Owner"
-                      value={enquiry.assignment.transport_owner.name}
+                      value={
+                        <DriverIdentityValue masked={!isDriverRevealed}>
+                          {enquiry.assignment.transport_owner.name}
+                        </DriverIdentityValue>
+                      }
                     />
                   )}
                   <DetailRow
@@ -703,41 +1334,83 @@ export default function EnquiryConfirmation() {
                     ? 'Your vehicle and driver are confirmed for this shipment.'
                     : 'Your vehicle is confirmed. We are finalising the driver for this shipment.'}
                 </p>
+                {!isDriverRevealed && (
+                  <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/70">
+                    Driver name, rating and transport owner stay hidden until you accept this
+                    quotation.
+                  </p>
+                )}
                 <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/70">
                   For safety and privacy, driver contact details are not shared. All coordination
                   happens through Bihar Transport Customer Care.
                 </p>
               </div>
             )}
-          </div>
 
-          {/* ── 3. Request details + actions ── */}
-          <div className="order-3 space-y-4 lg:col-start-1 lg:row-start-3">
-            {/* ── Recent activity, straight from the audit trail ── */}
-            {enquiry.events?.length > 0 && (
-              <details className="group overflow-hidden rounded-2xl border border-[#172B4D]/10 bg-white shadow-[0_1px_2px_rgba(23,43,77,0.04)]">
-                <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3.5 text-sm font-semibold text-[#172B4D]">
-                  <Sparkles className="h-4 w-4 text-[#F5A623]" aria-hidden="true" />
-                  Request timeline
-                  <ChevronRight
-                    className="ml-auto h-4 w-4 text-slate-400 transition-transform group-open:rotate-90"
-                    aria-hidden="true"
-                  />
-                </summary>
-                <ul className="space-y-3 border-t border-slate-100 px-4 py-4">
-                  {enquiry.events.slice(0, 10).map((ev) => (
-                    <li key={ev.id} className="flex gap-2.5">
-                      <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[#F5A623]" />
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm text-[#172B4D]">{ev.message}</p>
-                        <p className="text-[11px] text-slate-400">{formatTimestamp(ev.created_at)}</p>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </details>
+            {/* A published quote whose approval window has not opened yet. Honest
+                about the wait rather than presenting two buttons that would be
+                rejected by the server if tapped. */}
+            {hasFinalQuote && !isAwaitingDecision && !isQuoteAccepted && !isClosed && (
+              <p className="text-[11.5px] leading-relaxed text-slate-500">
+                Your quote is ready. The Accept and Decline options appear here as
+                soon as Bihar Transport opens this quotation for your approval.
+              </p>
             )}
 
+            {/* An Accept/Decline failure is reported INSIDE the quotation card,
+                directly under the buttons the customer pressed. Only the one
+                action left out here — Cancel Request, at the bottom of the page —
+                reports at this level, so one failure is never shown twice. */}
+            {actionError && actionError.kind === 'cancel' && (
+              <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                <span>{actionError.message}</span>
+              </div>
+            )}
+
+            {/* Section label — kept to a single line so it costs no vertical
+                space but names what the customer is looking at. */}
+            <div className="flex items-center justify-between gap-3 pt-1">
+              <h2 className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.18em] text-[#172B4D]">
+                {searching ? (
+                  <Radio className="btb-accent-pulse h-3.5 w-3.5 rounded-full text-[#F5A623]" aria-hidden="true" />
+                ) : (
+                  <Check className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" />
+                )}
+                {searching ? 'Finding your truck' : stage.headline}
+              </h2>
+              <p className="truncate text-[11.5px] font-medium text-slate-500">{stage.detail}</p>
+            </div>
+
+            <RouteMapExperience
+              route={enquiry.route}
+              stage={stage}
+              searching={searching}
+              connected={connected}
+              assignedLabel={assignedLabel}
+            />
+          </div>
+
+          {/* ── 2. THE SUPPORT CARD + LIVE STATUS ──
+              Mobile: after the commercial column. Desktop: this is the whole
+              right-hand column, so the page reads as two balanced halves
+              instead of a very tall left column beside a short, empty one.
+
+              The vehicle/driver card that used to sit here has MOVED up into the
+              left column, directly beneath the final quote. It was not copied —
+              there is exactly one assignment card on the page, rendering from the
+              same `enquiry.assignment` object. */}
+          <div className="order-2 space-y-5 lg:col-start-2 lg:row-start-2 lg:row-span-2 lg:self-start">
+            <SupportCard enquiryNumber={enquiry.enquiry_number} />
+
+            <EnquiryStatusSteps status={status} connected={connected} />
+          </div>
+
+          {/* ── 3. Request details, request timeline + actions ──
+              Order below is now Details → Timeline, so the reference data a
+              customer is likely to want sits directly under the map and the
+              audit trail stays as the last thing they scroll to. */}
+          <div className="order-3 space-y-4 lg:col-start-1 lg:row-start-3">
             {/* ══ SECONDARY CONTENT ═══════════════════════════════════
                 Real data, demoted behind one-line accordions. Collapsed, each
                 card shows only its own summary — no empty columns, no wasted
@@ -841,7 +1514,7 @@ export default function EnquiryConfirmation() {
                     </p>
                   )}
 
-                  {enquiry.pricing?.final_quoted_price != null && (
+                  {hasFinalQuote && (
                     <div className="mt-3">
                       <DetailRow label="Final Quote" value={finalPrice} strong />
                     </div>
@@ -853,6 +1526,33 @@ export default function EnquiryConfirmation() {
                 </DetailAccordion>
               </div>
             </section>
+
+            {/* ── Recent activity, straight from the audit trail ──
+                MOVED BELOW Request Details to match the customer's reading
+                order. It is history, not information they came for. */}
+            {enquiry.events?.length > 0 && (
+              <details className="group overflow-hidden rounded-2xl border border-[#172B4D]/10 bg-white shadow-[0_1px_2px_rgba(23,43,77,0.04)]">
+                <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3.5 text-sm font-semibold text-[#172B4D]">
+                  <Sparkles className="h-4 w-4 text-[#F5A623]" aria-hidden="true" />
+                  Request timeline
+                  <ChevronRight
+                    className="ml-auto h-4 w-4 text-slate-400 transition-transform group-open:rotate-90"
+                    aria-hidden="true"
+                  />
+                </summary>
+                <ul className="space-y-3 border-t border-slate-100 px-4 py-4">
+                  {enquiry.events.slice(0, 10).map((ev) => (
+                    <li key={ev.id} className="flex gap-2.5">
+                      <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[#F5A623]" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm text-[#172B4D]">{ev.message}</p>
+                        <p className="text-[11px] text-slate-400">{formatTimestamp(ev.created_at)}</p>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
 
             {/* ══ SECONDARY ACTIONS ════════════════════════════════════ */}
             <section className="border-t border-[#172B4D]/10 pt-5">

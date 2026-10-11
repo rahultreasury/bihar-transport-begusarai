@@ -36,6 +36,9 @@ export {
   SkeletonTable,
 } from './LoadingSkeleton';
 
+/* The three-dot action menu + its blurred backdrop — ONE shared implementation */
+export { default as ActionMenu } from './ActionMenu';
+
 /* The shared vocabulary: header, buttons, badges, search, forms, modals, charts */
 export {
   PageHeader,

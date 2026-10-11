@@ -6,20 +6,38 @@
  * WHAT THIS IS
  *   A logistics operations workspace, not a CRUD form. It answers, in order:
  *   which enquiry is this → what stage is it at → who is the customer → where is
- *   the load going → what is assigned → what is quoted → what happens next.
+ *   the load going → what is quoted → what happens next.
+ *
+ * SCOPE — THE ENQUIRY PAGE DOES NOT HIRE VEHICLES
+ *   This page owns exactly five things:
+ *     ENQUIRY INTAKE → REVIEW → QUOTATION → CUSTOMER DECISION → CONFIRMATION
+ *
+ *   Vehicle hiring lives in ONE place only: the Universal Vehicle Hire workspace
+ *   at /admin/trips/:tripId/hire. The "TRANSPORT OWNER", "TRANSPORT PARTNER",
+ *   "DRIVER" and "VEHICLE" selectors and the "Assign Resources" / "Reassign"
+ *   buttons that used to live here have been REMOVED. They were a second hiring
+ *   form competing with the canonical one, and an operator could use either —
+ *   which is how the two screens drifted apart.
+ *
+ *   What replaces them is a compact, READ-ONLY handoff card
+ *   (`VehicleHireStatusCard`). It reads the SAME canonical assignment the
+ *   Vehicle Hire page reads — `GET /api/vehicle-hire/assignment?enquiry_id=`,
+ *   served by `TripVehicleAssignmentService`, the single assignment writer — and
+ *   offers a single navigation action into that workflow. It performs no hiring,
+ *   computes no gross/commission/net and creates no second assignment.
+ *
+ *   ENQUIRY → QUOTE → CUSTOMER DECISION → CONFIRMED → HANDOFF TO VEHICLE HIRE
  *
  * TRUST BOUNDARY
  *   Every button here is a thin wrapper around a server-authoritative call. The
- *   backend re-validates vehicle/driver/owner/partner ids, re-checks capacity and
- *   schedule conflicts, and recomputes the resulting status. A rejected action
- *   surfaces the server's own message verbatim in the error banner — this page
- *   never second-guesses it and never writes status from the client.
+ *   backend re-validates the ids it receives, re-checks schedule conflicts, and
+ *   recomputes the resulting status. A rejected action surfaces the server's own
+ *   message verbatim in the error banner — this page never second-guesses it and
+ *   never writes status from the client.
  *
  * READ-ONLY RULES MIRROR THE BACKEND, NOT THE OLD UI
- *   The editable regions are gated on exactly the conditions the service itself
+ *   The editable region is gated on exactly the conditions the service itself
  *   enforces, so the page can never offer an action the API will reject:
- *     • assignment  → blocked only when `isTerminal(status)`
- *                      (EnquiryService.adminAssign)
  *     • quote       → blocked when terminal, or when the customer has committed
  *                      AND the status is past CUSTOMER_ACCEPTED — that is the
  *                      literal guard in EnquiryService.adminSetQuote, which
@@ -29,10 +47,6 @@
  *                      (EnquiryStateMachine.ALLOWED_TRANSITIONS).
  *   Every successful action re-reads the whole enquiry from the server, so what
  *   is on screen afterwards is the persisted truth, never a local guess.
- *
- * PRIVACY
- *   The driver's mobile number is shown HERE and only here. Dispatch must be able
- *   to call the driver; the customer-facing surfaces never receive it.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -42,23 +56,16 @@ import {
   ArrowLeft,
   ArrowRight,
   Ban,
-  Building2,
   CheckCircle2,
   ChevronRight,
-  Handshake,
-  Inbox,
-  ListChecks,
   Loader2,
-  Lock,
   Package,
-  Phone,
   RefreshCw,
   Save,
   Send,
   Shield,
   Truck,
   User,
-  UserRound,
 } from 'lucide-react';
 
 import { adminEnquiryAPI } from '../services/enquiryAPI';
@@ -81,26 +88,12 @@ import { FactGrid, InfoRow, Notice, Panel } from '../components/admin-premium/en
 import EnquiryLifecycleRail from '../components/admin-premium/enquiries/EnquiryLifecycleRail';
 import EnquiryRouteStrip from '../components/admin-premium/enquiries/EnquiryRouteStrip';
 import EnquiryActivityFeed from '../components/admin-premium/enquiries/EnquiryActivityFeed';
-import PremiumCombobox from '../components/admin-premium/enquiries/PremiumCombobox';
+import VehicleHireStatusCard from '../components/admin-premium/enquiries/VehicleHireStatusCard';
 import {
-  buildAssignmentIndex,
-  getVehicleId,
-  getDriverId,
-  getOwnerId,
-  getPartnerId,
-  vehicleKeywords,
-  driverKeywords,
-  ownerKeywords,
-  partnerKeywords,
-  renderVehicleOption,
-  renderVehicleSelected,
-  renderDriverOption,
-  renderDriverSelected,
-  renderOwnerOption,
-  renderOwnerSelected,
-  renderPartnerOption,
-  renderPartnerSelected,
-} from '../components/admin-premium/enquiries/assignmentSelectors';
+  canFinalizeQuote,
+  describeHireAssignment,
+} from '../components/admin-premium/enquiries/hireHandoff';
+import { vehicleHireAPI } from '../services/vehicleHireAPI';
 
 /* ── Status sets, mirroring backend/utils/EnquiryStateMachine.js ─────────── */
 
@@ -148,22 +141,6 @@ function ActionButton({ tone = 'navy', icon: Icon, children, ...rest }) {
       {Icon ? <Icon className="h-3.5 w-3.5" strokeWidth={2.25} aria-hidden="true" /> : null}
       {children}
     </button>
-  );
-}
-
-/** One row of the CURRENT ASSIGNMENT block. */
-function AssignmentRow({ label, value, sub, action }) {
-  return (
-    <div className="flex items-start justify-between gap-3 border-b border-border/60 py-2.5 last:border-b-0">
-      <span className="w-[104px] shrink-0 text-[10.5px] font-bold uppercase tracking-wider text-muted">
-        {label}
-      </span>
-      <div className="min-w-0 flex-1 text-right">
-        <p className="truncate text-[13px] font-semibold text-text">{value || '—'}</p>
-        {sub ? <p className="mt-0.5 truncate text-[11.5px] text-muted">{sub}</p> : null}
-      </div>
-      {action ? <div className="shrink-0">{action}</div> : null}
-    </div>
   );
 }
 
@@ -237,52 +214,60 @@ export default function AdminEnquiryWorkspace() {
   const { id } = useParams();
 
   const [enquiry, setEnquiry] = useState(null);
-  const [options, setOptions] = useState({ vehicles: [], drivers: [], partners: [], owners: [] });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
 
-  const [form, setForm] = useState({ vehicle_id: '', driver_id: '', partner_id: '', owner_id: '' });
   const [quote, setQuote] = useState({ final_price: '', remarks: '' });
+
+  // THE CANONICAL VEHICLE/DRIVER RESERVATION, read once for the whole page.
+  //
+  // Both the handoff card and the quote gate need it, so it is fetched HERE and
+  // handed down rather than fetched twice. It resolves through
+  // TripVehicleAssignmentService — the single assignment writer — to the same
+  // Trip row the Vehicle Hire page reads, so this page can never show a
+  // different vehicle from the one actually reserved.
+  const [assignment, setAssignment] = useState(null);
 
   const [busy, setBusy] = useState(null); // which action is in flight
   const [message, setMessage] = useState(null);
   const [actionError, setActionError] = useState(null);
 
   /**
-   * Which enquiry the form was last seeded from. The form is a STAGING AREA
-   * for the operator's next action, so a background refresh (the realtime hook
-   * refetches on socket activity) must not overwrite a half-made selection —
-   * doing so silently cleared the chosen vehicle between picking it and
-   * pressing "Assign Resources", which then posted an empty payload and drew a
-   * "Provide at least one of vehicle_id…" error for a selection the operator
-   * could still see.
+   * Which enquiry the quote form was last seeded from. The form is a STAGING
+   * AREA for the operator's next action, so a background refresh (the realtime
+   * hook refetches on socket activity) must not overwrite a half-typed price.
    *
-   * The CURRENT ASSIGNMENT block above the selectors always reads straight from
-   * `enquiry`, so the server truth is never hidden by this.
+   * There is deliberately no equivalent seeding for vehicle/driver/owner/partner
+   * any more: those selectors are gone from this page. Assignment is written by
+   * the Vehicle Hire workspace and read back here as a status card.
    */
   const seededIdRef = useRef(null);
 
   const load = useCallback(async () => {
     if (!id) return;
     try {
-      const [{ data }, { data: optData }] = await Promise.all([
+      // The assignable-options catalogue (vehicles / drivers / owners / partners)
+      // is no longer requested: nothing on this page renders a resource picker.
+      // The endpoint itself is untouched — the Vehicle Hire page reads its own
+      // catalogue from /api/vehicle-hire/lookups.
+      //
+      // The reservation is read alongside the enquiry so the page can show the
+      // vehicle and driver with the quote and gate sending on them. A failure
+      // there must not fail the enquiry read, so it is settled separately.
+      const [{ data }, assignmentRes] = await Promise.all([
         adminEnquiryAPI.get(id),
-        adminEnquiryAPI.getOptions(),
+        vehicleHireAPI
+          .getAssignmentByBooking({ enquiry_id: id })
+          .catch(() => null),
       ]);
       const e = data?.data || null;
       setEnquiry(e);
-      setOptions(optData?.data || { vehicles: [], drivers: [], partners: [], owners: [] });
+      setAssignment(assignmentRes?.data?.data || null);
 
-      // Seed the form from the PERSISTED state, and only when this enquiry is
-      // first opened. Never from anything the browser happened to be holding.
+      // Seed the quote form from the PERSISTED state, and only when this enquiry
+      // is first opened. Never from anything the browser happened to be holding.
       if (seededIdRef.current !== String(id)) {
-        setForm({
-          vehicle_id: e?.vehicle?.assigned_vehicle_id || '',
-          driver_id: e?.assignment?.driver?.driver_id || '',
-          partner_id: e?.assignment?.partner?.partner_id || '',
-          owner_id: e?.assignment?.owner?.owner_id || '',
-        });
         setQuote({
           final_price: e?.quote?.final_quoted_price ?? '',
           remarks: e?.quote?.quote_remarks ?? '',
@@ -347,14 +332,12 @@ export default function AdminEnquiryWorkspace() {
    * Read-only gates — each one is the backend's own condition, not a guess.
    * See the TRUST BOUNDARY note at the top of this file.
    */
-  const assignmentLocked = isClosed;
   const quoteLocked =
     isClosed || (CUSTOMER_COMMITTED.includes(status) && status !== ENQUIRY_STATUS.CUSTOMER_ACCEPTED);
   const canStartReview = status === ENQUIRY_STATUS.ENQUIRY_SUBMITTED;
-  // The backend only persists QUOTE_READY once a valid price exists AND a
-  // vehicle + driver are committed, so this single check IS the "quote is
-  // prepared and publishable" condition. It is derived from the server status,
-  // never from local state.
+  // QUOTE_READY is the single status from which AWAITING_CUSTOMER_ACCEPTANCE is
+  // reachable, so this check IS the "quote is prepared and publishable"
+  // condition. It is derived from the server status, never from local state.
   const canSendQuote = status === ENQUIRY_STATUS.QUOTE_READY;
   const isQuoteSent = status === ENQUIRY_STATUS.AWAITING_CUSTOMER_ACCEPTANCE;
   const isAccepted = [
@@ -363,8 +346,44 @@ export default function AdminEnquiryWorkspace() {
     ENQUIRY_STATUS.IN_PROGRESS,
     ENQUIRY_STATUS.COMPLETED,
   ].includes(status);
-  const isCommitted = CUSTOMER_COMMITTED.includes(status);
   const hasBooking = Boolean(enquiry?.booking);
+
+  /**
+   * WHAT THE CUSTOMER WOULD BE OFFERED — the reservation, read back from the
+   * single canonical assignment. Null until a vehicle and driver are engaged.
+   */
+  const reservation = useMemo(() => describeHireAssignment(assignment), [assignment]);
+
+  /**
+   * MAY THE QUOTE BE SENT?
+   *
+   * The whole point of the new workflow: the customer receives the price, the
+   * vehicle and the driver TOGETHER. Sending a price while resources are still
+   * unassigned is exactly the "accept, then wait while we find a truck"
+   * experience this replaces, so the button stays disabled until both exist.
+   *
+   * This is a UX gate, not a security control — the backend still enforces its
+   * own rules. It exists so the operator is never offered a step the workflow
+   * says cannot be taken yet.
+   */
+  const quoteGate = useMemo(() => {
+    const base = canFinalizeQuote({ assignment, finalPrice: quote.final_price });
+    if (!base.allowed) return base;
+
+    // THE OFFER MUST BE COMPLETE. A quote that cannot describe the job is not
+    // one worth sending: the customer is being asked to accept a specific price
+    // for a specific truck on a specific route, so the route and the date have
+    // to exist before "Finalize & Send" is offered at all.
+    const pickup = enquiry?.route?.pickup_location || enquiry?.schedule?.pickup_location || null;
+    const drop = enquiry?.route?.drop_location || enquiry?.schedule?.drop_location || null;
+    if (!pickup || !drop) {
+      return { allowed: false, reason: 'This enquiry is missing a pickup or drop location.' };
+    }
+    if (!enquiry?.schedule?.pickup_date) {
+      return { allowed: false, reason: 'This enquiry has no pickup date.' };
+    }
+    return base;
+  }, [assignment, quote.final_price, enquiry]);
   // `quoted_at` is stamped by the send endpoint, so it is the authoritative
   // "sent at" time — not anything the browser remembers.
   const quoteSentAt = enquiry?.quote?.quoted_at || null;
@@ -386,38 +405,6 @@ export default function AdminEnquiryWorkspace() {
     () => formatTimestamp(enquiry?.timeline?.created_at),
     [enquiry],
   );
-
-  /* ── Assignment selector bindings ────────────────────────────────────── */
-
-  /** One cross-reference pass over the SAME options payload already fetched. */
-  const resourceIndex = useMemo(() => buildAssignmentIndex(options), [options]);
-
-  const vehicleSearch = useCallback((v) => vehicleKeywords(v, resourceIndex), [resourceIndex]);
-  const driverSearch = useCallback((d) => driverKeywords(d, resourceIndex), [resourceIndex]);
-  const ownerSearch = useCallback(ownerKeywords, []);
-  const partnerSearch = useCallback(partnerKeywords, []);
-
-  const vehicleRow = useCallback((item, ctx) => renderVehicleOption(item, ctx, resourceIndex), [resourceIndex]);
-  const driverRow = useCallback((item, ctx) => renderDriverOption(item, ctx, resourceIndex), [resourceIndex]);
-  const ownerRow = useCallback((item, ctx) => renderOwnerOption(item, ctx, resourceIndex), [resourceIndex]);
-  const partnerRow = useCallback((item, ctx) => renderPartnerOption(item, ctx, resourceIndex), [resourceIndex]);
-
-  const vehiclePicked = useCallback(renderVehicleSelected, []);
-  const driverPicked = useCallback((d) => renderDriverSelected(d, resourceIndex), [resourceIndex]);
-  const ownerPicked = useCallback((o) => renderOwnerSelected(o, resourceIndex), [resourceIndex]);
-  const partnerPicked = useCallback((p) => renderPartnerSelected(p, resourceIndex), [resourceIndex]);
-
-  /**
-   * Fallbacks for an already-assigned resource the options endpoint no longer
-   * lists. Same response, still real server data — they just stop the closed
-   * field from reading as "nothing is assigned" after a reload.
-   */
-  const assignment = enquiry?.assignment;
-  const assignedOwner = useMemo(() => {
-    const owner = assignment?.owner;
-    if (!owner) return null;
-    return { ...owner, company_name: owner.name, owner_name: owner.name };
-  }, [assignment]);
 
   /* ── Render states ────────────────────────────────────────────────────── */
 
@@ -642,196 +629,37 @@ export default function AdminEnquiryWorkspace() {
 
             {/* ── RIGHT: what happens next ──────────────────────────────── */}
             <div className="space-y-4">
-              {/* 7 + 8 + 9 + 10 + 11. Quote & Assignment */}
+              {/* ── VEHICLE & DRIVER — reserved BEFORE the quote goes out ─────
+                  *
+                  * The Transport Owner / Transport Partner / Driver / Vehicle
+                  * selectors and the "Assign Resources" / "Reassign" buttons
+                  * that used to live here were a SECOND vehicle-hiring form.
+                  * They are gone. Selection happens in exactly one place: the
+*   Universal Vehicle Hire workspace at /admin/trips/:tripId/vehicle-hire.
+                  *
+                  * This card is the HAND-OFF, not a form. It reads the SAME
+                  * canonical assignment the Vehicle Hire page reads
+                  * (GET /api/vehicle-hire/assignment → TripVehicleAssignmentService,
+                  * the single assignment writer), and when nothing is engaged it
+                  * asks the SERVER to provision the consignment's one trip and
+                  * then navigates into that workspace. React never creates a
+                  * trip and never writes an assignment. */}
               <Panel
-                title="Quote & Assignment"
-                icon={ListChecks}
-                subtitle="Assign resources, set the final quote and publish it to the customer."
+                title="Vehicle & Driver"
+                icon={Truck}
+                subtitle="Reserved before the quote is sent, so the customer never has to wait after accepting."
               >
-                {/* Current assignment */}
-                <div className="mb-4">
-                  <p className="mb-1 text-[10.5px] font-bold uppercase tracking-wider text-muted">
-                    Current assignment
-                  </p>
-                  <div className="rounded-xl border border-border bg-slate-50/60 px-3.5">
-                    <AssignmentRow
-                      label="Driver"
-                      value={assignment?.driver?.driver_name}
-                      sub={assignment?.driver?.driver_code || null}
-                      action={
-                        assignment?.driver?.mobile ? (
-                          <a
-                            href={`tel:${assignment.driver.mobile}`}
-                            className="inline-flex items-center gap-1 rounded-lg border border-border bg-white px-2 py-1 text-[11px] font-semibold text-[#1e3a5f] transition hover:border-amber-300"
-                          >
-                            <Phone className="h-3 w-3" strokeWidth={2.5} aria-hidden="true" />
-                            {assignment.driver.mobile}
-                          </a>
-                        ) : null
-                      }
-                    />
-                    <AssignmentRow
-                      label="Vehicle"
-                      value={
-                        assignment?.vehicle
-                          ? `${assignment.vehicle.vehicle_number} · ${
-                              assignment.vehicle.vehicle_name || assignment.vehicle.vehicle_type
-                            }`
-                          : null
-                      }
-                      sub={enquiry.vehicle.assigned_vehicle_number ? undefined : null}
-                    />
-                    <AssignmentRow label="Owner" value={assignment?.owner?.name} sub={assignment?.owner?.city} />
-                    <AssignmentRow
-                      label="Partner"
-                      value={assignment?.partner?.partner_name}
-                      sub={assignment?.partner?.city}
-                    />
-                  </div>
-                </div>
-
-                {/* 14. Read-only states — never imply an edit the API rejects */}
-                {quoteLocked ? (
-                  <Notice tone="neutral" className="mb-4">
-                    <span className="inline-flex items-center gap-1.5 font-semibold">
-                      <Lock className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden="true" />
-                      This enquiry is already quoted and confirmed — the quote workspace is read-only.
-                    </span>
-                  </Notice>
-                ) : null}
-
-                {/* Selectors */}
-                <div className="space-y-3.5">
-                  <PremiumCombobox
-                    id="assign-vehicle"
-                    label="Vehicle"
-                    icon={Truck}
-                    value={form.vehicle_id}
-                    onChange={(next) => setForm((f) => ({ ...f, vehicle_id: next }))}
-                    options={options.vehicles}
-                    getOptionId={getVehicleId}
-                    getKeywords={vehicleSearch}
-                    renderOption={vehicleRow}
-                    renderSelected={vehiclePicked}
-                    selectedFallback={assignment?.vehicle || null}
-                    selectedPrompt="Search vehicle…"
-                    searchPlaceholder="Search vehicle number, type, owner or capacity…"
-                    emptyTitle="No vehicles found"
-                    emptyHint="Try another registration number, vehicle type or owner."
-                    noun="available vehicles"
-                    disabled={assignmentLocked}
-                  />
-
-                  <PremiumCombobox
-                    id="assign-driver"
-                    label="Driver"
-                    icon={UserRound}
-                    value={form.driver_id}
-                    onChange={(next) => setForm((f) => ({ ...f, driver_id: next }))}
-                    options={options.drivers}
-                    getOptionId={getDriverId}
-                    getKeywords={driverSearch}
-                    renderOption={driverRow}
-                    renderSelected={driverPicked}
-                    selectedFallback={assignment?.driver || null}
-                    selectedPrompt="Search driver…"
-                    searchPlaceholder="Search driver by name, ID, mobile or vehicle…"
-                    emptyTitle="No drivers found"
-                    emptyHint="Try another driver name, ID or mobile number."
-                    noun="drivers"
-                    disabled={assignmentLocked}
-                  />
-
-                  <PremiumCombobox
-                    id="assign-owner"
-                    label="Transport Owner"
-                    icon={Building2}
-                    value={form.owner_id}
-                    onChange={(next) => setForm((f) => ({ ...f, owner_id: next }))}
-                    options={options.owners}
-                    getOptionId={getOwnerId}
-                    getKeywords={ownerSearch}
-                    renderOption={ownerRow}
-                    renderSelected={ownerPicked}
-                    selectedFallback={assignedOwner}
-                    selectedPrompt="Search transport owner…"
-                    searchPlaceholder="Search transport owner by company, name or city…"
-                    emptyTitle="No transport owners found"
-                    emptyHint="Try another company name, owner name or city."
-                    noun="transport owners"
-                    disabled={assignmentLocked}
-                  />
-
-                  <PremiumCombobox
-                    id="assign-partner"
-                    label="Transport Partner"
-                    icon={Handshake}
-                    value={form.partner_id}
-                    onChange={(next) => setForm((f) => ({ ...f, partner_id: next }))}
-                    options={options.partners}
-                    getOptionId={getPartnerId}
-                    getKeywords={partnerSearch}
-                    renderOption={partnerRow}
-                    renderSelected={partnerPicked}
-                    selectedFallback={assignment?.partner || null}
-                    selectedPrompt="Search transport partner…"
-                    searchPlaceholder="Search transport partner by name, company or city…"
-                    emptyTitle="No transport partners found"
-                    emptyHint="Try another partner name, company or city."
-                    noun="transport partners"
-                    disabled={assignmentLocked}
-                  />
-                </div>
-
-                {/* 11. One clear primary action */}
-                <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-4">
-                  <ActionButton
-                    tone="navy"
-                    icon={Truck}
-                    disabled={busy === 'assign' || assignmentLocked}
-                    onClick={() =>
-                      run(
-                        'assign',
-                        () =>
-                          adminEnquiryAPI.assign(id, {
-                            vehicle_id: form.vehicle_id || undefined,
-                            driver_id: form.driver_id || undefined,
-                            owner_id: form.owner_id || undefined,
-                            partner_id: form.partner_id || undefined,
-                          }),
-                        'Resources assigned'
-                      )
-                    }
-                  >
-                    {busy === 'assign' ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                    ) : null}
-                    Assign Resources
-                  </ActionButton>
-
-                  {isCommitted && !isClosed ? (
-                    <ActionButton
-                      tone="ghost"
-                      icon={RefreshCw}
-                      disabled={busy === 'reassign' || assignmentLocked}
-                      onClick={() =>
-                        run(
-                          'reassign',
-                          () =>
-                            adminEnquiryAPI.reassign(id, {
-                              vehicle_id: form.vehicle_id || undefined,
-                              driver_id: form.driver_id || undefined,
-                              owner_id: form.owner_id || undefined,
-                              partner_id: form.partner_id || undefined,
-                            }),
-                          'Resources reassigned'
-                        )
-                      }
-                    >
-                      Reassign
-                    </ActionButton>
-                  ) : null}
-                </div>
+                <VehicleHireStatusCard
+                  enquiryId={enquiry.enquiry_id}
+                  bookingId={enquiry.booking?.booking_id}
+                  enquiryStatus={status}
+                  quoteLabel={finalQuote}
+                  pickup={enquiry.route?.pickup_location || enquiry.schedule?.pickup_location || null}
+                  drop={enquiry.route?.drop_location || enquiry.schedule?.drop_location || null}
+                  customerOfferUrl={`/booking/enquiry/${enquiry.enquiry_number}`}
+                  tripUrl={assignment?.trip_id ? `/admin/trips/${assignment.trip_id}` : null}
+                  assignment={assignment}
+                />
               </Panel>
 
               {/* 12. Pricing */}
@@ -872,6 +700,30 @@ export default function AdminEnquiryWorkspace() {
                         {enquiry.quote.quoted_by?.name ? ` by ${enquiry.quote.quoted_by.name}` : ''}
                       </p>
                     ) : null}
+
+                    {/* THE QUOTE AND THE TRUCK GO OUT AS ONE PACKAGE.
+                        These two rows are the whole workflow: the customer is
+                        shown the vehicle and driver they are being offered
+                        alongside the price, so "accept, then wait while we find
+                        a vehicle" can never happen. */}
+                    <div className="mt-3 grid gap-2 border-t border-border pt-3 sm:grid-cols-2">
+                      <div>
+                        <p className="text-[10.5px] font-bold uppercase tracking-wider text-muted">
+                          Vehicle
+                        </p>
+                        <p className="mt-0.5 truncate text-[13px] font-semibold text-text">
+                          {reservation.vehicle}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[10.5px] font-bold uppercase tracking-wider text-muted">
+                          Driver
+                        </p>
+                        <p className="mt-0.5 truncate text-[13px] font-semibold text-text">
+                          {reservation.driver}
+                        </p>
+                      </div>
+                    </div>
                   </div>
 
                   {enquiry.quote?.quote_remarks ? (
@@ -916,13 +768,39 @@ export default function AdminEnquiryWorkspace() {
                       ) : null}
                       <p className="mt-1.5 text-[12.5px] leading-relaxed text-emerald-900/80">
                         {hasBooking
-                          ? `Trip confirmed. Booking ${enquiry.booking.booking_number} was created automatically — dispatch the trip from the booking.`
-                          : 'Trip confirmed. Dispatch the trip for this enquiry.'}
+                          ? `Trip confirmed. Booking ${enquiry.booking.booking_number} was created automatically — the next step is Vehicle Hire.`
+                          : 'Trip confirmed. The next step is Vehicle Hire.'}
+                      </p>
+                      {/* THE HANDOFF. The customer agreeing to a transport price is
+                          NOT a vehicle hire — these are different financial
+                          concepts. The agreed Final Quote above is the customer
+                          price; what the vendor is owed is entered in the Vehicle
+                          Hire workspace, from its own financial workflow. */}
+                      <p className="mt-1.5 text-[12.5px] leading-relaxed text-emerald-900/80">
+                        Select the vehicle, driver, owner/vendor and hire terms in the Vehicle Hire
+                        workspace. The Vehicle Hire card above shows the current state and links
+                        straight to it.
                       </p>
                     </div>
+                    {/* /admin/bookings/:bookingNumber takes the CANONICAL
+                        booking_number, not the numeric booking_id.
+
+                        It was given `booking_id` here, so the label read
+                        "Open booking BTB-2026-00203" while the link pointed at
+                        /admin/bookings/203. The detail page then requested
+                        GET /api/admin/bookings/by-number/203, and the canonical
+                        lookup (BookingRepository.findByIdentifier) matches only
+                        booking_number / booking_reference — so it 404'd and the
+                        page rendered "Order unavailable".
+
+                        The correct value was already on screen: this link's own
+                        label, and the two other booking links in this file, all
+                        read booking.booking_number. Passing the ID was the
+                        outlier. No API, mapping or lookup was changed — this
+                        caller now matches the route's documented contract. */}
                     {hasBooking ? (
                       <Link
-                        to={`/admin/bookings/${enquiry.booking.booking_id}`}
+                        to={`/admin/bookings/${enquiry.booking.booking_number}`}
                         className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-[#1e3a5f] transition hover:text-amber-600"
                       >
                         Open booking {enquiry.booking.booking_number}
@@ -1036,25 +914,37 @@ export default function AdminEnquiryWorkspace() {
                         </ActionButton>
                       ) : null}
 
-                      {/* Only QUOTE_READY can legally reach AWAITING_CUSTOMER_ACCEPTANCE. */}
+                      {/* ── FINALIZE & SEND — the workflow in one button ───────────
+                          Only reachable once a vehicle AND a driver are reserved,
+                          so the customer always receives the price together with
+                          the vehicle and the driver. The reason is shown rather
+                          than the button simply being dead, so the operator always
+                          knows which step is missing. */}
                       {canSendQuote ? (
-                        <ActionButton
-                          tone="amber"
-                          icon={Send}
-                          disabled={busy === 'send'}
-                          onClick={() =>
-                            run(
-                              'send',
-                              () => adminEnquiryAPI.sendQuote(id),
-                              'Quote sent to the customer'
-                            )
-                          }
-                        >
-                          {busy === 'send' ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                        <>
+                          <ActionButton
+                            tone="amber"
+                            icon={Send}
+                            disabled={busy === 'send' || !quoteGate.allowed}
+                            onClick={() =>
+                              run(
+                                'send',
+                                () => adminEnquiryAPI.sendQuote(id),
+                                'Quote sent to the customer with the reserved vehicle and driver'
+                              )
+                            }
+                          >
+                            {busy === 'send' ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                            ) : null}
+                            Finalize Quote & Send to Customer
+                          </ActionButton>
+                          {!quoteGate.allowed ? (
+                            <p className="w-full text-[12px] font-semibold text-amber-700">
+                              {quoteGate.reason}
+                            </p>
                           ) : null}
-                          Send Quote
-                        </ActionButton>
+                        </>
                       ) : null}
 
                       {/* ── QUOTE SENT — read-only, the action is done ──

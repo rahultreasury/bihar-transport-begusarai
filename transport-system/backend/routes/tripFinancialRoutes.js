@@ -8,6 +8,24 @@
  * - DRIVER: Driver-specific financials only
  *
  * PHASE 3 REDESIGN: Transaction ledger is the single source of truth.
+ *
+ * WHY THIS FILE DISPATCHES ON THE ID (Phase 3)
+ * routes/tripRoutes.js and this router are BOTH mounted on /api/trips, so the
+ * URL cannot tell a booking id from a trip id: /api/trips/12/advances is
+ * genuinely ambiguous. Express also matches the first declared pattern, so the
+ * /:bookingId/... handlers used to win every time and the /:tripId/... handlers
+ * further down this file were unreachable.
+ *
+ * That silently broke the trip workspace: every existing UI call passes a TRIP
+ * id (adminAPI.getTripAdvancesByTripId, createTripAdvanceByTripId,
+ * recordOwnerSettlement), so advances were being read and written against a
+ * non-existent BOOKING id instead of the trip.
+ *
+ * The fix keeps every existing URL and every existing booking call working.
+ * resolveTrip() decides which world the id belongs to, a Trip wins when it
+ * exists (a Trip may legitimately exist with no Booking), and anything that is
+ * not a Trip falls through to the original booking behaviour. No new URL, no UI
+ * change, no breaking change.
  */
 
 const express = require('express');
@@ -21,7 +39,8 @@ const TripSettlementService = require('../services/TripSettlementService');
 const TripTransactionService = require('../services/TripTransactionService');
 const CommissionService = require('../services/CommissionService');
 const CanonicalFinancialService = require('../services/CanonicalFinancialService');
-const { serializeTripFinancial } = require('../dtos/TripFinancialDTO');
+const VendorLedgerService = require('../services/VendorLedgerService');
+const { serializeTripFinancial, projectTransactionsForRole } = require('../dtos/TripFinancialDTO');
 const { validateTransition } = require('../utils/BookingStateMachine');
 
 const tripFinancialService = new TripFinancialService();
@@ -30,6 +49,58 @@ const tripSettlementService = new TripSettlementService();
 const tripTransactionService = new TripTransactionService();
 const commissionService = new CommissionService();
 const canonicalFinancialService = new CanonicalFinancialService();
+const vendorLedgerService = new VendorLedgerService();
+
+/**
+ * Resolve an id taken from the URL to a Trip, or null when it is not one.
+ *
+ * @param {number|string} id
+ * @returns {Promise<Object|null>}
+ */
+async function resolveTrip(id) {
+  const tripId = parseInt(id);
+  if (Number.isNaN(tripId)) return null;
+  return await prisma.trip.findUnique({
+    where: { trip_id: tripId },
+    select: {
+      trip_id: true,
+      trip_number: true,
+      booking_id: true,
+      driver_id: true,
+      vehicle_id: true,
+      transport_owner_id: true,
+    },
+  });
+}
+
+/**
+ * Role mapping already used by this router, factored out so the dispatching
+ * handlers below do not each repeat it.
+ *
+ * PHASE 7 — a `customer` is NO LONGER mapped to ADMIN
+ *   Both the helper and the two inline copies in this file used to end with
+ *   `return 'ADMIN'` as a catch-all, and one of them said so in a comment:
+ *   "Default to admin for customers (they see minimal info)". That granted
+ *   every logged-in customer the full ADMIN financial projection, including
+ *   btMargin, commission, the driver payout and the owner settlement — the
+ *   exact "customer must NOT see vendor payable / commission / internal
+ *   margins" rule. Customers now resolve to their own CUSTOMER projection.
+ *
+ *   An unrecognised role resolves to the LEAST privileged view rather than
+ *   the most, so a future role can never be granted admin money by accident.
+ *
+ * @param {Object} user
+ * @returns {'ADMIN'|'TRANSPORT_OWNER'|'DRIVER'|'CUSTOMER'}
+ */
+function roleFor(user) {
+  if (!user) return 'CUSTOMER';
+  if (user.role === 'admin' || user.role === 'super_admin' || user.role === 'operator') return 'ADMIN';
+  if (user.role === 'partner') return 'TRANSPORT_OWNER';
+  if (user.role === 'driver') return 'DRIVER';
+  if (user.role === 'customer') return 'CUSTOMER';
+  // Least privilege for anything unrecognised.
+  return 'CUSTOMER';
+}
 
 // ============================
 // TRIP FINANCIAL SUMMARY
@@ -39,8 +110,15 @@ const canonicalFinancialService = new CanonicalFinancialService();
  * GET /api/trips/:tripId/financials
  * Get standalone trip financial summary (canonical calculation).
  * For trips created without a booking.
+ *
+ * PHASE 7: this used to be `protect` only, and the canonical summary contains
+ * btCommission, ownerShare, ownerDue and driverDue — the whole vendor side. It
+ * is now admin-only, which matches `/:tripId/vendor-position` and
+ * `/api/financials/*` in the same router. A customer asking a trip id for
+ * their own money uses `/:bookingId/financial`, which returns the CUSTOMER
+ * allow-list projection.
  */
-router.get('/:tripId/financials', protect, async (req, res) => {
+router.get('/:tripId/financials', protect, adminOnly, async (req, res) => {
   try {
     const tripId = parseInt(req.params.tripId);
     if (isNaN(tripId)) {
@@ -70,19 +148,10 @@ router.get('/:bookingId/financial', protect, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid booking ID' });
     }
 
+    // PHASE 7: roleFor() instead of the inline mapping, which resolved every
+    // non-staff caller — customers included — to ADMIN.
     const user = req.user;
-    let role = 'ADMIN';
-
-    if (user.role === 'admin' || user.role === 'super_admin' || user.role === 'operator') {
-      role = 'ADMIN';
-    } else if (user.role === 'partner') {
-      // Partner = transport owner
-      role = 'TRANSPORT_OWNER';
-    } else if (user.role === 'driver') {
-      role = 'DRIVER';
-    } else {
-      role = 'ADMIN'; // Default to admin for customers (they see minimal info)
-    }
+    const role = roleFor(user);
 
     const summary = await tripFinancialService.getTripFinancialSummary(bookingId, role, user);
 
@@ -91,8 +160,8 @@ router.get('/:bookingId/financial', protect, async (req, res) => {
       data: summary,
     });
   } catch (error) {
-    console.error('Get trip financial error:', error);
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
+    // PHASE 7: an authorization refusal is a 403, not a 500.
+    return respondToFinancialError(res, error, 'Get trip financial');
   }
 });
 
@@ -107,16 +176,9 @@ router.get('/:bookingId/financial/timeline', protect, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid booking ID' });
     }
 
+    // PHASE 7: same fix as /financial above — no caller defaults to ADMIN.
     const user = req.user;
-    let role = 'ADMIN';
-
-    if (user.role === 'admin' || user.role === 'super_admin' || user.role === 'operator') {
-      role = 'ADMIN';
-    } else if (user.role === 'partner') {
-      role = 'TRANSPORT_OWNER';
-    } else if (user.role === 'driver') {
-      role = 'DRIVER';
-    }
+    const role = roleFor(user);
 
     const timeline = await tripFinancialService.getTripFinancialTimeline(bookingId, role, user);
 
@@ -125,8 +187,8 @@ router.get('/:bookingId/financial/timeline', protect, async (req, res) => {
       data: timeline,
     });
   } catch (error) {
-    console.error('Get trip financial timeline error:', error);
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
+    // PHASE 7: an authorization refusal is a 403, not a 500.
+    return respondToFinancialError(res, error, 'Get trip financial timeline');
   }
 });
 
@@ -135,49 +197,63 @@ router.get('/:bookingId/financial/timeline', protect, async (req, res) => {
 // ============================
 
 /**
- * POST /api/trips/:bookingId/advances
+ * POST /api/trips/:id/advances
  * Create a new advance (Admin only).
+ *
+ * `:id` is a TRIP id when a Trip with that id exists (which is what every
+ * existing UI call sends), otherwise a BOOKING id. See the header note.
  */
-router.post('/:bookingId/advances', protect, adminOnly, async (req, res) => {
+router.post('/:id/advances', protect, adminOnly, async (req, res) => {
   try {
-    const bookingId = parseInt(req.params.bookingId);
-    if (isNaN(bookingId)) {
-      return res.status(400).json({ success: false, message: 'Invalid booking ID' });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid trip or booking ID' });
     }
 
-    const advance = await tripAdvanceService.createAdvance(bookingId, req.body, req.user);
+    const trip = await resolveTrip(id);
+    const advance = trip
+      ? await tripAdvanceService.createAdvance(null, { ...req.body, trip_id: trip.trip_id }, req.user)
+      : await tripAdvanceService.createAdvance(id, req.body, req.user);
 
     res.status(201).json({
       success: true,
-      message: 'Advance created successfully',
+      message: advance.already_recorded
+        ? 'Advance already recorded for this reference'
+        : 'Advance created successfully',
       data: advance,
     });
   } catch (error) {
     console.error('Create advance error:', error);
+    if (error.statusCode === 400 || error.name === 'ValidationError') {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+    if (error.statusCode === 404) {
+      return res.status(404).json({ success: false, message: error.message });
+    }
     res.status(500).json({ success: false, message: error.message || 'Server error' });
   }
 });
 
 /**
- * GET /api/trips/:bookingId/advances
+ * GET /api/trips/:id/advances
  * Get all advances for a trip (role-based).
  */
-router.get('/:bookingId/advances', protect, async (req, res) => {
+router.get('/:id/advances', protect, async (req, res) => {
   try {
-    const bookingId = parseInt(req.params.bookingId);
-    if (isNaN(bookingId)) {
-      return res.status(400).json({ success: false, message: 'Invalid booking ID' });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid trip or booking ID' });
     }
 
-    const user = req.user;
-    let role = 'ADMIN';
-    if (user.role === 'partner') role = 'TRANSPORT_OWNER';
-    else if (user.role === 'driver') role = 'DRIVER';
-
-    const advances = await tripAdvanceService.getAdvances(bookingId, role, user);
+    const trip = await resolveTrip(id);
+    const role = roleFor(req.user);
+    const advances = trip
+      ? await tripAdvanceService.getAdvances(null, trip.trip_id, role)
+      : await tripAdvanceService.getAdvances(id, null, role);
 
     res.json({
       success: true,
+      scope: trip ? 'trip' : 'booking',
       data: advances,
     });
   } catch (error) {
@@ -187,20 +263,24 @@ router.get('/:bookingId/advances', protect, async (req, res) => {
 });
 
 /**
- * GET /api/trips/:bookingId/advances/summary
+ * GET /api/trips/:id/advances/summary
  * Get advance summary for a trip.
  */
-router.get('/:bookingId/advances/summary', protect, async (req, res) => {
+router.get('/:id/advances/summary', protect, async (req, res) => {
   try {
-    const bookingId = parseInt(req.params.bookingId);
-    if (isNaN(bookingId)) {
-      return res.status(400).json({ success: false, message: 'Invalid booking ID' });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid trip or booking ID' });
     }
 
-    const summary = await tripAdvanceService.getAdvanceSummary(bookingId);
+    const trip = await resolveTrip(id);
+    const summary = trip
+      ? await tripAdvanceService.getAdvanceSummary(null, trip.trip_id)
+      : await tripAdvanceService.getAdvanceSummary(id);
 
     res.json({
       success: true,
+      scope: trip ? 'trip' : 'booking',
       data: summary,
     });
   } catch (error) {
@@ -214,72 +294,143 @@ router.get('/:bookingId/advances/summary', protect, async (req, res) => {
 // ============================
 
 /**
- * POST /api/trips/:bookingId/settlements/driver
+ * POST /api/trips/:id/settlements/driver
  * Record driver settlement payment (Admin only).
  */
-router.post('/:bookingId/settlements/driver', protect, adminOnly, async (req, res) => {
+router.post('/:id/settlements/driver', protect, adminOnly, async (req, res) => {
   try {
-    const bookingId = parseInt(req.params.bookingId);
-    if (isNaN(bookingId)) {
-      return res.status(400).json({ success: false, message: 'Invalid booking ID' });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid trip or booking ID' });
     }
 
-    const settlement = await tripSettlementService.recordDriverSettlement(bookingId, req.body, req.user);
+    const trip = await resolveTrip(id);
+    const settlement = trip
+      ? await tripSettlementService.recordDriverSettlementByTripId(trip.trip_id, req.body, req.user)
+      : await tripSettlementService.recordDriverSettlement(id, req.body, req.user);
 
     res.status(201).json({
       success: true,
-      message: 'Driver settlement recorded successfully',
+      message: settlement.already_recorded
+        ? 'Driver settlement already recorded for this reference'
+        : 'Driver settlement recorded successfully',
       data: settlement,
     });
   } catch (error) {
     console.error('Record driver settlement error:', error);
+    if (error.statusCode === 400 || error.name === 'ValidationError') {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+    if (error.statusCode === 404) {
+      return res.status(404).json({ success: false, message: error.message });
+    }
     res.status(500).json({ success: false, message: error.message || 'Server error' });
   }
 });
 
 /**
- * POST /api/trips/:bookingId/settlements/owner
+ * POST /api/trips/:id/settlements/owner
  * Record owner settlement payment (Admin only).
  */
-router.post('/:bookingId/settlements/owner', protect, adminOnly, async (req, res) => {
+router.post('/:id/settlements/owner', protect, adminOnly, async (req, res) => {
   try {
-    const bookingId = parseInt(req.params.bookingId);
-    if (isNaN(bookingId)) {
-      return res.status(400).json({ success: false, message: 'Invalid booking ID' });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid trip or booking ID' });
     }
 
-    const settlement = await tripSettlementService.recordOwnerSettlement(bookingId, req.body, req.user);
+    const trip = await resolveTrip(id);
+    const settlement = trip
+      ? await tripSettlementService.recordOwnerSettlementByTripId(trip.trip_id, req.body, req.user)
+      : await tripSettlementService.recordOwnerSettlement(id, req.body, req.user);
 
     res.status(201).json({
       success: true,
-      message: 'Owner settlement recorded successfully',
+      message: settlement.already_recorded
+        ? 'Owner settlement already recorded for this reference'
+        : 'Owner settlement recorded successfully',
       data: settlement,
     });
   } catch (error) {
     console.error('Record owner settlement error:', error);
+    if (error.statusCode === 400 || error.name === 'ValidationError') {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+    if (error.statusCode === 404) {
+      return res.status(404).json({ success: false, message: error.message });
+    }
     res.status(500).json({ success: false, message: error.message || 'Server error' });
   }
 });
 
 /**
- * GET /api/trips/:bookingId/settlements
- * Get settlement details for a trip.
+ * GET /api/trips/:id/settlements
+ * Get settlement details for a trip (or the trip linked to a booking).
  */
-router.get('/:bookingId/settlements', protect, async (req, res) => {
+router.get('/:id/settlements', protect, async (req, res) => {
   try {
-    const bookingId = parseInt(req.params.bookingId);
-    if (isNaN(bookingId)) {
-      return res.status(400).json({ success: false, message: 'Invalid booking ID' });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid trip or booking ID' });
     }
 
-    const settlement = await tripSettlementService.getSettlement(bookingId);
+    const trip = await resolveTrip(id);
+
+    if (trip) {
+      const settlements = await prisma.tripSettlement.findMany({
+        where: { trip_id: trip.trip_id },
+        orderBy: { settlement_id: 'asc' },
+      });
+      // The authoritative money position for the trip's vendor, so a caller
+      // never has to derive it client-side.
+      const position = await vendorLedgerService.getOwnerPosition(trip.trip_id);
+      return res.json({
+        success: true,
+        scope: 'trip',
+        trip: { trip_id: trip.trip_id, trip_number: trip.trip_number },
+        data: settlements,
+        position,
+      });
+    }
+
+    const settlement = await tripSettlementService.getSettlement(id);
 
     res.json({
       success: true,
+      scope: 'booking',
       data: settlement,
     });
   } catch (error) {
     console.error('Get settlement error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Server error' });
+  }
+});
+
+/**
+ * GET /api/trips/:tripId/vendor-position
+ * Authoritative vendor money position for one trip:
+ *   gross hire / commission / net vendor payable / advances / payments /
+ *   outstanding.
+ *
+ * The payable is computed on the server from the persisted hire. Any
+ * net_vendor_payable / owner_payable / vendor_payable supplied by the caller is
+ * ignored — that is the Phase 3 contract for STEP 3.
+ */
+router.get('/:tripId/vendor-position', protect, adminOnly, async (req, res) => {
+  try {
+    const tripId = parseInt(req.params.tripId);
+    if (isNaN(tripId)) {
+      return res.status(400).json({ success: false, message: 'Invalid trip ID' });
+    }
+
+    const position = await vendorLedgerService.getOwnerPosition(tripId, req.body || req.query);
+
+    res.json({ success: true, data: position });
+  } catch (error) {
+    console.error('Get vendor position error:', error);
+    if (error.statusCode === 404) {
+      return res.status(404).json({ success: false, message: error.message });
+    }
     res.status(500).json({ success: false, message: error.message || 'Server error' });
   }
 });
@@ -371,40 +522,83 @@ router.post('/:bookingId/financial/calculate', protect, adminOnly, async (req, r
 // ============================
 
 /**
+ * Map a service-layer authorization failure to the right HTTP status.
+ *
+ * PHASE 7: TripFinancialService throws a ValidationError when a caller asks
+ * for money that is not theirs ("Access denied. This booking does not belong
+ * to you"). Returning 500 for that was wrong and hid a real authorization
+ * decision behind a server fault.
+ */
+function respondToFinancialError(res, error, logLabel) {
+  console.error(`${logLabel} error:`, error);
+  const message = error?.message || 'Server error';
+  if (typeof message === 'string' && message.toLowerCase().includes('access denied')) {
+    return res.status(403).json({ success: false, message });
+  }
+  if (error?.name === 'ValidationError' || error?.statusCode === 400) {
+    return res.status(400).json({ success: false, message });
+  }
+  if (error?.name === 'NotFoundError' || error?.statusCode === 404) {
+    return res.status(404).json({ success: false, message });
+  }
+  return res.status(500).json({ success: false, message });
+}
+
+/**
  * GET /api/trips/:bookingId/transactions
  * Get all financial transactions for a trip (role-based).
+ *
+ * PHASE 7: roleFor() (no ADMIN default) + an explicit allow-list projection.
+ * The previous filter was `{ from_party: undefined }` for a DRIVER, i.e. NO
+ * filter at all, and 'ADMIN' for a customer.
  */
 router.get('/:bookingId/transactions', protect, async (req, res) => {
   try {
-    const bookingId = parseInt(req.params.bookingId);
-    if (isNaN(bookingId)) {
-      return res.status(400).json({ success: false, message: 'Invalid booking ID' });
+    const id = parseInt(req.params.bookingId);
+    if (isNaN(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid booking or trip ID' });
+    }
+
+    // PHASE 7 — dispatch on WHAT the id is, exactly as the advances and
+    // settlements handlers above already do (see the file header). Both
+    // /:bookingId/transactions and /:tripId/transactions are declared in this
+    // router and match the same URL, and Express takes the first one — so a
+    // TRIP id used to be handed to the booking handler, which then looked up a
+    // non-existent booking and 500'd. resolveTrip() makes the id unambiguous;
+    // no URL changes and no UI change.
+    const asTrip = await resolveTrip(id);
+    const asBooking = asTrip ? null : await prisma.booking.findUnique({
+      where: { booking_id: id },
+      select: { booking_id: true, user_id: true, driver_id: true, vehicle_owner_id: true },
+    });
+
+    if (!asTrip && !asBooking) {
+      return res.status(404).json({ success: false, message: 'Trip or booking not found' });
     }
 
     const user = req.user;
-    let role = 'ADMIN';
-    if (user.role === 'partner') role = 'TRANSPORT_OWNER';
-    else if (user.role === 'driver') role = 'DRIVER';
+    const role = roleFor(user);
 
-    // Get trip financial
-    const tripFinancial = await tripFinancialService.getTripFinancialSummary(bookingId, role, user);
-    if (!tripFinancial) {
-      return res.status(404).json({ success: false, message: 'Trip financial not found' });
+    // The role check runs against the OWNING booking either way, so it also
+    // enforces "is this booking yours?".
+    const owningBookingId = asTrip ? asTrip.booking_id : asBooking.booking_id;
+    if (owningBookingId) {
+      await tripFinancialService.getTripFinancialSummary(owningBookingId, role, user);
+    } else if (role === 'CUSTOMER') {
+      // A standalone trip with no booking has no customer owner to authorise
+      // against, and the admin-only detail view covers the rest.
+      return res.status(403).json({ success: false, message: 'Access denied.' });
     }
 
-    // Get all transactions for this booking
-    const transactions = await tripTransactionService.getTripTransactions(
-      tripFinancial.tripId || bookingId,
-      role === 'ADMIN' ? {} : { from_party: role === 'TRANSPORT_OWNER' ? 'BIHAR_TRANSPORT' : undefined }
-    );
+    const transactions = await tripTransactionService.getTripTransactions(asTrip ? asTrip.trip_id : id);
 
     res.json({
       success: true,
-      data: transactions,
+      scope: asTrip ? 'trip' : 'booking',
+      data: projectTransactionsForRole(transactions, role, user),
     });
   } catch (error) {
-    console.error('Get transactions error:', error);
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
+    return respondToFinancialError(res, error, 'Get transactions');
   }
 });
 
@@ -419,27 +613,37 @@ router.get('/:bookingId/transactions/ledger', protect, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid booking ID' });
     }
 
-    const user = req.user;
-    let role = 'ADMIN';
-    if (user.role === 'partner') role = 'TRANSPORT_OWNER';
-    else if (user.role === 'driver') role = 'DRIVER';
-
-    // Get trip financial
-    const tripFinancial = await tripFinancialService.getTripFinancialSummary(bookingId, role, user);
-    if (!tripFinancial) {
-      return res.status(404).json({ success: false, message: 'Trip financial not found' });
+    // PHASE 7: same trip-or-booking dispatch as /transactions above, because
+    // this URL is matched by both handlers and Express takes the first.
+    const asTrip = await resolveTrip(bookingId);
+    const asBooking = asTrip ? null : await prisma.booking.findUnique({
+      where: { booking_id: bookingId },
+      select: { booking_id: true },
+    });
+    if (!asTrip && !asBooking) {
+      return res.status(404).json({ success: false, message: 'Trip or booking not found' });
     }
 
-    // Get ledger
-    const ledger = await tripTransactionService.getTripLedger(tripFinancial.tripId || bookingId);
+    const user = req.user;
+    // PHASE 7: no ADMIN default — see roleFor().
+    const role = roleFor(user);
+
+    const owningBookingId = asTrip ? asTrip.booking_id : asBooking.booking_id;
+    if (owningBookingId) {
+      await tripFinancialService.getTripFinancialSummary(owningBookingId, role, user);
+    } else if (role === 'CUSTOMER') {
+      return res.status(403).json({ success: false, message: 'Access denied.' });
+    }
+
+    const ledger = await tripTransactionService.getTripLedger(asTrip ? asTrip.trip_id : bookingId);
 
     res.json({
       success: true,
-      data: ledger,
+      scope: asTrip ? 'trip' : 'booking',
+      data: projectTransactionsForRole(ledger, role, user),
     });
   } catch (error) {
-    console.error('Get transaction ledger error:', error);
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
+    return respondToFinancialError(res, error, 'Get transaction ledger');
   }
 });
 
@@ -455,26 +659,42 @@ router.get('/:bookingId/transactions/balances', protect, async (req, res) => {
     }
 
     const user = req.user;
-    let role = 'ADMIN';
-    if (user.role === 'partner') role = 'TRANSPORT_OWNER';
-    else if (user.role === 'driver') role = 'DRIVER';
+    // PHASE 7: no ADMIN default — see roleFor().
+    const role = roleFor(user);
 
-    // Get trip financial
+    // Get trip financial — also enforces "is this booking yours?".
     const tripFinancial = await tripFinancialService.getTripFinancialSummary(bookingId, role, user);
     if (!tripFinancial) {
       return res.status(404).json({ success: false, message: 'Trip financial not found' });
     }
 
-    // Get balances
     const balances = await tripTransactionService.calculatePartyBalances(tripFinancial.tripId || bookingId);
+
+    // PHASE 7: the party-balance object exposes the OWNER and DRIVER payable
+    // alongside the customer, so a non-admin caller gets only their own side.
+    const payload = { ...balances };
+    if (role !== 'ADMIN') {
+      if (role === 'CUSTOMER') {
+        delete payload.owner;
+        delete payload.driver;
+        delete payload.expenses;
+      } else if (role === 'DRIVER') {
+        delete payload.owner;
+        delete payload.client;
+        delete payload.expenses;
+      } else if (role === 'TRANSPORT_OWNER') {
+        delete payload.driver;
+        delete payload.client;
+        delete payload.expenses;
+      }
+    }
 
     res.json({
       success: true,
-      data: balances,
+      data: payload,
     });
   } catch (error) {
-    console.error('Get party balances error:', error);
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
+    return respondToFinancialError(res, error, 'Get party balances');
   }
 });
 
@@ -621,143 +841,24 @@ router.post('/:tripId/payments/client', protect, adminOnly, async (req, res) => 
 });
 
 /**
- * GET /api/trips/:tripId/advances
- * Get all advances for a trip.
+ * PHASE 3: the /:tripId/advances, /:tripId/settlements/* handlers that used
+ * to live here were unreachable — Express matched the identically-shaped
+ * /:id/... handlers declared above first, and those now dispatch on whether
+ * the id is a Trip or a Booking (see the header note). They have been
+ * removed rather than left as dead code so there is only one place to fix.
  */
-router.get('/:tripId/advances', protect, async (req, res) => {
-  try {
-    const tripId = parseInt(req.params.tripId);
-    if (isNaN(tripId)) {
-      return res.status(400).json({ success: false, message: 'Invalid trip ID' });
-    }
-
-    const advances = await prisma.tripAdvance.findMany({
-      where: { trip_id: tripId },
-      orderBy: { given_at: 'desc' },
-    });
-
-    res.json({ success: true, data: advances });
-  } catch (error) {
-    console.error('Get trip advances error:', error);
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
-  }
-});
-
-/**
- * POST /api/trips/:tripId/advances
- * Create an advance for a trip (by trip_id).
- */
-router.post('/:tripId/advances', protect, adminOnly, async (req, res) => {
-  try {
-    const tripId = parseInt(req.params.tripId);
-    if (isNaN(tripId)) {
-      return res.status(400).json({ success: false, message: 'Invalid trip ID' });
-    }
-
-    const advance = await tripAdvanceService.createAdvance(null, { ...req.body, trip_id: tripId }, req.user);
-
-    res.status(201).json({
-      success: true,
-      message: 'Advance created successfully',
-      data: advance,
-    });
-  } catch (error) {
-    console.error('Create trip advance error:', error);
-    if (error.message && error.message.includes('exceeds')) {
-      return res.status(400).json({ success: false, message: error.message });
-    }
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
-  }
-});
-
-/**
- * GET /api/trips/:tripId/settlements
- * Get all settlements for a trip.
- */
-router.get('/:tripId/settlements', protect, async (req, res) => {
-  try {
-    const tripId = parseInt(req.params.tripId);
-    if (isNaN(tripId)) {
-      return res.status(400).json({ success: false, message: 'Invalid trip ID' });
-    }
-
-    const settlements = await prisma.tripSettlement.findMany({
-      where: { trip_id: tripId },
-      orderBy: { created_at: 'desc' },
-    });
-
-    res.json({ success: true, data: settlements });
-  } catch (error) {
-    console.error('Get trip settlements error:', error);
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
-  }
-});
-
-/**
- * POST /api/trips/:tripId/settlements/driver
- * Record a driver settlement for a trip.
- */
-router.post('/:tripId/settlements/driver', protect, adminOnly, async (req, res) => {
-  try {
-    const tripId = parseInt(req.params.tripId);
-    if (isNaN(tripId)) {
-      return res.status(400).json({ success: false, message: 'Invalid trip ID' });
-    }
-
-    const settlement = await tripSettlementService.recordDriverSettlementByTripId(tripId, req.body, req.user);
-
-    res.status(201).json({
-      success: true,
-      message: 'Driver settlement recorded successfully',
-      data: settlement,
-    });
-  } catch (error) {
-    console.error('Record driver settlement error:', error);
-    if (error.message && error.message.includes('exceeds')) {
-      return res.status(400).json({ success: false, message: error.message });
-    }
-    if (error.message && error.message.includes('not found')) {
-      return res.status(404).json({ success: false, message: error.message });
-    }
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
-  }
-});
-
-/**
- * POST /api/trips/:tripId/settlements/owner
- * Record an owner settlement for a trip.
- */
-router.post('/:tripId/settlements/owner', protect, adminOnly, async (req, res) => {
-  try {
-    const tripId = parseInt(req.params.tripId);
-    if (isNaN(tripId)) {
-      return res.status(400).json({ success: false, message: 'Invalid trip ID' });
-    }
-
-    const settlement = await tripSettlementService.recordOwnerSettlementByTripId(tripId, req.body, req.user);
-
-    res.status(201).json({
-      success: true,
-      message: 'Owner settlement recorded successfully',
-      data: settlement,
-    });
-  } catch (error) {
-    console.error('Record owner settlement error:', error);
-    if (error.message && error.message.includes('exceeds')) {
-      return res.status(400).json({ success: false, message: error.message });
-    }
-    if (error.message && error.message.includes('not found')) {
-      return res.status(404).json({ success: false, message: error.message });
-    }
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
-  }
-});
 
 /**
  * GET /api/trips/:tripId/transactions
  * Get all financial transactions for a trip.
+ *
+ * PHASE 7: admin-only. This returned the complete money ledger — customer
+ * freight, owner advances and settlements, driver payouts, commission — behind
+ * `protect` alone, so any logged-in customer, driver or partner could read a
+ * trip's entire financial position, including other parties' money. The admin
+ * trip UI is the only consumer, and admins are unaffected.
  */
-router.get('/:tripId/transactions', protect, async (req, res) => {
+router.get('/:tripId/transactions', protect, adminOnly, async (req, res) => {
   try {
     const tripId = parseInt(req.params.tripId);
     if (isNaN(tripId)) {

@@ -60,6 +60,11 @@ const rooms = {
   adminEnquiries: () => 'admin:enquiries',
   driver: (driverId) => `driver:${driverId}`,
   partner: (partnerId) => `partner:${partnerId}`,
+  // Phase 5 — trip tracking rooms. Added to the EXISTING socket server; this is
+  // not a second WebSocket system. Membership is still derived from the
+  // verified principal, never from a client-supplied id.
+  trip: (tripId) => `trip:${tripId}`,
+  adminTrips: () => 'admin:trips',
 };
 
 const ADMIN_ROLES = ['admin', 'super_admin', 'operator'];
@@ -128,17 +133,29 @@ async function resolvePrincipal(token) {
     };
   }
 
-  const partner = await prisma.partner.findFirst({
-    where: { user_id: user.user_id },
-    select: { partner_id: true, partner_name: true, status: true },
+  // PHASE 5 FIX (D11). `Partner` has no `user_id` column: a partner is linked
+  // to a login through `PartnerApplication` (the same path
+  // middleware/partnerAuth.js uses). Querying `Partner.user_id` threw, so
+  // `resolvePrincipal` failed for EVERY customer and partner — which meant
+  // `trip:subscribe` and `enquiry:subscribe` never produced a principal, and
+  // no customer could ever be placed in a room.
+  const application = await prisma.partnerApplication.findFirst({
+    where: { user_id: user.user_id, partner_id: { not: null } },
+    select: { partner_id: true },
   });
-  if (partner) {
-    return {
-      kind: 'partner',
-      userId: user.user_id,
-      partnerId: partner.partner_id,
-      name: partner.partner_name,
-    };
+  if (application && application.partner_id) {
+    const partner = await prisma.partner.findUnique({
+      where: { partner_id: application.partner_id },
+      select: { partner_id: true, partner_name: true, status: true },
+    });
+    if (partner) {
+      return {
+        kind: 'partner',
+        userId: user.user_id,
+        partnerId: partner.partner_id,
+        name: partner.partner_name,
+      };
+    }
   }
 
   return { kind: 'customer', userId: user.user_id, name: `${user.first_name} ${user.last_name}`.trim() };
@@ -159,6 +176,7 @@ async function resolveJoinableRooms(principal, requestedEnquiryIds) {
 
   if (principal.kind === 'admin' && ADMIN_ROLES.includes(principal.role)) {
     joinable.add(rooms.adminEnquiries());
+    joinable.add(rooms.adminTrips());
     return [...joinable];
   }
 
@@ -195,6 +213,55 @@ async function resolveJoinableRooms(principal, requestedEnquiryIds) {
         });
         owned.forEach((row) => joinable.add(rooms.enquiry(row.enquiry_id)));
       }
+    }
+  }
+
+  return [...joinable];
+}
+
+/**
+ * Derive the trip-tracking rooms a principal is allowed to join (Phase 5).
+ *
+ * Same rule as the enquiry rooms: the client SENDS trip ids as a request, and
+ * every one is verified against the database before the socket is placed in the
+ * room. A client cannot name `trip:999` and be told anything about it.
+ *
+ * @param {object} principal
+ * @param {number[]} requestedTripIds
+ * @returns {Promise<string[]>}
+ */
+async function resolveJoinableTripRooms(principal, requestedTripIds) {
+  const joinable = new Set();
+
+  if (principal.kind === 'admin' && ADMIN_ROLES.includes(principal.role)) {
+    joinable.add(rooms.adminTrips());
+    return [...joinable];
+  }
+
+  if (principal.kind === 'driver') {
+    joinable.add(rooms.driver(principal.driverId));
+  } else if (principal.kind === 'partner') {
+    joinable.add(rooms.partner(principal.partnerId));
+  }
+
+  const ids = new Set(
+    (Array.isArray(requestedTripIds) ? requestedTripIds : [])
+      .map((n) => Number(n))
+      .filter((n) => Number.isInteger(n) && n > 0)
+  );
+
+  if (ids.size > 0) {
+    const where = { trip_id: { in: [...ids] }, OR: [] };
+    if (principal.kind === 'customer') where.OR.push({ user_id: principal.userId });
+    if (principal.kind === 'driver') where.OR.push({ driver_id: principal.driverId });
+    if (principal.kind === 'partner') where.OR.push({ booking: { partner_id: principal.partnerId } });
+
+    if (where.OR.length > 0) {
+      const owned = await prisma.trip.findMany({
+        where,
+        select: { trip_id: true },
+      });
+      owned.forEach((row) => joinable.add(rooms.trip(row.trip_id)));
     }
   }
 
@@ -275,6 +342,41 @@ function initRealtime(httpServer) {
         const requested = Array.isArray(payload) ? payload : payload?.enquiryIds;
         (requested || []).forEach((id) => {
           const room = rooms.enquiry(Number(id));
+          if (socket.data.rooms.includes(room)) {
+            socket.leave(room);
+            socket.data.rooms = socket.data.rooms.filter((r) => r !== room);
+          }
+        });
+      });
+
+      // ── Phase 5: trip tracking rooms ─────────────────────────────────────
+      // Verified against the database exactly like the enquiry rooms: the
+      // client asks for trip ids, and only trips the principal actually owns
+      // become rooms.
+      socket.on('trip:subscribe', async (payload, ack) => {
+        try {
+          const requested = Array.isArray(payload) ? payload : payload?.tripIds;
+          const joinable = await resolveJoinableTripRooms(principal, requested);
+
+          const fresh = joinable.filter((r) => !socket.data.rooms.includes(r));
+          if (fresh.length) {
+            await socket.join(fresh);
+            fresh.forEach((r) => socket.data.rooms.push(r));
+          }
+
+          if (typeof ack === 'function') {
+            ack({ ok: true, rooms: socket.data.rooms, kind: principal.kind });
+          }
+        } catch (err) {
+          logger.error({ err: err.message }, 'realtime.trip_subscribe_failed');
+          if (typeof ack === 'function') ack({ ok: false, error: 'subscribe_failed' });
+        }
+      });
+
+      socket.on('trip:unsubscribe', async (payload) => {
+        const requested = Array.isArray(payload) ? payload : payload?.tripIds;
+        (requested || []).forEach((id) => {
+          const room = rooms.trip(Number(id));
           if (socket.data.rooms.includes(room)) {
             socket.leave(room);
             socket.data.rooms = socket.data.rooms.filter((r) => r !== room);
@@ -406,6 +508,33 @@ function emitToPartner(partnerId, eventName, payload) {
   io.to(rooms.partner(Number(partnerId))).emit(eventName, payload);
 }
 
+/**
+ * Emit to one trip's room (Phase 5).
+ *
+ * The payload is built by the CALLER and is already the customer-safe shape —
+ * TripTrackingService is responsible for that, exactly as the enquiry path
+ * rebuilds its payload through the customer DTO on every emit. Nothing internal
+ * (driver mobile, financials) belongs in here.
+ *
+ * @param {number} tripId
+ * @param {string} eventName
+ * @param {object} [payload]
+ */
+function emitToTrip(tripId, eventName, payload = {}) {
+  if (!io || !tripId) return;
+  io.to(rooms.trip(Number(tripId))).emit(eventName, payload);
+}
+
+/**
+ * Emit a trip event to every authenticated admin.
+ * @param {string} eventName
+ * @param {object} payload
+ */
+function emitTripToAdmins(eventName, payload) {
+  if (!io) return;
+  io.to(rooms.adminTrips()).emit(eventName, payload);
+}
+
 /** Close the socket server (used by tests and graceful shutdown). */
 async function closeRealtime() {
   if (io) {
@@ -424,7 +553,11 @@ module.exports = {
   emitEnquiryToAdmins,
   emitToDriver,
   emitToPartner,
+  // Phase 5 — trip tracking.
+  emitToTrip,
+  emitTripToAdmins,
   closeRealtime,
   resolvePrincipal,
   resolveJoinableRooms,
+  resolveJoinableTripRooms,
 };

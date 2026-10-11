@@ -124,13 +124,31 @@ function stageFromDelivery(deliveryStatus) {
   }
 }
 
-/** Stage reached from the TRIP side. */
+/**
+ * Stage reached from the TRIP side.
+ *
+ * COMPLETE by design: every `TripStatus` has an entry. It previously handled
+ * only PENDING / ASSIGNED / IN_TRANSIT / DELIVERED / COMPLETED / CANCELLED and
+ * returned `null` for TO_LOADING_POINT, AT_LOADING_POINT, LOADED and DISPATCHED —
+ * so a consignment sitting in one of those states LOST its stage and the rail
+ * visibly fell back to "Vehicle". The backend is the authority
+ * (`GET /api/trips/:id/workflow` → `stage`, resolved by config/tripStagePolicy);
+ * this table is the client-side mirror used by the Order LIST, which has no trip
+ * workflow call, so the two can never disagree about which status maps where.
+ */
 function stageFromTrip(tripStatus) {
   switch (norm(tripStatus)) {
     case 'COMPLETED':
       return { key: 'COMPLETED' };
     case 'DELIVERED':
       return { key: 'POD' };
+    // ── The loading chain: all three sit ON the Loading stage ──────────────
+    case 'TO_LOADING_POINT':
+    case 'AT_LOADING_POINT':
+    case 'LOADED':
+      return { key: 'LOADING' };
+    case 'DISPATCHED':
+      return { key: 'DISPATCH' };
     case 'IN_TRANSIT':
       return { key: 'TRANSIT' };
     case 'ASSIGNED':

@@ -60,78 +60,77 @@ export const STAGE = {
 };
 
 /**
- * The rail, in order.
+ * The rail, in order — the CLIENT'S commercial sequence.
  *
- * `hint` is the short, honest line shown under a not-yet-reached step. It is
- * deliberately NOT the word "LOCKED": the operator should see the path forward
- * ("Next step", "Requires driver", "Awaiting customer") rather than a wall.
- * `lockReason` is the longer explanation used only if someone asks why.
+ *   ENQUIRY → RATE QUOTED → QUOTE SENT → CUSTOMER ACCEPTED → ORDER CONFIRMED
+ *
+ * WHY "Under Review" IS NO LONGER A RAIL STEP
+ *   The client document's commercial progression has five stages and "Under
+ *   Review" is not one of them — reviewing a request is an internal activity,
+ *   not a commercial milestone the customer passes through. The page still
+ *   KEEPS its "Under Review" section (STAGE.UNDER_REVIEW is still exported and
+ *   still used as a scroll anchor by AdminEnquiryDetail); it simply is not a
+ *   step on the progress rail. Nothing was deleted from the page.
+ *
+ * WHY THIS IS NOT A NEW STATUS SYSTEM
+ *   Every label below maps onto a column the backend ALREADY persists. No new
+ *   enum value, column or table was introduced. The STAGE keys themselves are
+ *   unchanged so the existing page anchors keep working.
  */
 export const WORKFLOW_STAGES = [
   {
     key: STAGE.RECEIVED,
     index: 0,
-    label: 'Request Received',
-    shortLabel: 'Received',
+    label: 'Enquiry',
+    shortLabel: 'Enquiry',
     icon: Inbox,
-    headline: 'Original customer request',
-    purpose: 'Exactly what the customer submitted, read-only.',
+    headline: 'Enquiry received',
+    purpose: 'The customer request exists. At this point there is no confirmed business.',
     hint: 'Start',
   },
   {
-    key: STAGE.UNDER_REVIEW,
-    index: 1,
-    label: 'Under Review',
-    shortLabel: 'Review',
-    icon: FileSearch,
-    headline: 'Assign driver, set the final quote',
-    purpose: 'Evaluate the request and arrange the resources behind it.',
-    hint: 'Next step',
-    lockReason: 'Start the review to begin assigning a driver.',
-  },
-  {
     key: STAGE.QUOTE_PREPARED,
-    index: 2,
-    label: 'Quote Prepared',
-    shortLabel: 'Prepared',
+    index: 1,
+    label: 'Rate Quoted',
+    shortLabel: 'Rate Quoted',
     icon: ClipboardCheck,
-    headline: 'Quote preview',
-    purpose: 'Review the complete quote before it reaches the customer.',
-    hint: 'Requires quote',
-    lockReason: 'Assign a driver and set a final price at Under Review first.',
+    headline: 'Quotation saved',
+    purpose: 'A rate has been saved. It is still INTERNAL — the customer has not been sent it.',
+    hint: 'Save the rate',
+    lockReason: 'Save a quotation first.',
   },
   {
     key: STAGE.QUOTE_SENT,
-    index: 3,
+    index: 2,
     label: 'Quote Sent',
-    shortLabel: 'Sent',
+    shortLabel: 'Quote Sent',
     icon: Send,
-    headline: 'Published quote',
-    purpose: 'The quote has been published to the customer and is awaiting a decision.',
-    hint: 'Awaiting send',
-    lockReason: 'Prepare the quote before sending it to the customer.',
+    headline: 'Quotation sent',
+    purpose: 'The quotation has been published. The customer can see it and decide.',
+    hint: 'Send the quote',
+    lockReason: 'Send the quotation to the customer.',
   },
   {
     key: STAGE.CUSTOMER_ACCEPTED,
-    index: 4,
+    index: 3,
     label: 'Customer Accepted',
     shortLabel: 'Accepted',
     icon: CheckCircle2,
-    headline: 'Customer accepted the quote',
-    purpose: 'The customer committed. Confirm the booking to release it for dispatch.',
+    headline: 'Customer accepted the quotation',
+    purpose: 'The customer committed to the rate. Confirm the order to open operations.',
     hint: 'Awaiting customer',
-    lockReason: 'The customer must accept the quote from their tracking page first.',
+    lockReason: 'The customer must accept the quotation first.',
   },
   {
     key: STAGE.CONFIRMED,
-    index: 5,
-    label: 'Confirmed',
-    shortLabel: 'Confirmed',
+    index: 4,
+    label: 'Order Confirmed',
+    shortLabel: 'Order Confirmed',
     icon: BadgeCheck,
-    headline: 'Booking confirmed',
-    purpose: 'The booking is committed. Hand it over to trip operations.',
+    headline: 'Order confirmed',
+    purpose: 'The order exists. The separate operational workflow (vehicle, loading, dispatch…) begins here.',
     hint: 'Final step',
-    lockReason: 'Confirm the booking before releasing it to trip operations.',
+    lockReason: 'Confirm the order to create it.',
   },
 ];
 
@@ -221,7 +220,93 @@ export function isAdminConfirmed(booking) {
 }
 
 /**
- * THE mapping: booking row → workflow stage key.
+ * THE MAPPING: PERSISTED ENQUIRY + QUOTATION STATE → RAIL STAGE.
+ *
+ * THE SERVER IS THE ONLY SOURCE OF TRUTH
+ *   Every input below is a column the backend already writes and returns in the
+ *   single GET /api/admin/enquiries/:id response:
+ *
+ *     commercial.quotation_status  DRAFT | RATE_QUOTED | SENT | CONVERTED
+ *     commercial.customer_decision ACCEPTED | REJECTED | null
+ *     commercial.has_order         boolean   (Enquiry.booking_id is set)
+ *     status                        EnquiryStatus
+ *     accepted_at / rejected_at     DateTime
+ *
+ *   It is NEVER inferred from whether a text input happens to contain ₹60,000,
+ *   and never from local React state — so a hard browser refresh, or a different
+ *   browser entirely, renders exactly the same rail.
+ *
+ * SAVE ≠ SEND
+ *   A saved quotation has status RATE_QUOTED and the customer CANNOT see it.
+ *   Only a SENT quotation is customer-visible. These are deliberately different
+ *   stages.
+ *
+ * ACCEPTED ≠ ORDER CONFIRMED
+ *   A customer acceptance is not an order. The order only exists once
+ *   `has_order` is true. Acceptance never hires a vehicle — that belongs to the
+ *   separate operational workflow.
+ *
+ * OPERATIONAL STATUSES ARE IGNORED
+ *   Vehicle, driver, loading, dispatch, transit, POD, customer-payment and
+ *   vendor-payment state play NO part in this calculation. This rail is the
+ *   commercial Enquiry → Quotation → Order progression only.
+ *
+ * @param {object} enquiry  the admin enquiry payload
+ * @returns {string} one of STAGE.*
+ */
+export function stageForEnquiry(enquiry) {
+  if (!enquiry) return STAGE.RECEIVED;
+
+  const commercial = enquiry.commercial || {};
+  const quotationStatus = upper(commercial.quotation_status);
+  const decision = upper(commercial.customer_decision);
+  const status = upper(enquiry.status);
+  const hasOrder = commercial.has_order === true || Boolean(commercial.booking_id);
+
+  // ── ORDER CONFIRMED ────────────────────────────────────────────────────
+  // An order exists. This is the strongest possible commercial signal, so it is
+  // checked first and can never be contradicted by a later field.
+  if (hasOrder) return STAGE.CONFIRMED;
+
+  // ── CUSTOMER ACCEPTED ───────────────────────────────────────────────────
+  // The customer said yes but no order exists yet, so the order is still NEXT.
+  if (decision === 'ACCEPTED') return STAGE.CUSTOMER_ACCEPTED;
+  if (status === 'CUSTOMER_ACCEPTED') return STAGE.CUSTOMER_ACCEPTED;
+
+  // ── QUOTE SENT ──────────────────────────────────────────────────────────
+  // Persisted on the quotation only. A SAVED quotation is RATE_QUOTED and must
+  // never reach this stage, which is exactly the Save ≠ Send requirement.
+  if (quotationStatus === 'SENT') return STAGE.QUOTE_SENT;
+
+  // ── RATE QUOTED ─────────────────────────────────────────────────────────
+  // A rate has been saved and is still internal.
+  if (quotationStatus === 'RATE_QUOTED' || quotationStatus === 'DRAFT') {
+    return STAGE.QUOTE_PREPARED;
+  }
+
+  // Legacy pricing axis: the pre-Phase-B quote endpoints never create a
+  // Quotation row, so an enquiry quoted that way still has to advance.
+  //
+  // ⚠ ESTIMATED IS DELIBERATELY EXCLUDED. The pricing engine writes
+  // price_status='ESTIMATED' at INTAKE, before any operator has given a rate.
+  // Treating it as "Rate Quoted" would put a fresh enquiry straight onto step
+  // two — the exact false-progress this fix exists to remove. Only a human
+  // quotation moves the rail.
+  const priceStatus = upper(commercial.price_status);
+  if (priceStatus === 'ACCEPTED') return STAGE.CUSTOMER_ACCEPTED;
+  if (priceStatus === 'SENT') return STAGE.QUOTE_SENT;
+  if (priceStatus === 'QUOTED') return STAGE.QUOTE_PREPARED;
+
+  // ── ENQUIRY ─────────────────────────────────────────────────────────────
+  // Received, and nothing commercial has happened yet.
+  return STAGE.RECEIVED;
+}
+
+/**
+ * Backwards-compatible alias. `stageForBooking` is still imported by
+ * QuoteWorkspace.jsx (the legacy booking-bound quote card), so it is kept —
+ * but it now delegates to the SAME commercial mapping so the two can never
+ * disagree about where an enquiry actually is.
  *
  * @param {object} booking
  * @returns {string} one of STAGE.*
@@ -279,8 +364,8 @@ export function stageIndex(key) {
  * @param {object} booking
  * @returns {{ current: string, currentIndex: number, stages: Array }}
  */
-export function describeWorkflow(booking) {
-  const current = stageForBooking(booking);
+export function describeWorkflow(enquiry) {
+  const current = stageForEnquiry(enquiry);
   const currentIndex = stageIndex(current);
 
   const stages = WORKFLOW_STAGES.map((stage) => {
@@ -297,7 +382,7 @@ export function describeWorkflow(booking) {
       // Kept as `locked` too so existing consumers keep working.
       locked,
       // Why this stage is not reached yet — a plain explanation, never a write.
-      lockReason: locked ? lockMessageForStage(stage, current, booking) : null,
+      lockReason: locked ? lockMessageForStage(stage, current, enquiry) : null,
     };
   });
 
@@ -312,20 +397,36 @@ export function describeWorkflow(booking) {
  *   driver but no price→ "Requires quote"
  *   quote sent         → "Awaiting customer"
  */
-function lockMessageForStage(stage, currentKey, booking) {
-  if (stage.key === STAGE.CUSTOMER_ACCEPTED || stage.key === STAGE.CONFIRMED) {
+function lockMessageForStage(stage, currentKey, enquiry) {
+  const commercial = enquiry?.commercial || {};
+
+  if (stage.key === STAGE.CUSTOMER_ACCEPTED) {
     if (currentKey === STAGE.QUOTE_SENT) {
-      return 'Awaiting customer — they accept or reject the quote from their tracking page.';
+      return 'Awaiting customer — they accept or decline the quotation on their tracking page.';
     }
+    return 'The customer must accept the quotation first.';
   }
-  if (stage.key === STAGE.QUOTE_PREPARED || stage.key === STAGE.QUOTE_SENT) {
-    if (currentKey === STAGE.UNDER_REVIEW && !booking?.driver_id) {
-      return 'Requires driver — assign a driver at Under Review.';
+
+  if (stage.key === STAGE.CONFIRMED) {
+    if (currentKey === STAGE.CUSTOMER_ACCEPTED) {
+      return 'Customer has accepted — confirm the order to create it.';
     }
-    if (Number(booking?.final_price) <= 0) {
-      return 'Requires quote — set a final price at Under Review.';
-    }
+    return 'The order exists only after the customer accepts the quotation.';
   }
+
+  if (stage.key === STAGE.QUOTE_SENT) {
+    // Saving a rate is NOT sending it. The client is explicit that these are
+    // separate actions, so the hint says so plainly.
+    return 'A saved rate is not sent yet — send the quotation to publish it.';
+  }
+
+  if (stage.key === STAGE.QUOTE_PREPARED) {
+    if (!commercial.quotation_status) {
+      return 'Save a quotation to give a rate.';
+    }
+    return 'Complete the rate and save the quotation.';
+  }
+
   return stage.lockReason || 'Complete the previous stage first.';
 }
 

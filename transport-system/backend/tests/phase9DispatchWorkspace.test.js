@@ -860,13 +860,14 @@ test('18. no government E-Way Bill confirmation is ever written', async () => {
   await service.saveEwayBill(1, { eway_bill_number: '121234567891', expiry_at: '2026-10-21' }, ADMIN);
 
   const bill = state.tables.ewayBill.rows[0];
-  assert.equal(bill.gov_sync_status, 'NOT_CONNECTED');
-  assert.equal(bill.gov_eway_bill_number, null);
-  assert.equal(bill.gov_synced_at, null);
-  assert.equal(bill.gov_response, null);
+  // Government columns have been removed from the schema — they should not exist
+  assert.ok(!('gov_sync_status' in bill), 'gov_sync_status column should not exist');
+  assert.ok(!('gov_eway_bill_number' in bill), 'gov_eway_bill_number column should not exist');
+  assert.ok(!('gov_synced_at' in bill), 'gov_synced_at column should not exist');
+  assert.ok(!('gov_response' in bill), 'gov_response column should not exist');
 
   const readiness = await service.getReadiness(1);
   assert.equal(readiness.eway_bill_integration,
-    'Internal record only — Government E-Way Bill API not connected.');
+    'E-Way Bill is maintained as an internal operational record.');
 });
 

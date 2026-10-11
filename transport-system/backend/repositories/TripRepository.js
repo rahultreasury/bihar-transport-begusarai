@@ -346,21 +346,36 @@ class TripRepository {
       take: limit,
     });
 
-    // Fetch user details for each client
-    const userIds = clients.map((c) => c.user_id);
-    const users = await this.tx.user.findMany({
-      where: { user_id: { in: userIds } },
-      select: {
-        user_id: true,
-        first_name: true,
-        last_name: true,
-      },
-    });
+    // Fetch user details for each client.
+    //
+    // `trips.user_id` is NULLABLE (a DIRECT / OFFLINE_CLIENT consignment has no
+    // online customer), so the group above can legitimately return a `null` group.
+    // Prisma's `in:` filter is typed `ListIntFieldRefInput` and REJECTS null
+    // entries outright, which made this endpoint 500 with:
+    //   Argument `in`: Invalid value provided.
+    //     Expected ListIntFieldRefInput, provided (Null, Int, Int, ...).
+    //
+    // Filtering the nulls out fixes the crash WITHOUT discarding the row: the
+    // group is still returned, with `user: null`, so a walk-in consignment still
+    // contributes its trip count and freight instead of vanishing or inventing
+    // an owner.
+    const userIds = clients.map((c) => c.user_id).filter((id) => id !== null && id !== undefined);
+
+    const users = userIds.length
+      ? await this.tx.user.findMany({
+        where: { user_id: { in: userIds } },
+        select: {
+          user_id: true,
+          first_name: true,
+          last_name: true,
+        },
+      })
+      : [];
 
     const userMap = new Map(users.map((u) => [u.user_id, u]));
 
     return clients.map((c) => ({
-      user: userMap.get(c.user_id),
+      user: userMap.get(c.user_id) || null,
       tripCount: c._count.trip_id,
       totalFreight: c._sum.freight_amount || 0,
     }));

@@ -34,7 +34,7 @@
  *   call a driver. The customer-facing surfaces have no access to this DTO.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Search,
@@ -169,9 +169,23 @@ export default function AdminEnquiries() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [rateLimited, setRateLimited] = useState(null);
   const [connected, setConnected] = useState(false);
 
+  /**
+   * Guards against stacking requests.
+   *
+   * The 12s realtime poll, the debounced search box and the manual Refresh
+   * button can all fire `load()` within the same second. Without this guard
+   * each tick that lands on top of a slow response starts a second pair of
+   * requests, and the duplicates themselves consume the rate-limit budget that
+   * the next tick needs.
+   */
+  const inFlight = useRef(false);
+
   const load = useCallback(async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setError(null);
     try {
       const [{ data }, { data: statData }] = await Promise.all([
@@ -186,12 +200,44 @@ export default function AdminEnquiries() {
       setRows(data?.data || []);
       setPagination(data?.pagination || { total: 0, page: 1, total_pages: 1 });
       setStats(statData?.data || {});
+      setRateLimited(null);
     } catch (err) {
-      setError(err?.response?.data?.message || 'Failed to load enquiries');
+      // 429 IS A TEMPORARY CONDITION, NOT A FAILURE OF THIS SCREEN.
+      //
+      // express-rate-limit answers with a plain-text body, so there is no
+      // `data.message` to show — which is why a throttled page used to display
+      // the generic "Failed to load enquiries" and look like a broken endpoint.
+      // Say what actually happened, quote the server's own Retry-After, and
+      // deliberately DO NOT retry: an automatic retry would immediately burn
+      // the same budget again and turn one 429 into a sustained storm. The
+      // existing Refresh button is the manual retry.
+      if (err?.response?.status === 429) {
+        const retryAfter = Number(err?.response?.headers?.['retry-after']);
+        setRateLimited(Number.isFinite(retryAfter) ? retryAfter : null);
+      } else {
+        setError(err?.response?.data?.message || 'Failed to load enquiries');
+      }
     } finally {
+      inFlight.current = false;
       setLoading(false);
     }
   }, [filter, search, page]);
+
+  /**
+   * The realtime subscription keeps its 12s cadence, but while the server has
+   * explicitly asked us to back off there is nothing to gain from asking again.
+   * The socket still listens, so the first real change after the window reopens
+   * refreshes the table on its own, and Refresh works immediately regardless.
+   */
+  const canAutoRefresh = rateLimited === null;
+
+  const shownError = useMemo(() => {
+    if (rateLimited !== null) {
+      const when = rateLimited ? `Please try again in about ${rateLimited} seconds.` : 'Please try again shortly.';
+      return `Too many requests. The server asked us to slow down — ${when} Use Refresh when you are ready.`;
+    }
+    return error;
+  }, [rateLimited, error]);
 
   useEffect(() => {
     setLoading(true);
@@ -201,7 +247,7 @@ export default function AdminEnquiries() {
   // Live: a new enquiry or a customer decision refreshes the current view.
   const { connected: live } = useAdminEnquiryRealtime({
     onChanged: () => {
-      load();
+      if (canAutoRefresh) load();
       setConnected(true);
     },
   });
@@ -328,10 +374,10 @@ export default function AdminEnquiries() {
           </button>
         </section>
 
-        {error && (
+        {shownError && (
           <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
             <AlertCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
-            {error}
+            {shownError}
           </div>
         )}
 

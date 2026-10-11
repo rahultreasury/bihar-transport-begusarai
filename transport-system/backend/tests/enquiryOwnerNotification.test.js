@@ -68,6 +68,23 @@ beforeEach(() => {
       };
     },
   });
+
+  // This suite deliberately exercises the REAL send path, so the delivery
+  // layer must be opened — and it is opened EXPLICITLY, never by default:
+  //
+  //   * EMAIL_MODE=production  — the explicit opt-in;
+  //   * NODE_ENV=production    — satisfies the guard;
+  //   * EMAIL_ALLOW_REAL_SEND_IN_NON_PRODUCTION — defeats the guard, which is
+  //     safe ONLY because nodemailer.createTransport is stubbed immediately
+  //     above, so no socket is opened and no real mail can ever be transmitted
+  //     from this run.
+  //
+  // The run-wide default from tests/helpers/emailTestEnv.js is
+  // NODE_ENV=test + EMAIL_MODE=test, which hard-blocks real delivery. Only
+  // this suite overrides it, and afterEach restores the default.
+  process.env.NODE_ENV = 'production';
+  process.env.EMAIL_MODE = 'production';
+  process.env.EMAIL_ALLOW_REAL_SEND_IN_NON_PRODUCTION = 'true';
 });
 
 afterEach(() => {
@@ -76,6 +93,9 @@ afterEach(() => {
   delete process.env.OWNER_EMAIL;
   delete process.env.BREVO_SMTP_USER;
   delete process.env.BREVO_SMTP_PASSWORD;
+  delete process.env.EMAIL_MODE;
+  delete process.env.EMAIL_ALLOW_REAL_SEND_IN_NON_PRODUCTION;
+  process.env.NODE_ENV = 'test';
 });
 
 /* -------------------------------------------------------------------------- */

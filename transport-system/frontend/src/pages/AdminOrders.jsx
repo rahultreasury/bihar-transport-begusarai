@@ -94,7 +94,14 @@ export default function AdminOrders() {
       setError(null);
     } catch (e) {
       if (requestId.current !== id) return;
-      setError(e.message || 'Could not load orders');
+      // Record WHY the load failed and clear the rows.
+      //
+      // It is essential that `rows` is emptied here rather than left holding the
+      // previous page's data: a stale list shown under an error banner reads as
+      // real, current orders. The render below distinguishes the two states —
+      // a failed request never renders "0 orders / no matches".
+      setRows([]);
+      setError(e?.response?.data?.message || e.message || 'Could not load orders');
     } finally {
       if (requestId.current === id) setLoading(false);
     }
@@ -142,7 +149,9 @@ export default function AdminOrders() {
         </div>
 
         {/* ── KPIs (real, from the returned rows) ──────────────────────── */}
-        <OrderKpiStrip rows={rows} loading={loading} />
+        {/* `hasData` keeps a failed load from rendering as a row of real-looking
+            zeros. "0 orders" and "we could not ask" are different facts. */}
+        <OrderKpiStrip rows={rows} loading={loading} hasData={!error} />
 
         {/* ── Filters ──────────────────────────────────────────────────── */}
         <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-[0_1px_2px_rgba(15,43,85,0.04)]">
@@ -227,16 +236,32 @@ export default function AdminOrders() {
 
         {/* ── Table ────────────────────────────────────────────────────── */}
         <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_1px_2px_rgba(15,43,85,0.04)]">
-          {error ? (
-            <div className="m-4 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-              <AlertCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
-              {error}
-            </div>
-          ) : null}
-
+          {/*
+            THREE DISTINCT STATES, never collapsed into one another:
+              1. loading          → spinner
+              2. REQUEST FAILED   → "Unable to load orders" + Retry
+              3. loaded, 0 rows   → "No orders match the current filters"
+            Showing (3) after a failure is what made a broken API masquerade as
+            an empty database. It is not: the request never succeeded.
+          */}
           {loading ? (
             <div className="flex items-center justify-center gap-2 py-16 text-sm text-slate-500">
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> Loading orders…
+            </div>
+          ) : error ? (
+            <div className="m-4 rounded-xl border border-red-200 bg-red-50 p-5">
+              <p className="flex items-start gap-2 text-sm font-semibold text-red-800">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                Unable to load orders.
+              </p>
+              <p className="mt-1.5 pl-6 text-sm text-red-700">{error}</p>
+              <button
+                type="button"
+                onClick={() => load()}
+                className="mt-3 ml-6 inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-red-700"
+              >
+                Retry
+              </button>
             </div>
           ) : visible.length === 0 ? (
             <EmptyNote>No orders match the current filters.</EmptyNote>

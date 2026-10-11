@@ -71,6 +71,17 @@ const POLL_ACTIVE_MS = 12000;
 const POLL_DEGRADED_MS = 12000;
 
 /**
+ * Minimum gap between two SOCKET-DRIVEN re-reads.
+ *
+ * ONE admin action ("Assign Resources", "Send Quotation") makes the server emit
+ * several events in a row, and every one of them used to trigger its own REST
+ * round trip. This coalesces such a burst into a single re-read, so the page
+ * converges on the same server state with ONE request instead of N. The 12s poll
+ * is still there as the safety net if an event is ever missed.
+ */
+const SOCKET_REFETCH_COALESCE_MS = 1000;
+
+/**
  * @param {Object} options
  * @param {string} [options.enquiryIdOrNumber] - subscribe to this enquiry's room
  * @param {'customer'|'admin'|'driver'|'partner'} [options.role='customer']
@@ -83,6 +94,12 @@ const POLL_DEGRADED_MS = 12000;
  *   Polling is a safety net for a live request; once the enquiry reaches one of
  *   these the server will never report a further change on its own, so the timer
  *   is retired. The socket stays connected and a manual reload still works.
+ * @param {boolean} [options.paused=false] - suspend ALL automatic refreshes.
+ *   The page sets this while its own primary read is failing (404 / 401 / 429).
+ *   A page that cannot read the enquiry must not keep asking for it: that is what
+ *   turns one broken tab into a request storm that rate-limits every OTHER
+ *   customer on the same address. Only a successful read or an explicit user
+ *   action restarts it.
  * @returns {{connected:boolean, degraded:boolean, lastEventAt:Date|null}}
  */
 export function useEnquiryRealtime({
@@ -93,6 +110,7 @@ export function useEnquiryRealtime({
   refetch,
   currentStatus,
   stopWhenStatus = [],
+  paused = false,
 } = {}) {
   const [connected, setConnected] = useState(false);
   const [degraded, setDegraded] = useState(false);
@@ -106,10 +124,15 @@ export function useEnquiryRealtime({
   // polling timer reads it through a ref instead of being torn down and rebuilt.
   const latestStatusRef = useRef(currentStatus);
   const stopWhenRef = useRef(stopWhenStatus);
+  const pausedRef = useRef(paused);
   onUpdateRef.current = onUpdate;
   refetchRef.current = refetch;
   latestStatusRef.current = currentStatus;
   stopWhenRef.current = stopWhenStatus;
+  pausedRef.current = paused;
+
+  // Timestamp of the last socket-driven re-read, used to coalesce bursts.
+  const lastSocketRefetchAt = useRef(0);
 
   /** Run a re-read, guarded against overlapping in-flight requests. */
   const doRefetch = useCallback(async () => {
@@ -120,6 +143,24 @@ export function useEnquiryRealtime({
       // A failed poll is not user-facing; the next tick retries.
     }
   }, []);
+
+  /**
+   * A re-read triggered by a push event.
+   *
+   * Two guards, both about never turning one server-side change into many client
+   * requests:
+   *   1. `paused` — the page cannot currently read the enquiry, so a push is
+   *      not a reason to try again.
+   *   2. Coalescing — events arriving within SOCKET_REFETCH_COALESCE_MS of the
+   *      previous one are folded into that single re-read.
+   */
+  const doEventRefetch = useCallback(() => {
+    if (pausedRef.current) return;
+    const now = Date.now();
+    if (now - lastSocketRefetchAt.current < SOCKET_REFETCH_COALESCE_MS) return;
+    lastSocketRefetchAt.current = now;
+    doRefetch();
+  }, [doRefetch]);
 
   useEffect(() => {
     if (!enabled) return undefined;
@@ -177,8 +218,9 @@ export function useEnquiryRealtime({
       setLastEventAt(new Date());
       onUpdateRef.current?.(payload);
       // The push payload is a summary; re-read for the full, authoritative
-      // state so the page never renders a partially-updated card.
-      doRefetch();
+      // state so the page never renders a partially-updated card. Coalesced, so
+      // one admin action that emits several events costs one round trip.
+      doEventRefetch();
     };
 
     ENQUIRY_EVENTS.forEach((evt) => socket.on(evt, handleEvent));
@@ -194,6 +236,10 @@ export function useEnquiryRealtime({
     const startPolling = (interval) => {
       stopPolling();
       timer = setInterval(() => {
+        // The page's own read is failing — do not keep asking. The tick is
+        // SKIPPED, not cancelled, so automatic refresh resumes by itself the
+        // moment a Retry (or any other) read succeeds.
+        if (pausedRef.current) return;
         // A terminal enquiry will not change again, so the safety net retires.
         // Socket pushes and manual reloads still work after this.
         if (Array.isArray(stopWhenRef.current) && stopWhenRef.current.includes(latestStatusRef.current)) {
@@ -207,7 +253,7 @@ export function useEnquiryRealtime({
     };
 
     const onVisibility = () => {
-      if (document.visibilityState === 'visible') {
+      if (document.visibilityState === 'visible' && !pausedRef.current) {
         // Coming back to the tab: catch up immediately, then settle into the
         // fast interval.
         doRefetch();
@@ -228,7 +274,7 @@ export function useEnquiryRealtime({
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [enabled, enquiryIdOrNumber, role, doRefetch]);
+  }, [enabled, enquiryIdOrNumber, role, doRefetch, doEventRefetch]);
 
   return { connected, degraded, lastEventAt };
 }

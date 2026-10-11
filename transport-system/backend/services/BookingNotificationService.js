@@ -186,132 +186,37 @@ class BookingNotificationService {
   }
 
   /**
-   * Notify the transport OWNER that a booking was created.
+   * Notify the transport OWNER that a booking was created — PERMANENTLY DISABLED.
    *
-   * MUST be called after the booking transaction has committed. Never throws.
+   * The "🚚 New Booking Received - BTB-…" owner email has been removed at the
+   * owner's explicit request. This method is intentionally kept as a callable
+   * symbol so historical callers keep resolving, but it is a HARD NO-OP:
    *
-   * @param {number} bookingId
-   * @param {{source?: string}=} context — which entry point created the booking
-   * @returns {Promise<{success:boolean, skipped?:boolean, reason?:string, messageId?:string}>}
+   *   - it does NOT load the committed booking from the database
+   *   - it does NOT build an email payload
+   *   - it does NOT call `emailService.sendBookingNotification()`
+   *   - it does NOT open an SMTP connection, nor log, queue or retry anything
+   *
+   * There is no "simulated" mode and no environment variable that re-enables
+   * it — not `EMAIL_MODE=production`, not `NODE_ENV`, not a live Brevo
+   * credential. The booking email is gone in every environment.
+   *
+   * NOT AFFECTED — these are separate events and remain fully active:
+   *   - the pre-booking ENQUIRY email (EnquiryService → sendNewInquiryNotificationEmail)
+   *   - password-reset emails
+   *   - WhatsApp / SMS notifications
+   *
+   * @param {number} _bookingId — ignored entirely.
+   * @param {Object} [_context]  — ignored entirely.
+   * @returns {Promise<{success:false, skipped:true, disabled:true, reason:string}>}
    */
-  async notifyOwnerOfNewBooking(bookingId, context = {}) {
-    const source = context.source || 'unknown';
-    const log = { bookingId, source };
-
-    // ── Configuration guard ───────────────────────────────────────────────
-    // A missing recipient must be loud and explicit: silently returning here is
-    // exactly how a production deployment can go weeks without notifications.
-    if (!process.env.OWNER_EMAIL) {
-      logger.error(
-        { ...log, missingEnv: 'OWNER_EMAIL' },
-        '[booking] Notification SKIPPED — OWNER_EMAIL is not configured'
-      );
-      return { success: false, skipped: true, reason: 'OWNER_EMAIL not configured' };
-    }
-    if (!process.env.FROM_EMAIL) {
-      logger.error(
-        { ...log, missingEnv: 'FROM_EMAIL' },
-        '[booking] Notification SKIPPED — FROM_EMAIL is not configured'
-      );
-      return { success: false, skipped: true, reason: 'FROM_EMAIL not configured' };
-    }
-    if (!process.env.BREVO_SMTP_USER || !process.env.BREVO_SMTP_PASSWORD) {
-      logger.error(
-        { ...log, missingEnv: 'BREVO_SMTP_USER/BREVO_SMTP_PASSWORD' },
-        '[booking] Notification SKIPPED — Brevo SMTP credentials are not configured'
-      );
-      return { success: false, skipped: true, reason: 'SMTP not configured' };
-    }
-
-    // ── Load the committed row ─────────────────────────────────────────────
-    let booking;
-    try {
-      booking = await this.loadForNotification(bookingId);
-    } catch (err) {
-      logger.error(
-        { ...log, error: err?.message },
-        '[booking] Notification FAILED — could not load the committed booking'
-      );
-      return { success: false, reason: 'notification_context_load_failed' };
-    }
-
-    if (!booking) {
-      logger.error(
-        log,
-        '[booking] Notification FAILED — committed booking row was not found'
-      );
-      return { success: false, reason: 'booking_row_not_found' };
-    }
-
-    const payload = buildBookingEmailPayload(booking);
-    const bookingNumber = payload.booking_reference;
-
-    logger.info(
-      { ...log, bookingNumber, status: booking.status, quoteStatus: booking.quote_status },
-      '[booking] Booking created successfully'
-    );
-    logger.info(
-      { ...log, bookingNumber },
-      '[booking] Notification triggered'
-    );
-    logger.info(
-      { ...log, bookingNumber, notificationType: 'email' },
-      '[booking] Notification type: EMAIL (owner)'
-    );
-    logger.info(
-      { ...log, bookingNumber, recipient: maskEmail(process.env.OWNER_EMAIL) },
-      '[booking] Recipient: owner (OWNER_EMAIL, masked)'
-    );
-    logger.info(
-      {
-        ...log,
-        bookingNumber,
-        customer: payload.customerName,
-        mobile: maskMobile(payload.mobile),
-        pickup: payload.pickup,
-        drop: payload.drop,
-        vehicle: payload.vehicle,
-      },
-      '[booking] Sending...'
-    );
-
-    // ── Send ──────────────────────────────────────────────────────────────
-    try {
-      const result = await this.emailService.sendBookingNotification(payload);
-
-      if (result && result.success) {
-        logger.info(
-          { ...log, bookingNumber, messageId: result.messageId || null },
-          '[booking] Provider accepted message'
-        );
-        logger.info(
-          { ...log, bookingNumber, messageId: result.messageId || null },
-          '[booking] Message ID logged'
-        );
-        return { success: true, messageId: result.messageId || null };
-      }
-
-      logger.error(
-        { ...log, bookingNumber, reason: result?.message || 'unknown' },
-        '[booking] Notification FAILED — provider reported a non-success result'
-      );
-      return { success: false, reason: result?.message || 'send_failed' };
-    } catch (err) {
-      // Provider threw (SMTP rejected the socket, DNS failure, auth error…).
-      // Log the SAFE, actionable fields only — never a token or password.
-      logger.error(
-        {
-          ...log,
-          bookingNumber,
-          errorCode: err?.code || null,
-          errorMessage: err?.message || null,
-          responseCode: err?.responseCode || null,
-          command: err?.command || null,
-        },
-        '[booking] Notification FAILED'
-      );
-      return { success: false, reason: 'send_threw' };
-    }
+  async notifyOwnerOfNewBooking(_bookingId, _context = {}) {
+    return {
+      success: false,
+      skipped: true,
+      disabled: true,
+      reason: 'booking_email_removed',
+    };
   }
 }
 

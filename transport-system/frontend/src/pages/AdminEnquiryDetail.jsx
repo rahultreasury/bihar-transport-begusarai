@@ -76,7 +76,7 @@ import EnquiryStatusBadge from '../components/admin-premium/enquiries/EnquirySta
 import JourneyTimeline, { STAGE_SECTIONS, focusStageSection } from '../components/admin-premium/enquiries/JourneyTimeline';
 import ActivityTimeline from '../components/admin-premium/enquiries/ActivityTimeline';
 import CustomerQuotePreview from '../components/admin-premium/enquiries/CustomerQuotePreview';
-import QuoteWorkspace from '../components/admin-premium/enquiries/QuoteWorkspace';
+import QuotationEditor from '../components/admin-premium/enquiries/QuotationEditor';
 import RequestDetails from '../components/admin-premium/enquiries/RequestDetails';
 import RouteSummary from '../components/admin-premium/enquiries/RouteSummary';
 import {
@@ -106,9 +106,9 @@ const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/admin' },
   { key: 'enquiries', label: 'ENQUIRY', icon: Inbox, path: '/admin/enquiries' },
   { key: 'intake-enquiries', label: 'Enquiry Intake', icon: ClipboardList, path: '/admin/intake-enquiries' },
+  { key: 'vehicle-hire', label: 'VEHICLE HIRE', icon: Inbox, path: '/admin/vehicle-hire' },
   { key: 'financials', label: 'Financials', icon: BarChart3, path: '/admin/financials' },
   { key: 'bookings', label: 'Bookings', icon: Package, path: '/admin/bookings' },
-  { key: 'trips', label: 'Trips', icon: RouteIcon, path: '/admin/trips' },
   { key: 'clients', label: 'Clients', icon: Users, path: '/admin/clients' },
   { key: 'owners', label: 'Transport Owners', icon: Truck, path: '/admin/owners' },
   { key: 'vehicles', label: 'Vehicles', icon: Car, path: '/admin/vehicles' },
@@ -446,7 +446,10 @@ export default function AdminEnquiryDetail() {
         </header>
 
         {/* ── Customer journey — now a real navigation control ─────────── */}
-        <JourneyTimeline booking={booking} />
+        {/* The rail is derived from PERSISTED enquiry + quotation state, so it is
+            identical after a hard refresh. `booking` is still passed for the
+            legacy callers below; the commercial progression ignores it. */}
+        <JourneyTimeline enquiry={enquiry} booking={booking} />
 
         {/* Two-column operations workspace (unchanged) */}
         <div className="grid gap-3.5 lg:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,0.92fr)] xl:items-start">
@@ -639,22 +642,20 @@ export default function AdminEnquiryDetail() {
 
           {/* RIGHT — what we do about it */}
           <div className="space-y-3.5">
-            {/* STAGE 3 */}
+            {/* STAGE 3 — the canonical quotation screen (client document §2).
+                PHASE B: this used to render QuoteWorkspace, which is bound to
+                the BOOKING quote endpoints and returns early when there is no
+                booking_id — i.e. it was dead on exactly the pre-order enquiry
+                the client describes. The client workflow puts quoting BEFORE
+                order creation, so the screen now runs off the ENQUIRY's own
+                quotation. QuoteWorkspace itself is untouched and still serves
+                the booking screens that legitimately use it. */}
             <div {...sectionProps(STAGE_SECTIONS[STAGE.QUOTE_PREPARED])}>
-              <QuoteWorkspace
-                booking={booking}
-                onSent={handleRefresh}
-                // Re-reads the booking (and its audit trail) after a driver
-                // assignment is PERSISTED, so the card renders the database
-                // truth rather than the picker's local state. This is what
-                // keeps the assignment across refreshes and navigation.
-                onAssigned={handleRefresh}
-                stage={stage}
-                feedback={feedback.prepareQuote || feedback.sendQuote || null}
-                onDismissFeedback={() => {
-                  clearFeedback('prepareQuote');
-                  clearFeedback('sendQuote');
-                }}
+              <QuotationEditor
+                enquiryId={enquiry?.enquiry_id}
+                // Re-read the enquiry after any persisted change so the rail,
+                // status and audit trail all reflect the database.
+                onChanged={handleRefresh}
               />
             </div>
 

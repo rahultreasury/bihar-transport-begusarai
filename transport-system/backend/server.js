@@ -65,6 +65,10 @@ const partnerSettlementRoutes = require('./routes/partnerSettlementRoutes');
 const partnerSelfServiceRoutes = require('./routes/partnerSelfServiceRoutes');
 const tripFinancialRoutes = require('./routes/tripFinancialRoutes');
 const tripRoutes = require('./routes/tripRoutes');
+// Universal Vehicle Hire (the ONE assignment writer shared by the Enquiry page
+// and the Vehicle Hire page). It owns /api/vehicle-hire/*, a namespace no other
+// router claims, so it can never be shadowed.
+const vehicleHireRoutes = require('./routes/vehicleHireRoutes');
 // Phase 9 — the Dispatch Workspace API. Mounted AFTER tripRoutes /
 // tripFinancialRoutes; every path it owns is new, so nothing is shadowed.
 const dispatchRoutes = require('./routes/dispatchRoutes');
@@ -290,6 +294,20 @@ app.use('/api/trips', bookingLimiter, tripFinancialRoutes);
 // Mounted AFTER tripRoutes so /api/trips/:id/dispatch/readiness and the
 // document endpoints resolve here.
 app.use('/api/trips', bookingLimiter, dispatchRoutes);
+
+// Universal Vehicle Hire Routes.
+//
+// The Enquiry workspace's "VEHICLE & DRIVER" card reads
+// GET /api/vehicle-hire/assignment?enquiry_id= and posts
+// POST /api/vehicle-hire/provision to provision that enquiry's ONE reservation
+// trip. Both paths are resolved by TripVehicleAssignmentService /
+// TripProvisioningService, so the card and the Vehicle Hire page can never
+// disagree about who is assigned.
+//
+// This router applies its own `protect, adminOnly` to every route, so mounting
+// it under /api/vehicle-hire keeps the admin surface exactly as narrow as the
+// router author intended.
+app.use('/api/vehicle-hire', vehicleHireRoutes);
 
 // Financial Management Routes (global financial control center)
 app.use('/api/financials', adminLimiter, financialRoutes);

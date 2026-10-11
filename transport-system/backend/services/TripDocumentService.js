@@ -93,6 +93,7 @@ class TripDocumentService {
       issued_at: date(input.issued_at, 'issued_at'),
       expires_at: date(input.expires_at, 'expires_at'),
       file_url: input.file_url || null,
+      file_name: input.file_name || null,
       remarks: input.remarks || null,
     };
   }
@@ -201,16 +202,16 @@ class TripDocumentService {
 
     const result = await this.prisma.$transaction(async (tx) => {
       const existing = await tx.tripDocument.findUnique({
-        // The compound unique is NAMED in the schema (uq_trip_documents_trip_type)
-        // so Prisma keys it by that name rather than the default
-        // `trip_id_document_type`.
-        where: {
-          uq_trip_documents_trip_type: {
-            trip_id: trip.trip_id,
-            document_type: clean.document_type,
+          // The compound unique is NAMED in the schema (idx_trip_documents_trip_type)
+          // but Prisma uses the default name `trip_id_document_type` for the
+          // compound unique constraint on [trip_id, document_type].
+          where: {
+            trip_id_document_type: {
+              trip_id: trip.trip_id,
+              document_type: clean.document_type,
+            },
           },
-        },
-      });
+        });
 
       let doc;
       let created;
@@ -227,6 +228,7 @@ class TripDocumentService {
             issued_at: clean.issued_at,
             expires_at: clean.expires_at,
             file_url: clean.file_url,
+            file_name: clean.file_name,
             is_uploaded: Boolean(clean.file_url),
             is_verified: clean.document_status === 'VERIFIED',
             verified_by: clean.document_status === 'VERIFIED' ? (user?.user_id || null) : null,
@@ -278,6 +280,7 @@ class TripDocumentService {
               // been uploaded. A supplied file is evidence: it is only replaced
               // by a new file, never silently dropped.
               file_url: clean.file_url || existing.file_url,
+              file_name: clean.file_name || existing.file_name,
               is_uploaded: Boolean(clean.file_url || existing.file_url),
               // Preserve the verification decision; adopt it only on a create.
               is_verified: effectiveStatus === 'VERIFIED',

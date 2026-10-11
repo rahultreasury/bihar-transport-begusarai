@@ -56,20 +56,24 @@ export function isKnownProcess(key) {
 }
 
 /**
- * The processes the Loading → Dispatch deployment actually serves.
+ * The processes the trip process page actually serves.
  *
- * The full lifecycle model above still knows every process, because the stage
+ * The full lifecycle model above knows every process, because the stage
  * rail, `normalizeProcess` and the order/trip-master screens all describe the
- * whole journey. But the trip process PAGE in this deployment renders Loading
- * and Dispatch only — the Transit, Delivery, POD and Completion workspaces ship
- * with their own phases, and the Vehicle Hire workspace ships with the hire
- * module.
+ * whole journey. The process page itself is the L/D/V boundary: it
+ * renders Vehicle Hire, Loading and Dispatch.
  *
- * A request for one of those still gets a real answer rather than a blank
- * screen: `AdminTripProcess` treats the key as unknown and says so, rather than
- * silently falling through to the Trip Overview.
+ * Transit, Delivery, POD and Completion are downstream phases that ship
+ * with the central Trip Detail Workspace (/admin/trips/:tripId), which
+ * owns the Loading and POD tabs those phases live in. A request for one
+ * of them is redirected there by the process page, never rendered here.
  */
-export const LOADING_AND_DISPATCH_ONLY = Object.freeze(new Set(['loading', 'dispatch']));
+// Vehicle Hire now ships with the reservation/hire module, so `vehicle` is a
+// rendered process in this deployment alongside Loading and Dispatch.
+// Transit, Delivery, POD and Completion are downstream phases of the central
+// Trip Detail Workspace (/admin/trips/:tripId); the process page redirects
+// those segments there and renders only the L/D/V boundary.
+export const LOADING_AND_DISPATCH_ONLY = Object.freeze(new Set(['vehicle', 'loading', 'dispatch']));
 
 /**
  * Normalise the URL segment.
@@ -80,7 +84,10 @@ export function normalizeProcess(key) {
   const k = String(key || '').toLowerCase();
   if (k === 'tracking') return 'transit';
   if (k === 'summary' || k === 'complete') return 'completed';
-  if (k === 'vehicle_hire' || k === 'vehicle-hire') return 'vehicle';
+  // `hire` is the OLD name this workspace shipped under. It resolves to the same
+  // `vehicle` process, so a bookmark or an already-shared link keeps working
+  // instead of rendering "Unknown process".
+  if (k === 'hire' || k === 'vehicle_hire' || k === 'vehicle-hire') return 'vehicle';
   return k;
 }
 

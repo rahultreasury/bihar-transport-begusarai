@@ -222,6 +222,25 @@ class TripFinancialService {
     // Calculate from transactions - SINGLE SOURCE OF TRUTH
     const txCalc = this._calculateFromTransactions(transactions);
 
+    // PHASE 7 — THE AUTHORITATIVE BILLED AMOUNT
+    //   `TripFinancial.customer_fare` is a CACHED summary column that only gets
+    //   a value when `calculateTripFinancial()` runs. On a freshly confirmed
+    //   booking it is still 0, so the admin projection used to report
+    //   `customerFare: 0` beside `outstandingAmount: 50000` for the SAME
+    //   booking — two contradictory figures for one thing, which is exactly
+    //   what "do not store contradictory balances in multiple places" forbids.
+    //
+    //   `Booking.final_price` is the server-persisted price the customer agreed
+    //   to (the invoice and Trip.freight_amount are both built from it), so it
+    //   is the single figure the billed amount, the outstanding and the payment
+    //   status are all derived from. The cached column is only a fallback for a
+    //   legacy row with no agreed price yet.
+    const billedAmount = (() => {
+      const fromBooking = Number(booking.final_price);
+      if (Number.isFinite(fromBooking) && fromBooking > 0) return fromBooking;
+      return Number(tripFinancial.customer_fare) || 0;
+    })();
+
     const base = {
       bookingId: booking.booking_id,
       bookingNumber: booking.booking_number,
@@ -236,11 +255,11 @@ class TripFinancialService {
         return {
           ...base,
           // Customer Financials
-          customerFare: tripFinancial.customer_fare,
+          customerFare: billedAmount,
           amountReceived: txCalc.totalCustomerPayments + txCalc.totalClientPayments,
-          paymentStatus: this._getPaymentStatus(booking.final_price, txCalc.totalCustomerPayments + txCalc.totalClientPayments),
+          paymentStatus: this._getPaymentStatus(billedAmount, txCalc.totalCustomerPayments + txCalc.totalClientPayments),
           paymentMethod: this._getPaymentMethod(transactions),
-          outstandingAmount: this._getOutstandingAmount(booking.final_price, txCalc.totalCustomerPayments + txCalc.totalClientPayments),
+          outstandingAmount: this._getOutstandingAmount(billedAmount, txCalc.totalCustomerPayments + txCalc.totalClientPayments),
 
           // Driver Financials
           driverPayout: tripFinancial.driver_payout,
@@ -269,7 +288,7 @@ class TripFinancialService {
           // BT Internal Financials (ADMIN ONLY)
           btMargin: tripFinancial.bt_margin,
           btRevenue: tripFinancial.commission_amount,
-          ownerShare: Math.max(0, (booking.final_price || 0) - (tripFinancial.commission_amount || 0)),
+          ownerShare: Math.max(0, billedAmount - (tripFinancial.commission_amount || 0)),
           totalOperationalCost: 0,
 
           // All transactions for money flow
@@ -322,6 +341,60 @@ class TripFinancialService {
             .filter(t => t.transaction_type === 'DRIVER_ADVANCE' || t.transaction_type === 'FUEL_ADVANCE')
             .map(t => ({ id: t.transaction_id, amount: t.amount, type: t.transaction_type, date: t.transaction_date, method: t.payment_method })),
         };
+
+      // ── PHASE 7: the CUSTOMER projection ──────────────────────────────────
+      // A customer is shown their OWN billing and nothing else. This is an
+      // explicit ALLOW LIST: the returned object is built field by field, so a
+      // vendor payable, BT commission, BT margin, driver payout, internal
+      // expense or audit field cannot leak through a forgotten key.
+      //
+      // It exists because the route used to resolve an unrecognised role to
+      // 'ADMIN' ("Default to admin for customers"), so a customer hitting this
+      // endpoint received the full admin projection including btMargin.
+      case 'CUSTOMER': {
+        if (user && booking.user_id !== user.user_id) {
+          throw new ValidationError('Access denied. This booking does not belong to you.');
+        }
+
+        // The SAME authoritative figure the admin branch uses, so a customer
+        // and an admin can never disagree about what was billed.
+        const billed = billedAmount;
+        const received = txCalc.totalCustomerPayments + txCalc.totalClientPayments;
+
+        return {
+          bookingId: booking.booking_id,
+          bookingNumber: booking.booking_number,
+          status: booking.status,
+
+          // ── What the customer owes, and what they have paid ──
+          billedAmount: billed,
+          amountReceived: received,
+          outstandingAmount: this._getOutstandingAmount(billed, received),
+          paymentStatus: this._getPaymentStatus(billed, received),
+          paymentMethod: this._getPaymentMethod(transactions),
+
+          // ── Their own payment history only ──
+          payments: transactions
+            .filter(
+              (t) =>
+                t.transaction_type === 'CUSTOMER_PAYMENT' ||
+                t.transaction_type === 'CLIENT_PAYMENT' ||
+                t.transaction_type === 'REVERSAL' ||
+                t.transaction_type === 'REFUND'
+            )
+            .map((t) => ({
+              id: t.transaction_id,
+              type: t.transaction_type,
+              amount: t.amount,
+              date: t.transaction_date,
+              method: t.payment_method,
+              reference: t.reference_number,
+            })),
+
+          // NO driver payout, NO owner settlement, NO commission, NO btMargin,
+          // NO balances, NO raw transaction rows.
+        };
+      }
 
       default:
         throw new ValidationError('Invalid role specified');
@@ -417,9 +490,11 @@ class TripFinancialService {
       case 'OWNER_ADVANCE':
       case 'OWNER_SETTLEMENT':
         return ['ADMIN', 'TRANSPORT_OWNER'];
+      // PHASE 7: a customer may see their OWN payments. The customer's money
+      // is theirs; only the vendor side and the internal figures stay admin-only.
       case 'CUSTOMER_PAYMENT':
       case 'CLIENT_PAYMENT':
-        return ['ADMIN'];
+        return ['ADMIN', 'CUSTOMER'];
       case 'TRIP_EXPENSE':
         return ['ADMIN'];
       default:

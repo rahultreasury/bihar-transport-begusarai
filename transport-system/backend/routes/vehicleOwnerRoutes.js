@@ -8,10 +8,12 @@ const router = express.Router();
 const { body, param, validationResult } = require('express-validator');
 const { protect } = require('../middleware/auth');
 const VehicleOwnerService = require('../services/VehicleOwnerService');
+const VendorLedgerService = require('../services/VendorLedgerService');
 const PartnerService = require('../services/PartnerService');
 const ConnectionService = require('../services/ConnectionService');
 
 const vehicleOwnerService = new VehicleOwnerService();
+const vendorLedgerService = new VendorLedgerService();
 const partnerService = new PartnerService();
 const connectionService = new ConnectionService();
 
@@ -172,6 +174,65 @@ router.get('/:id/bookings', protect, adminCheck, async (req, res) => {
       pagination: result.pagination,
     });
   } catch (error) {
+    handleError(res, error);
+  }
+});
+
+// ===========================================================================
+// VENDOR LEDGER (Phase 3)
+// ===========================================================================
+// The chronological vendor account for this owner: every trip obligation and
+// every rupee that actually moved, with a running balance.
+//
+// It is a READ over records the repository already owns —
+//   • obligations  from VehicleHireService  (gross hire − commission)
+//   • money moved  from FinancialTransaction, keyed on transport_owner_id
+// No new table is introduced, and PartnerLedger is deliberately NOT reused
+// because it is keyed on Partner, a different entity from VehicleOwner.
+//
+// Admin-only, via the existing `adminCheck` middleware used by every other
+// route on this router: a customer, a driver, or an unauthenticated caller
+// cannot reach a vendor's money.
+
+/**
+ * GET /api/admin/vehicle-owners/:id/ledger
+ * Chronological vendor statement with a running balance.
+ */
+router.get('/:id/ledger', protect, adminCheck, async (req, res) => {
+  try {
+    const ownerId = parseInt(req.params.id);
+    if (isNaN(ownerId)) return res.status(400).json({ success: false, message: 'Invalid vehicle owner ID' });
+
+    const ledger = await vendorLedgerService.getOwnerLedger(ownerId, {
+      from: req.query.from,
+      to: req.query.to,
+      tripId: req.query.trip_id,
+    });
+
+    res.json({ success: true, data: ledger });
+  } catch (error) {
+    if (error.statusCode === 404) {
+      return res.status(404).json({ success: false, message: error.message });
+    }
+    handleError(res, error);
+  }
+});
+
+/**
+ * GET /api/admin/vehicle-owners/:id/ledger/trips
+ * Per-trip vendor position for every trip of this owner.
+ */
+router.get('/:id/ledger/trips', protect, adminCheck, async (req, res) => {
+  try {
+    const ownerId = parseInt(req.params.id);
+    if (isNaN(ownerId)) return res.status(400).json({ success: false, message: 'Invalid vehicle owner ID' });
+
+    const trips = await vendorLedgerService.getOwnerTripPositions(ownerId);
+    res.json({ success: true, data: trips });
+  } catch (error) {
+    if (error.statusCode === 404) {
+      return res.status(404).json({ success: false, message: error.message });
+    }
     handleError(res, error);
   }
 });

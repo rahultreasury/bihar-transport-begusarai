@@ -1,0 +1,25 @@
+-- ============================================================================
+-- 20261008120000_eway_bill_internal_record_file_name
+-- ============================================================================
+-- E-WAY BILL INTERNAL RECORD: store the ORIGINAL FILENAME on every uploaded
+-- document.
+--
+-- WHY
+--   The E-Way Bill section (and all document uploads) must remember what the
+--   operator actually named their scan so it can be shown back to them on
+--   refresh and in audit logs. `file_url` holds the server reference, but the
+--   original client filename was never persisted.
+--
+--   This extends the EXISTING `trip_documents` table. There is only one document
+--   store in this system and nothing duplicates it.
+--
+-- SAFETY
+--   * Additive and reversible: a nullable column that defaults to NULL.
+--   * Existing rows stay valid: NULL means "original name not recorded" and is
+--     never treated differently from before.
+--   * No data loss; no CASCADE changes.
+--
+-- LOCAL ONLY. Not deployed. Neon does not have this migration.
+-- ============================================================================
+
+ALTER TABLE "trip_documents" ADD COLUMN IF NOT EXISTS "file_name" TEXT;

@@ -31,6 +31,7 @@ const { buildEnquiryWhatsAppUrl } = require('../services/enquiryWhatsAppFormatte
 const { isCanonicalEnquiryNumber } = require('../services/EnquiryNumberService');
 const { NotFoundError, ValidationError } = require('../utils/AppError');
 const { isQuoteVisibleToCustomer } = require('../utils/EnquiryStateMachine');
+const QuotationService = require('../services/QuotationService');
 
 /**
  * Resolve "the enquiry" from a route param that may be either the numeric id
@@ -39,6 +40,18 @@ const { isQuoteVisibleToCustomer } = require('../utils/EnquiryStateMachine');
  * @param {string} idOrNumber
  * @returns {Promise<object>}
  */
+/**
+ * The customer-facing QuotationService. It has no EnquiryService dependency
+ * because a customer may only ever READ a quotation here — confirming an order
+ * goes through the existing, already-secured accept endpoint, never through
+ * this path.
+ */
+let _customerQuotationService = null;
+function quotationServiceForCustomer() {
+  if (!_customerQuotationService) _customerQuotationService = new QuotationService();
+  return _customerQuotationService;
+}
+
 async function resolveEnquiry(idOrNumber) {
   const raw = String(idOrNumber || '').trim();
   if (!raw) throw new ValidationError({ message: 'Enquiry id or number is required' });
@@ -177,6 +190,22 @@ const getQuote = asyncHandler(async (req, res) => {
   const awaitsDecision = enquiry.status === 'AWAITING_CUSTOMER_ACCEPTANCE';
   const quotePublished = isQuoteVisibleToCustomer(enquiry.status);
 
+  // PHASE B — the canonical quotation, when one exists.
+  //
+  // It is gated by the SAME existing rule that already protected the legacy
+  // price: isQuoteVisibleToCustomer(enquiry.status). A DRAFT quotation is never
+  // returned, so an operator cannot leak an unsent rate to a customer. When
+  // the gate is closed this returns null and the legacy fields below are also
+  // nulled — no path exposes money the customer was not sent.
+  //
+  // Ownership was already proven above by assertCustomerAccess. The quotation
+  // itself additionally gates on its own published status (SENT / CONVERTED),
+  // so an unsent rate is never returned regardless of the enquiry status. We
+  // deliberately do NOT pass `isVisibleToCustomer: quotePublished` here: the
+  // client document says "use Send Quotation and leave the enquiry open", so a
+  // sent quotation must stay readable while the enquiry status is unchanged.
+  const quotation = await quotationServiceForCustomer().getQuotationForCustomer(enquiry, {});
+
   res.json({
     success: true,
     data: {
@@ -188,6 +217,9 @@ const getQuote = asyncHandler(async (req, res) => {
       final_quoted_price: quotePublished ? enquiry.final_quoted_price : null,
       quote_remarks: quotePublished ? enquiry.quote_remarks || null : null,
       quoted_at: enquiry.quoted_at || null,
+      // The full Phase B quotation (rate, freight, GST, charges, payment
+      // schedule) — null unless it has actually been sent to this customer.
+      quotation,
       // Tells the UI which buttons to render, but the server re-validates the
       // status on accept/reject — this is a hint, never an authorisation.
       action_required: awaitsDecision,

@@ -209,9 +209,20 @@ export const enquiryAPI = {
   getStatus: (idOrNumber) =>
     api.get(`/enquiries/${enc(idOrNumber)}/status`, withEnquiryAuth(idOrNumber)),
 
-  /** The quote card. */
-  getQuote: (idOrNumber) =>
-    api.get(`/enquiries/${enc(idOrNumber)}/quote`, withEnquiryAuth(idOrNumber)),
+  /**
+   * The quote card.
+   *
+   * This is also the customer's read of the CANONICAL Phase B Quotation: the
+   * response carries `quotation` — the persisted row — and the backend returns
+   * it only once that row is SENT or CONVERTED. A saved-but-unsent draft is
+   * simply absent from the payload, which is what keeps "saved" and "sent"
+   * distinguishable on the customer's screen.
+   *
+   * `config` is accepted for the same reason `get()` takes it: so an unmount can
+   * cancel the in-flight read.
+   */
+  getQuote: (idOrNumber, config = {}) =>
+    api.get(`/enquiries/${enc(idOrNumber)}/quote`, withEnquiryAuth(idOrNumber, config)),
 
   /** Accept the final quote → server creates the canonical Booking. */
   accept: (idOrNumber) =>

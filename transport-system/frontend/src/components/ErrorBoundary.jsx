@@ -41,8 +41,13 @@ export class ErrorBoundary extends Component {
    */
   reportError = (error, errorInfo) => {
     if (!import.meta.env.DEV) return;
-    console.error('[ErrorBoundary] Caught rendering error:', error.message);
-    console.error('[ErrorBoundary] Component stack:', errorInfo?.componentStack);
+    console.error('=== ERROR BOUNDARY CAUGHT RENDER ERROR ===');
+    console.error('Error:', error);
+    console.error('Error message:', error?.message);
+    console.error('Error stack:', error?.stack);
+    console.error('Error name:', error?.name);
+    console.error('Component stack:', errorInfo?.componentStack);
+    console.error('===========================================');
   };
 
   handleRefresh = () => {

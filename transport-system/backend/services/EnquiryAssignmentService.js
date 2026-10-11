@@ -323,11 +323,15 @@ class EnquiryAssignmentService {
    * @param {Date} params.pickupDate
    * @param {string} params.pickupTime
    * @param {number} params.excludeEnquiryId - the enquiry being assigned
+   * @param {number} [params.excludeTripId] - the trip being assigned. A
+   *   consignment is never in conflict with ITSELF: re-assigning a vehicle on a
+   *   trip that already carries it must not report that same trip as the
+   *   blocker. Optional, so every existing caller is unaffected.
    * @param {import('@prisma/client').PrismaClient} [params.tx]
    */
   async assertVehicleFree(params, tx) {
     const client = tx || this.prisma;
-    const { vehicleId, pickupDate, pickupTime, excludeEnquiryId } = params;
+    const { vehicleId, pickupDate, pickupTime, excludeEnquiryId, excludeTripId } = params;
     const { start, end } = pickupWindow(pickupDate, pickupTime);
 
     // (a) Another live ENQUIRY already holds this vehicle.
@@ -352,10 +356,16 @@ class EnquiryAssignmentService {
     }
 
     // (b) An active TRIP already uses this vehicle.
+    //
+    // `excludeTripId` is what keeps a re-assignment from colliding with its own
+    // trip. Without it, changing the vehicle on a trip that already holds a
+    // driver reports that driver as "already on active trip <own trip>" — the
+    // consignment blocking itself.
     const activeTrip = await client.trip.findFirst({
       where: {
         vehicle_id: Number(vehicleId),
         status: { in: ACTIVE_TRIP_STATUSES },
+        ...(excludeTripId ? { trip_id: { not: Number(excludeTripId) } } : {}),
       },
       select: { trip_id: true, trip_number: true, trip_date: true, status: true },
     });
@@ -380,11 +390,13 @@ class EnquiryAssignmentService {
    * @param {Date} params.pickupDate
    * @param {string} params.pickupTime
    * @param {number} params.excludeEnquiryId
+   * @param {number} [params.excludeTripId] - the trip being assigned; see
+   *   `assertVehicleFree`.
    * @param {import('@prisma/client').PrismaClient} [params.tx]
    */
   async assertDriverFree(params, tx) {
     const client = tx || this.prisma;
-    const { driverId, pickupDate, pickupTime, excludeEnquiryId } = params;
+    const { driverId, pickupDate, pickupTime, excludeEnquiryId, excludeTripId } = params;
     const { start, end } = pickupWindow(pickupDate, pickupTime);
 
     const otherEnquiry = await client.enquiry.findFirst({
@@ -408,7 +420,12 @@ class EnquiryAssignmentService {
     }
 
     const activeTrip = await client.trip.findFirst({
-      where: { driver_id: Number(driverId), status: { in: ACTIVE_TRIP_STATUSES } },
+      where: {
+        driver_id: Number(driverId),
+        status: { in: ACTIVE_TRIP_STATUSES },
+        // A consignment never conflicts with its own trip.
+        ...(excludeTripId ? { trip_id: { not: Number(excludeTripId) } } : {}),
+      },
       select: { trip_id: true, trip_number: true, trip_date: true, status: true },
     });
 
@@ -479,7 +496,15 @@ class EnquiryAssignmentService {
    * @returns {Promise<{vehicle?:object, driver?:object, partner?:object, owner?:object}>}
    */
   async validateAssignment(params, tx) {
-    const { enquiry, vehicleId, driverId, partnerId, ownerId, isReassignment = false } = params;
+    const {
+      enquiry,
+      vehicleId,
+      driverId,
+      partnerId,
+      ownerId,
+      isReassignment = false,
+      excludeTripId,
+    } = params;
     const client = tx || this.prisma;
     const out = {};
 
@@ -500,6 +525,7 @@ class EnquiryAssignmentService {
           pickupDate: enquiry.pickup_date,
           pickupTime: enquiry.pickup_time,
           excludeEnquiryId: enquiry.enquiry_id,
+          excludeTripId,
         },
         client
       );
@@ -512,6 +538,7 @@ class EnquiryAssignmentService {
           pickupDate: enquiry.pickup_date,
           pickupTime: enquiry.pickup_time,
           excludeEnquiryId: enquiry.enquiry_id,
+          excludeTripId,
         },
         client
       );

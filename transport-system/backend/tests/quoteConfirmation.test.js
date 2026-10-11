@@ -50,8 +50,19 @@ function makeFakeRepos(overrides = {}) {
     releaseAllActive: async () => 0,
   };
 
+  // PHASE 7: BookingService now raises the invoice through the idempotent
+  // `ensureForBooking` entry point (and derives the number with
+  // `buildInvoiceNumber`) rather than `create`, so that a booking can only
+  // ever be billed once. The fake implements that same contract.
   const invoiceRepo = {
+    buildInvoiceNumber: (bookingNumber) => `INV-${bookingNumber}`,
     create: async () => ({ invoice_id: 1 }),
+    ensureForBooking: async ({ booking_id, booking_number, amount }) => ({
+      invoice_id: 1,
+      invoice_number: `INV-${booking_number || booking_id}`,
+      amount,
+      created: true,
+    }),
   };
 
   // Fake prisma transaction helper — executes the callback with a fake tx.

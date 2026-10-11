@@ -382,6 +382,13 @@ html.admin-dark body {
     resize: vertical;
   }
 
+  /* Compact input variant for dense operational panels — 40px height */
+  .bt-input-sm {
+    height: 40px;
+    padding: 0 12px;
+    font-size: 13px;
+  }
+
   .bt-input::placeholder,
   .bt-textarea::placeholder { color: var(--bt-text-muted); }
 
@@ -640,6 +647,53 @@ html.admin-dark body {
     border-radius: var(--bt-radius-modal);
     box-shadow: var(--bt-shadow-modal);
     animation: btModalIn 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* ── Three-dot action menu ─────────────────────────────────────────────────
+     The LIGHTER sibling of the modal backdrop.
+
+     A modal is an interruption and earns a heavy scrim (0.55 navy). A three-dot
+     menu is a momentary focus change, so it gets a much lighter one — the page
+     is still recognisable underneath. Same tokens, same easing, same 180ms
+     timing as `btModalIn`, so it belongs to the same motion language.
+
+     Deliberately BELOW `.bt-modal-backdrop` (z-70) so a real modal can still
+     open on top of an open menu, and far below the Google Places container
+     (z-10000) and the WhatsApp float (z-9999), which must keep winning. */
+  .bt-actionmenu-backdrop {
+    @apply fixed inset-0 z-[68];
+    background: rgba(15, 23, 42, 0.12);
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+    animation: btActionMenuFade 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .bt-actionmenu-panel {
+    @apply fixed z-[69] overflow-y-auto py-1;
+    max-height: min(70vh, 26rem);
+    background: var(--bt-surface);
+    border: 1px solid var(--bt-border);
+    border-radius: 0.75rem;
+    /* Deliberately NO filter and NO backdrop-filter: the menu must stay sharp
+       while the page behind it is blurred. They are siblings, so nothing here
+       inherits the scrim. */
+    box-shadow: 0 18px 45px -12px rgba(15, 23, 42, 0.35);
+    animation: btActionMenuIn 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .bt-actionmenu-trigger {
+    @apply p-1 rounded-lg transition-colors;
+  }
+  .bt-actionmenu-trigger:hover { background: rgba(15, 23, 42, 0.06); }
+
+  @keyframes btActionMenuFade {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  @keyframes btActionMenuIn {
+    from { opacity: 0; transform: translateY(-4px) scale(0.985); }
+    to   { opacity: 1; transform: translateY(0)    scale(1); }
   }
 
   /* ── Divider used between card header and body ──────────────────────────── */

@@ -76,10 +76,12 @@ class TripAdvanceRepository {
   /**
    * Find all advances matching a filter.
    * @param {Object} where - Prisma where clause
+   * @param {Object} tx - Optional Prisma transaction client
    * @returns {Promise<Array>}
    */
-  async findMany(where = {}) {
-    return await prisma.tripAdvance.findMany({
+  async findMany(where = {}, tx = null) {
+    const client = tx || prisma;
+    return await client.tripAdvance.findMany({
       where,
       orderBy: { given_at: 'desc' },
       include: {

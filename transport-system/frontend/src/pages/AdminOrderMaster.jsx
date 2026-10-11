@@ -63,6 +63,7 @@ import {
   BRAND,
 } from '../components/admin-premium/orders/orderUi';
 import { resolveOrder, resolvePaymentState } from '../utils/orderStatus';
+import { normalizeProcess } from '../components/admin-premium/trips/process/tripProcessModel';
 import {
   inr,
   distance,
@@ -94,16 +95,29 @@ export default function AdminOrderMaster() {
   const [trip, setTrip] = useState(null);
   const [balances, setBalances] = useState(null);
   const [events, setEvents] = useState([]);
+  // The CANONICAL operational projection for this trip:
+  // GET /api/trips/:id/workflow → `stage` (current stage, next action, the ten
+  // rail nodes), resolved server-side from `Trip.status` alone. Null until a
+  // trip exists, in which case the page falls back to resolveOrder().
+  const [workflow, setWorkflow] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
+
+  // Determine if the param is a numeric ID or a booking number string
+  const isBookingId = bookingNumber && /^\d+$/.test(bookingNumber);
+  const bookingId = isBookingId ? parseInt(bookingNumber, 10) : null;
+  const bookingNumberStr = isBookingId ? null : bookingNumber;
 
   const load = useCallback(
     async ({ silent } = {}) => {
       if (!bookingNumber) return;
       silent ? setRefreshing(true) : setLoading(true);
       try {
-        const res = await adminAPI.getBookingByNumber(bookingNumber);
+        // Support both booking_id (numeric) and booking_number (string)
+        const res = isBookingId
+          ? await adminAPI.getBooking(bookingId)
+          : await adminAPI.getBookingByNumber(bookingNumberStr);
         if (!res?.data?.success) throw new Error(res?.data?.message || 'Order not found');
         const row = res.data.data;
         setOrder(row);
@@ -118,9 +132,21 @@ export default function AdminOrderMaster() {
           safeGet(adminAPI.getTripFinancialTimeline(row.booking_id)),
         ]);
         setFinancial(fin);
-        setTrip(draft?.existing_trip || null);
+        const tripRow = draft?.existing_trip || null;
+        setTrip(tripRow);
         setBalances(bal);
         setEvents(Array.isArray(tl) ? tl : []);
+
+        // Load full trip data with relations (vehicle, driver, owner, etc.) when a trip exists
+        // This provides the canonical vehicle/driver/owner data for the Vehicle & Driver section
+        const fullTrip = tripRow?.trip_id ? await safeGet(tripAPI.getTrip(tripRow.trip_id)) : null;
+        if (fullTrip) setTrip(fullTrip);
+
+        // The operational stage comes from the trip's OWN workflow endpoint, so
+        // the rail, the next action and the cards can never disagree with it.
+        // Re-fetched on every `load()`, which is what makes an operational action
+        // performed anywhere else show up here on the next refresh.
+        setWorkflow(tripRow?.trip_id ? await safeGet(adminAPI.getTripWorkflow(tripRow.trip_id)) : null);
       } catch (e) {
         setError(e.message || 'Could not load this order');
         setOrder(null);
@@ -137,6 +163,101 @@ export default function AdminOrderMaster() {
   }, [load]);
 
   const resolved = useMemo(() => (order ? resolveOrder(order, trip) : null), [order, trip]);
+
+  // ── Where a click on the rail / a card / the next action goes ──────────────
+  // Pure NAVIGATION. Nothing here writes: a stage click opens the workspace for
+  // that stage, and a status only ever moves through the operational endpoint the
+  // backend named in `workflow.stage.next_action`.
+  const tripId = trip?.trip_id ?? null;
+
+  /**
+   * The canonical order number and the flattened booking row.
+   *
+   * DECLARED HERE, BEFORE `goto` BELOW, ON PURPOSE.
+   *   `goto` needs the order number to route "Confirmed" back to this same page.
+   *   It used to be declared far below in the render body, which put it in the
+   *   temporal dead zone for every hook above it: React evaluated the hook's
+   *   dependency array, hit `orderNo` before its `const` had initialised, and
+   *   threw
+   *       ReferenceError: Cannot access 'orderNo' before initialization
+   *   The error boundary then rendered "Something went wrong" for EVERY order,
+   *   including ones whose API call had succeeded. Moving the declaration above
+   *   its first use is the whole fix.
+   */
+  const orderNo = order?.booking_number || order?.booking_reference || bookingNumberStr || (bookingId ? String(bookingId) : '');
+
+  /**
+   * The canonical operational status for this order's TRIP.
+   *
+   * Trip is the single source of truth (§17): the status cards below read this,
+   * never `Booking.status`, `Enquiry.status` or `VehicleHire.status`. A booking
+   * with no trip has no operational status, and the cards fall back to the
+   * pre-existing booking fields instead of inventing one.
+   */
+  const tripStatus = workflow?.status || null;
+
+  const goto = useCallback(
+    (kind, extra = {}) => {
+      const enquiryId = order?.enquiry_id ?? null;
+      switch (kind) {
+        case 'enquiry':
+          // The EXISTING enquiry workspace — no second enquiry screen.
+          if (enquiryId) navigate(`/admin/enquiries/${enquiryId}`);
+          else if (order?.enquiry_reference) navigate(`/admin/enquiries/${order.enquiry_reference}`);
+          break;
+        case 'vehicle_hire':
+          // The vehicle PROCESS workspace. `/vehicle-hire` is the canonical
+          // Universal Vehicle Hire page for actually engaging a truck.
+          if (tripId) navigate(`/admin/trips/${tripId}/vehicle-hire`);
+          break;
+        case 'overview':
+          navigate(`/admin/bookings/${orderNo}`);
+          break;
+        case 'trip_tab':
+          // ── THE FIX ──────────────────────────────────────────────────────
+          // This used to navigate to `/admin/trips/:id?tab=loading`. The trip
+          // page never read `tab`, so every process rendered the identical
+          // overview — clicking "Loading" looked exactly like doing nothing.
+          //
+          // A process is now a ROUTE SEGMENT that selects its own workspace, so
+          // the tab is a real destination rather than a decoration. The legacy
+          // values the server still sends (`tracking`, `summary`) are mapped by
+          // `normalizeProcess` rather than 404-ing, so the existing stage policy
+          // keeps working untouched.
+          if (tripId) {
+            const process = normalizeProcess(
+              String(extra.tab || 'loading').toLowerCase().replace(/_/g, ''),
+            );
+            navigate(`/admin/trips/${tripId}/${process}`);
+          }
+          break;
+        case 'finance':
+          if (tripId) navigate(`/admin/trips/${tripId}/finance`);
+          else navigate('/admin/financials');
+          break;
+        default:
+          break;
+      }
+    },
+    [navigate, orderNo, tripId, order]
+  );
+
+  /** Handle a click on any rail node, the next action, or a status card. */
+  const handleStageSelect = useCallback(
+    (stage) => {
+      if (!stage) return;
+      if (stage.goto?.kind === 'next_action') {
+        // The next action leads into the workspace for the stage it belongs to.
+        const stageKey = stage.action?.stage;
+        goto(stageKey === 'VEHICLE_HIRED' ? 'vehicle_hire' : 'trip_tab', {
+          tab: String(stageKey || '').toLowerCase(),
+        });
+        return;
+      }
+      goto(stage.goto?.kind, stage.goto || {});
+    },
+    [goto]
+  );
 
   // Payment truth comes from the canonical financial API when it exists, and
   // only falls back to the booking row otherwise.
@@ -187,7 +308,6 @@ export default function AdminOrderMaster() {
     );
   }
 
-  const orderNo = order.booking_number || order.booking_reference || bookingNumber;
   const o = order;
 
   return (
@@ -269,7 +389,11 @@ export default function AdminOrderMaster() {
         </div>
 
         {/* ── Lifecycle ────────────────────────────────────────────────── */}
-        <OrderLifecycle resolved={resolved} />
+        <OrderLifecycle
+          resolved={resolved}
+          workflow={workflow?.stage || null}
+          onSelect={handleStageSelect}
+        />
 
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
           {/* ══ MAIN COLUMN ══════════════════════════════════════════════ */}
@@ -433,17 +557,17 @@ export default function AdminOrderMaster() {
                     Vehicle
                   </p>
                   <p className="mt-1.5 font-mono text-sm font-bold text-slate-800">
-                    {na(o.vehicle_number || o.truck_number_snapshot)}
+                    {na(trip?.vehicle?.vehicle_number || o.vehicle_number || o.truck_number_snapshot)}
                   </p>
-                  <p className="mt-1 text-xs text-slate-500">{na(o.vehicle_name)}</p>
-                  <p className="text-xs text-slate-500">Type: {na(o.vehicle_type)}</p>
+                  <p className="mt-1 text-xs text-slate-500">{na(trip?.vehicle?.vehicle_name || o.vehicle_name)}</p>
+                  <p className="text-xs text-slate-500">Type: {na(trip?.vehicle?.vehicle_type || o.vehicle_type)}</p>
                   <p className="mt-2 text-xs text-slate-600">
-                    Owner: {na(o.vehicle_owner_name || o.owner_name_snapshot || o.assigned_owner_name)}
+                    Owner: {na(trip?.transportOwner?.owner_name || o.vehicle_owner_name || o.owner_name_snapshot || o.assigned_owner_name)}
                   </p>
-                  {o.vehicle_owner_phone ? (
+                  {(trip?.transportOwner?.phone || o.vehicle_owner_phone) ? (
                     <p className="mt-1 flex items-center gap-1 text-xs text-slate-500">
                       <Phone className="h-3 w-3" aria-hidden="true" />
-                      {o.vehicle_owner_phone}
+                      {na(trip?.transportOwner?.phone || o.vehicle_owner_phone)}
                     </p>
                   ) : null}
                   <div className="mt-3">
@@ -456,14 +580,14 @@ export default function AdminOrderMaster() {
                     Driver
                   </p>
                   <p className="mt-1.5 text-sm font-bold text-slate-800">
-                    {na(o.driver_name_snapshot || o.driver_first_name)}
+                    {na(trip?.driver?.driver_name || o.driver_name_snapshot || o.driver_first_name)}
                   </p>
                   <p className="mt-1 flex items-center gap-1 text-xs text-slate-500">
                     <Phone className="h-3 w-3" aria-hidden="true" />
-                    {na(o.driver_phone)}
+                    {na(trip?.driver?.mobile || o.driver_phone)}
                   </p>
                   <p className="mt-1 text-xs text-slate-500">
-                    Assigned: {formatDateTime(o.driver_assigned_at)}
+                    Assigned: {formatDateTime(trip?.driver_assigned_at || o.driver_assigned_at)}
                   </p>
                   <div className="mt-3">
                     <ActionButton onClick={() => navigate('/admin/drivers')}>View Driver</ActionButton>
@@ -475,10 +599,10 @@ export default function AdminOrderMaster() {
                     Transport Partner
                   </p>
                   <p className="mt-1.5 text-sm font-bold text-slate-800">
-                    {na(o.partner_name || o.partner_owner_name)}
+                    {na(trip?.transportOwner?.owner_name || o.partner_name || o.partner_owner_name)}
                   </p>
                   <p className="mt-1 text-xs text-slate-500">
-                    {o.partner_id ? `Partner ID ${o.partner_id}` : 'No partner on this order'}
+                    {trip?.transportOwner?.owner_id ? `Partner ID ${trip.transportOwner.owner_id}` : (o.partner_id ? `Partner ID ${o.partner_id}` : 'No partner on this order')}
                   </p>
                   <div className="mt-3">
                     <ActionButton onClick={() => navigate('/admin/owners')}>View Owner</ActionButton>
@@ -487,39 +611,109 @@ export default function AdminOrderMaster() {
               </div>
             </SectionCard>
 
-            {/* Operational status */}
+            {/* ── OPERATIONAL STATUS ────────────────────────────────────────
+             * Each card is CLICKABLE and opens the workspace for its own stage —
+             * a VIEW or an action form, never a status write. The status each
+             * card shows is read from the CANONICAL trip workflow when one
+             * exists, so these cards can never contradict the rail above them.
+             * Without a trip the page falls back to the booking/delivery fields
+             * it already had, and the operational cards are not clickable at all
+             * because there is no trip to open.
+             */}
             <SectionCard title="Operational Status" icon={Settings2}>
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
                 <StatusCard
                   title="Vehicle Status"
                   icon={Truck}
-                  status={o.vehicle_id ? 'Hired' : 'Pending'}
-                  tone={o.vehicle_id ? 'success' : 'neutral'}
+                  status={
+                    tripStatus
+                      ? { PENDING: 'Waiting for Vehicle', ASSIGNED: 'Vehicle Assigned' }[tripStatus] || 'Hired'
+                      : o.vehicle_id ? 'Hired' : 'Pending'
+                  }
+                  tone={
+                    tripStatus
+                      ? tripStatus === 'ASSIGNED' ? 'info' : 'success'
+                      : o.vehicle_id ? 'success' : 'neutral'
+                  }
                   meta={[o.vehicle_number, formatDateTime(o.driver_assigned_at)]}
+                  onClick={tripId ? () => goto('vehicle_hire') : undefined}
+                  hrefLabel="vehicle hire"
                 />
                 <StatusCard
                   title="Loading Status"
-                  status={o.delivery_current_status === 'pickup_completed' ? 'Completed' : 'Pending'}
-                  tone={o.delivery_current_status === 'pickup_completed' ? 'success' : 'neutral'}
-                  meta={[place(o.pickup_location), formatDateTime(o.actual_pickup_time)]}
+                  status={
+                    tripStatus
+                      ? {
+                          TO_LOADING_POINT: 'Sent to Loading',
+                          AT_LOADING_POINT: 'Arrived',
+                          LOADED: 'Loaded',
+                        }[tripStatus] || (tripStatus === 'DISPATCHED' || tripStatus === 'IN_TRANSIT' || tripStatus === 'DELIVERED' || tripStatus === 'COMPLETED' ? 'Completed' : 'Pending')
+                      : o.delivery_current_status === 'pickup_completed' ? 'Completed' : 'Pending'
+                  }
+                  tone={
+                    tripStatus
+                      ? (tripStatus === 'LOADED' || ['DISPATCHED', 'IN_TRANSIT', 'DELIVERED', 'COMPLETED'].includes(tripStatus))
+                        ? 'success' : 'warning'
+                      : o.delivery_current_status === 'pickup_completed' ? 'success' : 'neutral'
+                  }
+                  meta={[place(o.pickup_location), formatDateTime(workflow?.loading?.loading_completed_at)]}
+                  onClick={tripId ? () => goto('trip_tab', { tab: 'loading' }) : undefined}
+                  hrefLabel="loading workspace"
                 />
                 <StatusCard
                   title="Dispatch Status"
-                  status={o.status === 'in_transit' ? 'Dispatched' : 'Pending'}
-                  tone={o.status === 'in_transit' ? 'success' : 'neutral'}
-                  meta={[formatDateTime(o.actual_pickup_time)]}
+                  status={
+                    tripStatus
+                      ? { DISPATCHED: 'Dispatched', IN_TRANSIT: 'Dispatched', DELIVERED: 'Dispatched', COMPLETED: 'Dispatched' }[tripStatus] || 'Pending'
+                      : o.status === 'in_transit' ? 'Dispatched' : 'Pending'
+                  }
+                  tone={
+                    tripStatus
+                      ? ['DISPATCHED', 'IN_TRANSIT', 'DELIVERED', 'COMPLETED'].includes(tripStatus) ? 'success' : 'neutral'
+                      : o.status === 'in_transit' ? 'success' : 'neutral'
+                  }
+                  meta={[formatDateTime(workflow?.loading?.dispatched_at)]}
+                  onClick={tripId ? () => goto('trip_tab', { tab: 'dispatch' }) : undefined}
+                  hrefLabel="dispatch workspace"
                 />
                 <StatusCard
                   title="Delivery Status"
-                  status={o.delivery_current_status === 'delivered' ? 'Delivered' : 'Pending'}
-                  tone={o.delivery_current_status === 'delivered' ? 'success' : 'neutral'}
-                  meta={[place(o.drop_location), formatDateTime(o.actual_delivery_time)]}
+                  status={
+                    tripStatus
+                      ? { IN_TRANSIT: 'In Transit', DELIVERED: 'Delivered', COMPLETED: 'Delivered' }[tripStatus] || 'Pending'
+                      : o.delivery_current_status === 'delivered' ? 'Delivered' : 'Pending'
+                  }
+                  tone={
+                    tripStatus
+                      ? ['DELIVERED', 'COMPLETED'].includes(tripStatus) ? 'success' : tripStatus === 'IN_TRANSIT' ? 'warning' : 'neutral'
+                      : o.delivery_current_status === 'delivered' ? 'success' : 'neutral'
+                  }
+                  meta={[place(o.drop_location), formatDateTime(workflow?.delivery?.arrived_at_destination_at)]}
+                  onClick={tripId ? () => goto('trip_tab', { tab: 'delivery' }) : undefined}
+                  hrefLabel="delivery workspace"
                 />
                 <StatusCard
                   title="POD Status"
-                  status={o.otp_verified ? 'Verified' : 'Pending'}
-                  tone={o.otp_verified ? 'success' : 'neutral'}
+                  // POD is a DOCUMENT state, deliberately separate from the trip
+                  // status — a trip can be IN_TRANSIT while POD is still
+                  // PENDING, and neither may be derived from the other.
+                  status={
+                    tripStatus
+                      ? (workflow?.stage?.pod_received
+                          ? 'Received'
+                          : workflow?.stage?.pod_required
+                            ? (tripStatus === 'COMPLETED' ? 'Not Required' : 'Pending')
+                            : 'Not Required')
+                      : o.otp_verified ? 'Verified' : 'Pending'
+                  }
+                  tone={
+                    tripStatus
+                      ? (workflow?.stage?.pod_received || !workflow?.stage?.pod_required) ? 'success' : 'warning'
+                      : o.otp_verified ? 'success' : 'neutral'
+                  }
                   meta={[o.recipient_name ? `Received by ${o.recipient_name}` : null]}
+                  onClick={tripId ? () => goto('trip_tab', { tab: 'pod' }) : undefined}
+                  hrefLabel="POD workspace"
                 />
                 <StatusCard
                   title="Payment Status"
@@ -527,6 +721,8 @@ export default function AdminOrderMaster() {
                   status={payment.label}
                   tone={payment.tone}
                   meta={[`Due ${inr(payment.due)}`]}
+                  onClick={() => goto('finance')}
+                  hrefLabel="trip finance"
                 />
               </div>
             </SectionCard>

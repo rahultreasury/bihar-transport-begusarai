@@ -11,6 +11,8 @@ const assert = require('node:assert/strict');
 const memory = {
   trips: [],
   auditLogs: [],
+  // Phase 4: status changes now append to the trip timeline.
+  timelines: [],
   nextTripId: 1,
   nextTripNumber: 1,
   // STEP 2B.1: track advisory-lock acquisitions.
@@ -113,6 +115,13 @@ function makePrismaMock() {
     },
     booking: { findUnique: async () => null },
     auditLog: { create: async ({ data }) => memory.auditLogs.push(data) },
+    // Phase 4: TripService.updateTripStatus now writes its status-change event
+    // to the append-only trip timeline inside the same transaction as the
+    // change, so the mock needs that table too. This is a mock-completeness
+    // fix only — no assertion in this file is touched.
+    tripTimeline: {
+      create: async ({ data }) => ({ timeline_id: memory.timelines.length + 1, ...data }),
+    },
     $transaction: async (fnOrArr) => {
       // Interactive transaction — execute the callback with a tx wrapper.
       if (typeof fnOrArr === 'function') {

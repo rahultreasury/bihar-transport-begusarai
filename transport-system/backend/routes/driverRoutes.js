@@ -7,6 +7,7 @@ const { validateTransition } = require('../utils/BookingStateMachine');
 const { flattenTripForDriver } = require('../utils/BookingMapper');
 const BookingTimelineRepository = require('../repositories/BookingTimelineRepository');
 const TripService = require('../services/TripService');
+const TripTrackingService = require('../services/TripTrackingService');
 const TripFinancialService = require('../services/TripFinancialService');
 const ResourceAvailabilityService = require('../services/ResourceAvailabilityService');
 
@@ -967,7 +968,17 @@ router.get('/me/trips/:id', protect, async (req, res) => {
 //          Driver identity is derived from the authenticated JWT.
 // @access  Private (Driver)
 router.patch('/me/trips/:id/status', protect, [
-  body('status').isIn(['PENDING', 'ASSIGNED', 'IN_TRANSIT', 'DELIVERED', 'COMPLETED', 'CANCELLED']).withMessage('Invalid status')
+  // Phase 5: the validator previously listed only the six pre-Phase-4 statuses,
+  // so a driver could not move their own trip through the operational chain at
+  // all. The full TripStatus set is now accepted HERE — but the transition
+  // itself is still validated server-side by TripService.updateTripStatus
+  // (via TripStateMachine), and ownership is still enforced below, so widening
+  // the validator does not widen what a driver may actually do.
+  body('status').isIn([
+    'PENDING', 'ASSIGNED',
+    'TO_LOADING_POINT', 'AT_LOADING_POINT', 'LOADED', 'DISPATCHED',
+    'IN_TRANSIT', 'DELIVERED', 'COMPLETED', 'CANCELLED',
+  ]).withMessage('Invalid status')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -1050,6 +1061,169 @@ router.patch('/me/trips/:id/status', protect, [
       success: false,
       message: 'Server error while updating trip status'
     });
+  }
+});
+
+// ===========================================================================
+// PHASE 5 — DRIVER MOVEMENT ON THEIR OWN TRIP
+// ===========================================================================
+//
+// Backend capability only: the repository has no Driver App to wire into, and
+// Phase 5 explicitly does not build one. These are the endpoints such an app
+// (or an existing one) calls.
+//
+// SECURITY: the driver identity is ALWAYS resolved from the authenticated JWT,
+// never from the body or the URL, and every route below refuses any trip that
+// is not assigned to that driver. A driver cannot touch another driver's trip,
+// and a driver cannot touch financial data at all — none of these routes reach
+// a financial service.
+
+const tripTrackingService = new TripTrackingService();
+
+/**
+ * Resolve the authenticated driver and prove the trip is theirs.
+ * @returns {Promise<{driverId:number, tripId:number}>}
+ */
+async function requireOwnTrip(req, res) {
+  const tripId = parseInt(req.params.id);
+  if (isNaN(tripId)) {
+    res.status(400).json({ success: false, message: 'Invalid trip ID' });
+    return null;
+  }
+
+  const driver = await prisma.driver.findFirst({
+    where: { user_id: req.user.user_id },
+    select: { driver_id: true },
+  });
+  if (!driver) {
+    res.status(403).json({ success: false, message: 'Driver profile not found' });
+    return null;
+  }
+
+  const trip = await prisma.trip.findUnique({
+    where: { trip_id: tripId },
+    select: { trip_id: true, driver_id: true },
+  });
+  if (!trip) {
+    res.status(404).json({ success: false, message: 'Trip not found' });
+    return null;
+  }
+  if (trip.driver_id !== driver.driver_id) {
+    res.status(403).json({ success: false, message: 'Access denied: This trip is not assigned to you' });
+    return null;
+  }
+
+  return { driverId: driver.driver_id, tripId };
+}
+
+function driverError(res, error, label) {
+  console.error(label, error);
+  if (error && error.name === 'ValidationError') {
+    return res.status(400).json({ success: false, message: error.message });
+  }
+  if (error && error.name === 'ForbiddenError') {
+    return res.status(403).json({ success: false, message: error.message });
+  }
+  if (error && error.name === 'NotFoundError') {
+    return res.status(404).json({ success: false, message: error.message });
+  }
+  return res.status(500).json({ success: false, message: (error && error.message) || 'Server error' });
+}
+
+/**
+ * POST /api/drivers/me/trips/:id/location
+ * Report the vehicle's current position.
+ */
+router.post('/me/trips/:id/location', protect, async (req, res) => {
+  const own = await requireOwnTrip(req, res);
+  if (!own) return;
+  try {
+    const trip = await tripTrackingService.updateLocation(
+      own.tripId,
+      { ...req.body, source: req.body.source || 'DRIVER_APP' },
+      { user_id: own.driverId, role: 'driver' }
+    );
+    res.json({
+      success: true,
+      message: 'Location recorded',
+      data: {
+        trip_id: trip.trip_id,
+        current_latitude: trip.current_latitude,
+        current_longitude: trip.current_longitude,
+        location_updated_at: trip.location_updated_at,
+        eta: trip.eta,
+        eta_reason: trip.eta_reason,
+      },
+    });
+  } catch (error) {
+    driverError(res, error, 'Driver location update error:');
+  }
+});
+
+/**
+ * POST /api/drivers/me/trips/:id/movement
+ * Report a movement milestone.
+ */
+router.post('/me/trips/:id/movement', protect, async (req, res) => {
+  const own = await requireOwnTrip(req, res);
+  if (!own) return;
+  try {
+    const result = await tripTrackingService.recordMovement(
+      own.tripId,
+      req.body.milestone,
+      req.body,
+      { user_id: own.driverId, role: 'driver' }
+    );
+    res.status(result.idempotent ? 200 : 201).json({
+      success: true,
+      message: result.idempotent ? 'Movement already recorded' : 'Movement recorded',
+      idempotent: result.idempotent,
+      data: result.event,
+    });
+  } catch (error) {
+    driverError(res, error, 'Driver movement error:');
+  }
+});
+
+/**
+ * POST /api/drivers/me/trips/:id/transit/start
+ * DISPATCHED → IN_TRANSIT on their own trip.
+ */
+router.post('/me/trips/:id/transit/start', protect, async (req, res) => {
+  const own = await requireOwnTrip(req, res);
+  if (!own) return;
+  try {
+    const result = await tripTrackingService.startTransit(
+      own.tripId,
+      req.body,
+      { user_id: own.driverId, role: 'driver' }
+    );
+    res.json({
+      success: true,
+      message: result.idempotent ? 'Trip is already in transit' : 'Trip started transit',
+      idempotent: result.idempotent,
+      data: result.trip,
+    });
+  } catch (error) {
+    driverError(res, error, 'Driver start transit error:');
+  }
+});
+
+/**
+ * GET /api/drivers/me/trips/:id/tracking
+ * The driver-facing view of their own trip.
+ */
+router.get('/me/trips/:id/tracking', protect, async (req, res) => {
+  const own = await requireOwnTrip(req, res);
+  if (!own) return;
+  try {
+    const tracking = await tripTrackingService.getTracking(
+      own.tripId,
+      { kind: 'driver', driverId: own.driverId, userId: req.user.user_id }
+    );
+    res.json({ success: true, data: tracking });
+  } catch (error) {
+    driverError(res, error, 'Driver tracking error:');
   }
 });
 

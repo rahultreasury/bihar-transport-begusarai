@@ -56,10 +56,13 @@ const AdminAnalytics = lazy(() => import('./pages/AdminAnalytics'));
 const AdminPartners = lazy(() => import('./pages/AdminPartners'));
 const AdminPartnerProfile = lazy(() => import('./pages/AdminPartnerProfile'));
 const AdminSettlements = lazy(() => import('./pages/AdminSettlements'));
-const AdminTrips = lazy(() => import('./pages/AdminTrips'));
-const AdminCreateTrip = lazy(() => import('./pages/AdminCreateTrip'));
 const AdminTripWorkspace = lazy(() => import('./pages/AdminTripWorkspace'));
 const AdminTripProcess = lazy(() => import('./pages/AdminTripProcess'));
+// The ONE Universal Vehicle Hire workspace (hire form + edit + challan).
+const AdminVehicleHire = lazy(() => import('./pages/AdminVehicleHire'));
+const AdminVehicleHireList = lazy(() => import('./pages/AdminVehicleHireList'));
+// Trip Finance workspace (separate from operational processes)
+const AdminTripFinance = lazy(() => import('./pages/AdminTripFinance'));
 const AdminFinancials = lazy(() => import('./pages/AdminFinancials'));
 const AdminClients = lazy(() => import('./pages/AdminClients'));
 const AdminClientDetail = lazy(() => import('./pages/AdminClientDetail'));
@@ -395,26 +398,63 @@ function AppContent() {
           }
         />
         <Route
-          path="/admin/trips"
-          element={
-            <ProtectedRoute>
-              <Suspense fallback={<PageLoader label="Loading Trips..." />}><AdminTrips /></Suspense>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin/trips/create"
-          element={
-            <ProtectedRoute>
-              <Suspense fallback={<PageLoader label="Loading Create Trip..." />}><AdminCreateTrip /></Suspense>
-            </ProtectedRoute>
-          }
-        />
-        <Route
           path="/admin/trips/:tripId"
           element={
             <ProtectedRoute>
               <Suspense fallback={<PageLoader label="Loading Trip Workspace..." />}><AdminTripWorkspace /></Suspense>
+            </ProtectedRoute>
+          }
+        />
+        {/*
+            THE UNIVERSAL VEHICLE HIRE WORKSPACE.
+
+            This is the ONE Vehicle Hire implementation — the same module the
+            Enquiry stage reserves through and the Vehicle Hire list edits. It
+            was fully built (hire form, billing model, rate-as-per, commission,
+            gross/net money, challan) but never registered here, so it was
+            unreachable and `/admin/trips/:tripId/vehicle` could only ever render
+            the read-only stage summary.
+
+            Declared BEFORE `/admin/trips/:tripId/:process` deliberately. React
+            Router matches in declaration order and `:process` would happily
+            swallow `vehicle-hire`, which would loop the form back into its own
+            summary page. `vehicle-hire` is deliberately NOT the process key —
+            that stays `vehicle`.
+        */}
+        <Route
+          path="/admin/trips/:tripId/vehicle-hire"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading Vehicle Hire..." />}><AdminVehicleHire /></Suspense>
+            </ProtectedRoute>
+          }
+        />
+        {/* Backward-compatible redirect: old /vehicle route → canonical /vehicle-hire */}
+        <Route
+          path="/admin/trips/:tripId/vehicle"
+          element={
+            <ProtectedRoute>
+              <Navigate to="/admin/trips/:tripId/vehicle-hire" replace />
+            </ProtectedRoute>
+          }
+        />
+        {/* Vehicle Hire — global list page (not trip-specific) */}
+        <Route
+          path="/admin/vehicle-hire"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading Vehicle Hire..." />}>
+                <AdminVehicleHireList />
+              </Suspense>
+            </ProtectedRoute>
+          }
+        />
+        {/* Trip Finance workspace — separate from operational processes */}
+        <Route
+          path="/admin/trips/:tripId/finance"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading Trip Finance..." />}><AdminTripFinance /></Suspense>
             </ProtectedRoute>
           }
         />
@@ -435,6 +475,14 @@ function AppContent() {
           element={
             <ProtectedRoute>
               <Suspense fallback={<PageLoader label="Loading Trip Process..." />}><AdminTripProcess /></Suspense>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/financials/:section"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading Financials..." />}><AdminFinancials /></Suspense>
             </ProtectedRoute>
           }
         />

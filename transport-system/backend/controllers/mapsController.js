@@ -1,61 +1,12 @@
-const axios = require('axios');
 const { getVehiclePricing } = require('../services/vehiclePricing');
-
-const GOOGLE_API_BASE = 'https://maps.googleapis.com/maps/api';
-
-const formatDuration = (durationSeconds) => {
-  const totalMinutes = Math.round(durationSeconds / 60);
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  return `${hours} hours ${minutes} mins`;
-};
-
-const isValidLatLng = (lat, lng) => {
-  return (
-    typeof lat === 'number' &&
-    typeof lng === 'number' &&
-    Number.isFinite(lat) &&
-    Number.isFinite(lng) &&
-    Math.abs(lat) <= 90 &&
-    Math.abs(lng) <= 180
-  );
-};
-
-const calculateDistanceMatrix = async ({ pickup, drop, apiKey }) => {
-  const url = `${GOOGLE_API_BASE}/distancematrix/json`;
-
-  const response = await axios.get(url, {
-    params: {
-      origins: `${pickup.lat},${pickup.lng}`,
-      destinations: `${drop.lat},${drop.lng}`,
-      mode: 'driving',
-      units: 'metric',
-      key: apiKey,
-    },
-    timeout: 15000,
-  });
-
-  const data = response.data;
-
-  if (data.status !== 'OK') {
-    throw new Error(`Google Distance Matrix status: ${data.status}`);
-  }
-
-  const element = data.rows?.[0]?.elements?.[0];
-  const elementStatus = element?.status;
-
-  if (elementStatus !== 'OK') {
-    throw new Error(`Google Distance Matrix element status: ${elementStatus}`);
-  }
-
-  const distanceMeters = element.distance.value;
-  const durationSeconds = element.duration.value;
-
-  const distanceKm = Math.round(distanceMeters / 1000);
-  const duration = formatDuration(durationSeconds);
-
-  return { distanceKm, duration };
-};
+// Phase 5: the Google Maps integration was moved, unchanged, into
+// services/distanceMatrix.js so pricing and trip ETA share ONE provider, one
+// API key and one error shape instead of two. Behaviour of this controller is
+// unchanged.
+const {
+  isValidLatLng,
+  calculateDistanceMatrix,
+} = require('../services/distanceMatrix');
 
 const calculatePriceHandler = async (req, res) => {
   try {

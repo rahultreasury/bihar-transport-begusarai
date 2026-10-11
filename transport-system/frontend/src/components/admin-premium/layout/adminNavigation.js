@@ -27,7 +27,6 @@ import {
   BarChart3,
   FileText,
   Sparkles,
-  Route,
   Inbox,
   Wallet,
 } from 'lucide-react';
@@ -42,9 +41,9 @@ export const DEFAULT_NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/admin' },
   { key: 'enquiries', label: 'ENQUIRY', icon: Inbox, path: '/admin/enquiries' },
   { key: 'intake-enquiries', label: 'Enquiry Intake', icon: Inbox, path: '/admin/intake-enquiries' },
+  { key: 'vehicle-hire', label: 'Vehicle Hire', icon: Truck, path: '/admin/vehicle-hire' },
   { key: 'financials', label: 'Financials', icon: BarChart3, path: '/admin/financials' },
   { key: 'bookings', label: 'Bookings', icon: Package, path: '/admin/bookings' },
-  { key: 'trips', label: 'Trips', icon: Route, path: '/admin/trips' },
   { key: 'clients', label: 'Clients', icon: Users, path: '/admin/clients' },
   { key: 'owners', label: 'Transport Owners', icon: Truck, path: '/admin/owners' },
   { key: 'vehicles', label: 'Vehicles', icon: Car, path: '/admin/vehicles' },
@@ -68,7 +67,6 @@ const KEY_PATH_FALLBACK = {
   dashboard: '/admin',
   financials: '/admin/financials',
   bookings: '/admin/bookings',
-  trips: '/admin/trips',
   clients: '/admin/clients',
   drivers: '/admin/drivers',
   vehicles: '/admin/vehicles',
@@ -80,6 +78,7 @@ const KEY_PATH_FALLBACK = {
   reports: '/admin/reports',
   ai: '/admin/ai',
   settings: '/admin/settings',
+  'vehicle-hire': '/admin/vehicle-hire',
 };
 
 /**
@@ -107,7 +106,7 @@ export function buildNavGroups(items = DEFAULT_NAV_ITEMS) {
   const take = (...keys) => keys.map((k) => byKey.get(k)).filter(Boolean);
 
   const groups = [
-    { title: 'Operations', items: take('dashboard', 'enquiries', 'intake-enquiries', 'bookings', 'trips') },
+    { title: 'Operations', items: take('dashboard', 'enquiries', 'intake-enquiries', 'vehicle-hire', 'financials', 'bookings') },
     { title: 'Network', items: take('clients', 'owners', 'vehicles', 'drivers', 'vehicle-owners') },
     { title: 'Finance', items: take('financials', 'settlements') },
     { title: 'Insights', items: take('analytics', 'reports', 'ai') },

@@ -285,12 +285,6 @@ export default function AdminVehicleOwnerProfile() {
               >
                 + Add Driver
               </button>
-              <button
-                onClick={() => navigate('/admin/trips/create?owner_id=' + id)}
-                className="px-3 py-2 text-sm font-medium border border-border rounded-xl hover:bg-hover/60 transition"
-              >
-                + Create Trip
-              </button>
             </div>
           </div>
         </div>
@@ -674,12 +668,6 @@ export default function AdminVehicleOwnerProfile() {
           <div className="bg-card rounded-2xl border border-border p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-text">Trip History</h3>
-              <button
-                onClick={() => navigate('/admin/trips/create?owner_id=' + id)}
-                className="px-3 py-1.5 text-sm font-medium bg-amber-500 text-white rounded-xl hover:bg-amber-600 transition"
-              >
-                + Create Trip
-              </button>
             </div>
             {tripsLoading ? (
               <div className="flex items-center justify-center py-8">
@@ -725,12 +713,6 @@ export default function AdminVehicleOwnerProfile() {
               <div className="text-center py-12">
                 <div className="text-4xl mb-3">🗺️</div>
                 <p className="text-muted mb-4">No trips created for this owner yet.</p>
-                <button
-                  onClick={() => navigate('/admin/trips/create?owner_id=' + id)}
-                  className="px-4 py-2 bg-amber-500 text-white rounded-xl hover:bg-amber-600 transition"
-                >
-                  + Create First Trip
-                </button>
               </div>
             )}
           </div>
@@ -764,9 +746,15 @@ export default function AdminVehicleOwnerProfile() {
                     );
                   }},
                   { key: 'final_price', label: 'Amount', render: (b) => b.final_price ? `₹${Number(b.final_price).toLocaleString('en-IN')}` : '—' },
+                  /* Same defect as the enquiry workspace's "Open booking" link:
+                     this route is /admin/bookings/:bookingNumber and resolves via
+                     GET /api/admin/bookings/by-number/:n, whose lookup matches
+                     only booking_number / booking_reference. Passing the numeric
+                     booking_id produced the identical 404. The number is already
+                     rendered in the "Booking #" column of this very table. */
                   { key: 'actions', label: '', render: (b) => (
                     <button
-                      onClick={() => navigate(`/admin/bookings/${b.booking_id}`)}
+                      onClick={() => navigate(`/admin/bookings/${b.booking_number || b.booking_reference}`)}
                       className="text-xs text-amber-600 hover:text-amber-700 font-medium"
                     >
                       View

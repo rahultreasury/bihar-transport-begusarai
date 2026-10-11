@@ -22,6 +22,7 @@ const TripDocumentService = require('../services/TripDocumentService');
 // not exactly what is missing?" — needs checks the operational service has no
 // vocabulary for.
 const TripDispatchService = require('../services/TripDispatchService');
+const TripDeliveryService = require('../services/TripDeliveryService');
 const { ValidationError, NotFoundError, ConflictError, ForbiddenError } = require('../utils/AppError');
 
 const tripService = new TripService();
@@ -31,6 +32,8 @@ const operationalService = new TripOperationalService();
 const documentService = new TripDocumentService();
 // Phase 9 — dispatch readiness, the dispatch act, and the paperwork around it.
 const dispatchWorkspaceService = new TripDispatchService();
+// Phase 6 — delivery, POD, and completion.
+const deliveryService = new TripDeliveryService();
 
 /**
  * Shared error shape for the Phase 4 operational + document endpoints, so a
@@ -112,24 +115,6 @@ router.get('/summary', protect, async (req, res) => {
 });
 
 /**
- * GET /api/trips/top-clients
- * Get top clients by trip count and freight.
- */
-router.get('/top-clients', protect, async (req, res) => {
-  try {
-    const limit = parseInt(req.query.limit) || 5;
-    const topClients = await tripService.getTopClients(limit);
-    res.json({
-      success: true,
-      data: topClients,
-    });
-  } catch (error) {
-    console.error('Get top clients error:', error);
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
-  }
-});
-
-/**
  * GET /api/trips/:id
  * Get trip by ID.
  */
@@ -149,85 +134,6 @@ router.get('/:id', protect, async (req, res) => {
     console.error('Get trip error:', error);
     if (error instanceof NotFoundError) {
       return res.status(404).json({ success: false, message: error.message });
-    }
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
-  }
-});
-
-/**
- * POST /api/trips
- * Create a new trip (Admin only).
- */
-router.post('/', protect, adminOnly, async (req, res) => {
-  try {
-    const trip = await tripService.createTrip(req.body, req.user);
-    res.status(201).json({
-      success: true,
-      message: 'Trip created successfully',
-      data: trip,
-    });
-  } catch (error) {
-    console.error('Create trip error:', error);
-    if (error instanceof ValidationError) {
-      return res.status(400).json({ success: false, message: error.message });
-    }
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
-  }
-});
-
-/**
- * PUT /api/trips/:id
- * Update a trip (Admin only).
- */
-router.put('/:id', protect, adminOnly, async (req, res) => {
-  try {
-    const tripId = parseInt(req.params.id);
-    if (isNaN(tripId)) {
-      return res.status(400).json({ success: false, message: 'Invalid trip ID' });
-    }
-
-    const trip = await tripService.updateTrip(tripId, req.body, req.user);
-    res.json({
-      success: true,
-      message: 'Trip updated successfully',
-      data: trip,
-    });
-  } catch (error) {
-    console.error('Update trip error:', error);
-    if (error instanceof ValidationError) {
-      return res.status(400).json({ success: false, message: error.message });
-    }
-    if (error instanceof NotFoundError) {
-      return res.status(404).json({ success: false, message: error.message });
-    }
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
-  }
-});
-
-/**
- * DELETE /api/trips/:id
- * Delete a trip (Admin only).
- */
-router.delete('/:id', protect, adminOnly, async (req, res) => {
-  try {
-    const tripId = parseInt(req.params.id);
-    if (isNaN(tripId)) {
-      return res.status(400).json({ success: false, message: 'Invalid trip ID' });
-    }
-
-    const trip = await tripService.deleteTrip(tripId, req.user);
-    res.json({
-      success: true,
-      message: 'Trip deleted successfully',
-      data: trip,
-    });
-  } catch (error) {
-    console.error('Delete trip error:', error);
-    if (error instanceof NotFoundError) {
-      return res.status(404).json({ success: false, message: error.message });
-    }
-    if (error instanceof ConflictError) {
-      return res.status(409).json({ success: false, message: error.message });
     }
     res.status(500).json({ success: false, message: error.message || 'Server error' });
   }
@@ -270,119 +176,6 @@ router.patch('/:id/status', protect, adminOnly, async (req, res) => {
 // ============================
 // TRIP EXPENSES
 // ============================
-
-/**
- * GET /api/trips/:id/expenses
- * Get all expenses for a trip.
- */
-router.get('/:id/expenses', protect, async (req, res) => {
-  try {
-    const tripId = parseInt(req.params.id);
-    if (isNaN(tripId)) {
-      return res.status(400).json({ success: false, message: 'Invalid trip ID' });
-    }
-
-    const expenses = await tripService.getTripExpenses(tripId);
-    res.json({
-      success: true,
-      data: expenses,
-    });
-  } catch (error) {
-    console.error('Get trip expenses error:', error);
-    if (error instanceof NotFoundError) {
-      return res.status(404).json({ success: false, message: error.message });
-    }
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
-  }
-});
-
-/**
- * POST /api/trips/:id/expenses
- * Add expense to a trip (Admin only).
- */
-router.post('/:id/expenses', protect, adminOnly, async (req, res) => {
-  try {
-    const tripId = parseInt(req.params.id);
-    if (isNaN(tripId)) {
-      return res.status(400).json({ success: false, message: 'Invalid trip ID' });
-    }
-
-    const expense = await tripService.addExpense(tripId, req.body, req.user);
-    res.status(201).json({
-      success: true,
-      message: 'Expense added successfully',
-      data: expense,
-    });
-  } catch (error) {
-    console.error('Add expense error:', error);
-    if (error instanceof ValidationError) {
-      return res.status(400).json({ success: false, message: error.message });
-    }
-    if (error instanceof NotFoundError) {
-      return res.status(404).json({ success: false, message: error.message });
-    }
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
-  }
-});
-
-/**
- * PUT /api/trips/:id/expenses/:expenseId
- * Update trip expense (Admin only).
- */
-router.put('/:id/expenses/:expenseId', protect, adminOnly, async (req, res) => {
-  try {
-    const tripId = parseInt(req.params.id);
-    const expenseId = parseInt(req.params.expenseId);
-
-    if (isNaN(tripId) || isNaN(expenseId)) {
-      return res.status(400).json({ success: false, message: 'Invalid trip ID or expense ID' });
-    }
-
-    const expense = await tripService.updateExpense(tripId, expenseId, req.body, req.user);
-    res.json({
-      success: true,
-      message: 'Expense updated successfully',
-      data: expense,
-    });
-  } catch (error) {
-    console.error('Update expense error:', error);
-    if (error instanceof ValidationError) {
-      return res.status(400).json({ success: false, message: error.message });
-    }
-    if (error instanceof NotFoundError) {
-      return res.status(404).json({ success: false, message: error.message });
-    }
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
-  }
-});
-
-/**
- * DELETE /api/trips/:id/expenses/:expenseId
- * Delete trip expense (Admin only).
- */
-router.delete('/:id/expenses/:expenseId', protect, adminOnly, async (req, res) => {
-  try {
-    const tripId = parseInt(req.params.id);
-    const expenseId = parseInt(req.params.expenseId);
-
-    if (isNaN(tripId) || isNaN(expenseId)) {
-      return res.status(400).json({ success: false, message: 'Invalid trip ID or expense ID' });
-    }
-
-    const expense = await tripService.deleteExpense(tripId, expenseId, req.user);
-    res.json({
-      success: true,
-      message: 'Expense deleted successfully',
-      data: expense,
-    });
-  } catch (error) {
-    console.error('Delete expense error:', error);
-    if (error instanceof NotFoundError) {
-      return res.status(404).json({ success: false, message: error.message });
-    }
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
-  }
-});
 
 // ============================
 // TRIP PAYMENTS
@@ -539,82 +332,6 @@ router.get('/owner/:ownerId', protect, async (req, res) => {
 });
 
 // ============================
-// LOOKUP DATA
-// ============================
-
-/**
- * GET /api/trips/lookup/clients
- * Get available clients for dropdown.
- */
-router.get('/lookup/clients', protect, async (req, res) => {
-  try {
-    const search = req.query.search || '';
-    const clients = await tripService.getAvailableClients(search);
-    res.json({
-      success: true,
-      data: clients,
-    });
-  } catch (error) {
-    console.error('Get clients error:', error);
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
-  }
-});
-
-/**
- * GET /api/trips/lookup/drivers
- * Get available drivers for dropdown.
- */
-router.get('/lookup/drivers', protect, async (req, res) => {
-  try {
-    const search = req.query.search || '';
-    const drivers = await tripService.getAvailableDrivers(search);
-    res.json({
-      success: true,
-      data: drivers,
-    });
-  } catch (error) {
-    console.error('Get drivers error:', error);
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
-  }
-});
-
-/**
- * GET /api/trips/lookup/vehicles
- * Get available vehicles for dropdown.
- */
-router.get('/lookup/vehicles', protect, async (req, res) => {
-  try {
-    const search = req.query.search || '';
-    const vehicles = await tripService.getAvailableVehicles(search);
-    res.json({
-      success: true,
-      data: vehicles,
-    });
-  } catch (error) {
-    console.error('Get vehicles error:', error);
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
-  }
-});
-
-/**
- * GET /api/trips/lookup/owners
- * Get available transport owners for dropdown.
- */
-router.get('/lookup/owners', protect, async (req, res) => {
-  try {
-    const search = req.query.search || '';
-    const owners = await tripService.getAvailableOwners(search);
-    res.json({
-      success: true,
-      data: owners,
-    });
-  } catch (error) {
-    console.error('Get owners error:', error);
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
-  }
-});
-
-// ============================
 // TRIP TIMELINE
 // ============================
 
@@ -662,123 +379,6 @@ router.get('/:id/financial-summary', protect, async (req, res) => {
     });
   } catch (error) {
     console.error('Get trip financials error:', error);
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
-  }
-});
-
-// ============================
-// LOOKUP - CLIENTS WITH STATS
-// ============================
-
-/**
- * GET /api/trips/lookup/clients-with-stats
- * Get clients with outstanding amounts and trip counts.
- */
-router.get('/lookup/clients-with-stats', protect, async (req, res) => {
-  try {
-    const clients = await tripService.getClientsWithStats();
-    res.json({
-      success: true,
-      data: clients,
-    });
-  } catch (error) {
-    console.error('Get clients with stats error:', error);
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
-  }
-});
-
-/**
- * GET /api/trips/lookup/offline-clients
- * Get offline clients (business accounts) for trip creation.
- * Searchable lookup with trip count and outstanding stats.
- */
-router.get('/lookup/offline-clients', protect, async (req, res) => {
-  try {
-    const search = req.query.search || '';
-    const clients = await tripService.getOfflineClients(search);
-    res.json({
-      success: true,
-      data: clients,
-    });
-  } catch (error) {
-    console.error('Get offline clients error:', error);
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
-  }
-});
-
-/**
- * GET /api/trips/lookup/vehicles-by-owner/:ownerId
- * Get vehicles belonging to a specific transport owner.
- */
-router.get('/lookup/vehicles-by-owner/:ownerId', protect, async (req, res) => {
-  try {
-    const ownerId = parseInt(req.params.ownerId);
-    if (isNaN(ownerId)) {
-      return res.status(400).json({ success: false, message: 'Invalid owner ID' });
-    }
-
-    const vehicles = await tripService.getVehiclesByOwner(ownerId);
-    res.json({
-      success: true,
-      data: vehicles,
-    });
-  } catch (error) {
-    console.error('Get vehicles by owner error:', error);
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
-  }
-});
-
-/**
- * GET /api/trips/lookup/drivers-by-owner/:ownerId
- * Get drivers belonging to a specific transport owner.
- * Used for trip creation wizard to ensure owner-vehicle-driver consistency.
- */
-router.get('/lookup/drivers-by-owner/:ownerId', protect, async (req, res) => {
-  try {
-    const ownerId = parseInt(req.params.ownerId);
-    if (isNaN(ownerId)) {
-      return res.status(400).json({ success: false, message: 'Invalid owner ID' });
-    }
-
-    const search = req.query.search || '';
-    const drivers = await tripService.getDriversByOwner(ownerId, search);
-    res.json({
-      success: true,
-      data: drivers,
-    });
-  } catch (error) {
-    console.error('Get drivers by owner error:', error);
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
-  }
-});
-
-/**
- * GET /api/trips/lookup/owner-by-partner/:partnerId
- * Resolve the VehicleOwner linked to a Partner (via VehicleOwner.partner_link).
- * Used by the Admin trip-creation wizard to select a Partner and then load
- * that Partner's linked transport owner, vehicles, and drivers.
- */
-router.get('/lookup/owner-by-partner/:partnerId', protect, async (req, res) => {
-  try {
-    const partnerId = parseInt(req.params.partnerId);
-    if (isNaN(partnerId)) {
-      return res.status(400).json({ success: false, message: 'Invalid partner ID' });
-    }
-
-    const owner = await tripService.getOwnerByPartnerId(partnerId);
-    if (!owner) {
-      return res.status(404).json({
-        success: false,
-        message: 'No transport owner is linked to this partner',
-      });
-    }
-
-    res.json({
-      success: true,
-      data: owner,
-    });
-  } catch (error) {
-    console.error('Get owner by partner error:', error);
     res.status(500).json({ success: false, message: error.message || 'Server error' });
   }
 });
@@ -845,6 +445,27 @@ router.post('/:id/loading/send', protect, adminOnly, async (req, res) => {
     });
   } catch (error) {
     sendOperationalError(res, error, 'Send to loading point error:');
+  }
+});
+
+/**
+ * POST /api/trips/:id/cancel
+ * Cancel a trip. Terminal. The reason is preserved in the
+ * append-only timeline event metadata — the audit trail for WHY.
+ */
+router.post('/:id/cancel', protect, adminOnly, async (req, res) => {
+  const tripId = readTripId(req, res);
+  if (tripId === null) return;
+  try {
+    const result = await operationalService.cancelTrip(tripId, req.body, req.user);
+    res.json({
+      success: true,
+      message: result.idempotent ? 'Trip is already cancelled' : 'Trip cancelled',
+      idempotent: result.idempotent,
+      data: result.trip,
+    });
+  } catch (error) {
+    sendOperationalError(res, error, 'Cancel trip error:');
   }
 });
 
@@ -1074,6 +695,135 @@ router.delete('/:id/documents/:documentId', protect, adminOnly, async (req, res)
     res.json({ success: true, message: 'Document removed', data: result });
   } catch (error) {
     sendOperationalError(res, error, 'Delete trip document error:');
+  }
+});
+
+// ===========================================================================
+// POD (Proof of Delivery)
+// ===========================================================================
+
+/**
+ * POST /api/trips/:id/pod
+ * Supply the proof of delivery document.
+ */
+router.post('/:id/pod', protect, adminOnly, async (req, res) => {
+  const tripId = readTripId(req, res);
+  if (tripId === null) return;
+  try {
+    const result = await deliveryService.submitPod(tripId, req.body, req.user);
+    res.status(result.already_recorded ? 200 : 201).json({
+      success: true,
+      message: result.already_recorded ? 'POD already recorded with these details' : 'Proof of delivery supplied',
+      data: result,
+    });
+  } catch (error) {
+    sendOperationalError(res, error, 'Submit POD error:');
+  }
+});
+
+/**
+ * POST /api/trips/:id/pod/:documentId/verify
+ * Verify the supplied POD document.
+ */
+router.post('/:id/pod/:documentId/verify', protect, adminOnly, async (req, res) => {
+  const tripId = readTripId(req, res);
+  if (tripId === null) return;
+  try {
+    const documentId = parseInt(req.params.documentId, 10);
+    if (Number.isNaN(documentId) || documentId <= 0) {
+      return res.status(400).json({ success: false, message: 'Invalid document ID' });
+    }
+    const result = await deliveryService.verifyPod(tripId, documentId, req.user);
+    res.json({
+      success: true,
+      message: result.idempotent ? 'POD already verified' : 'Proof of delivery verified',
+      data: result,
+    });
+  } catch (error) {
+    sendOperationalError(res, error, 'Verify POD error:');
+  }
+});
+
+/**
+ * POST /api/trips/:id/delivered
+ * Mark the trip as delivered.
+ */
+router.post('/:id/delivered', protect, adminOnly, async (req, res) => {
+  const tripId = readTripId(req, res);
+  if (tripId === null) return;
+  try {
+    const result = await deliveryService.markDelivered(tripId, req.body, req.user);
+    res.json({
+      success: true,
+      message: result.idempotent ? 'Trip already delivered' : 'Trip marked as delivered',
+      data: result,
+    });
+  } catch (error) {
+    sendOperationalError(res, error, 'Mark delivered error:');
+  }
+});
+
+/**
+ * POST /api/trips/:id/complete
+ * Complete the trip (operational closure).
+ */
+router.post('/:id/complete', protect, adminOnly, async (req, res) => {
+  const tripId = readTripId(req, res);
+  if (tripId === null) return;
+  try {
+    const result = await deliveryService.completeTrip(tripId, req.body, req.user);
+    res.json({
+      success: true,
+      message: result.idempotent ? 'Trip already completed' : 'Trip completed',
+      data: result,
+    });
+  } catch (error) {
+    sendOperationalError(res, error, 'Complete trip error:');
+  }
+});
+
+/**
+ * GET /api/trips/:id/delivery/readiness
+ * Check if the trip is ready for delivery.
+ */
+router.get('/:id/delivery/readiness', protect, adminOnly, async (req, res) => {
+  const tripId = readTripId(req, res);
+  if (tripId === null) return;
+  try {
+    const readiness = await deliveryService.getDeliveryReadiness(tripId);
+    res.json({ success: true, data: readiness });
+  } catch (error) {
+    sendOperationalError(res, error, 'Get delivery readiness error:');
+  }
+});
+
+/**
+ * GET /api/trips/:id/completion/readiness
+ * Check if the trip is ready for completion.
+ */
+router.get('/:id/completion/readiness', protect, adminOnly, async (req, res) => {
+  const tripId = readTripId(req, res);
+  if (tripId === null) return;
+  try {
+    const readiness = await deliveryService.getCompletionReadiness(tripId);
+    res.json({ success: true, data: readiness });
+  } catch (error) {
+    sendOperationalError(res, error, 'Get completion readiness error:');
+  }
+});
+
+/**
+ * GET /api/trips/:id/delivery
+ * Get delivery details including POD status.
+ */
+router.get('/:id/delivery', protect, adminOnly, async (req, res) => {
+  const tripId = readTripId(req, res);
+  if (tripId === null) return;
+  try {
+    const delivery = await deliveryService.getDelivery(tripId, req.user);
+    res.json({ success: true, data: delivery });
+  } catch (error) {
+    sendOperationalError(res, error, 'Get delivery error:');
   }
 });
 

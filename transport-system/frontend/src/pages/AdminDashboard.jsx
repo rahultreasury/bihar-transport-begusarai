@@ -159,7 +159,7 @@ function AdminDashboard() {
       sub: 'Currently running',
       accent: 'emerald',
       icon: Route,
-      onClick: () => navigate('/admin/trips?status=IN_TRANSIT'),
+      onClick: () => navigate('/admin/bookings?status=IN_TRANSIT'),
       loading: loading || !tripSummary,
       error: errors.tripSummary,
     },
@@ -169,7 +169,7 @@ function AdminDashboard() {
       sub: 'Needs attention',
       accent: 'amber',
       icon: AlertTriangle,
-      onClick: () => navigate('/admin/trips?status=PENDING'),
+      onClick: () => navigate('/admin/bookings?status=PENDING'),
       loading: loading || !tripSummary,
       error: errors.tripSummary,
     },
@@ -357,13 +357,16 @@ function AdminDashboard() {
   const navItems = useMemo(
     () => [
       { key: 'dashboard', label: 'Dashboard', icon: '▦', path: '/admin' },
-      // ENQUIRY — the operational quote queue over real Bookings. Sits above
-      // Bookings because an unanswered request is what needs attention first.
-      // The `enquiries` key is what makes AdminSidebar render the live
-      // pending-enquiry badge.
+      // OPERATIONAL FLOW, top to bottom:
+      //   ENQUIRY → VEHICLE HIRE → BOOKINGS → TRIPS
+      // An unanswered request is captured first; the vehicle is then hired; the
+      // order is confirmed; the trip runs. The `enquiries` key is what makes
+      // AdminSidebar render the live pending-enquiry badge, so it stays on the
+      // Enquiry Intake entry and /admin/enquiries is untouched.
       { key: 'enquiries', label: 'ENQUIRY', icon: '◉', path: '/admin/enquiries' },
+      { key: 'intake-enquiries', label: 'Enquiry Intake', icon: '◉', path: '/admin/intake-enquiries' },
+      { key: 'vehicle-hire', label: 'VEHICLE HIRE', icon: '▤', path: '/admin/vehicle-hire' },
       { key: 'bookings', label: 'Bookings', icon: '⟐', path: '/admin/bookings' },
-      { key: 'trips', label: 'Trips', icon: '🚛', path: '/admin/trips' },
       { key: 'clients', label: 'Clients', icon: '☍', path: '/admin/clients' },
       { key: 'owners', label: 'Transport Owners', icon: '⧉', path: '/admin/owners' },
       { key: 'vehicles', label: 'Vehicles', icon: '🚛', path: '/admin/vehicles' },
@@ -465,7 +468,7 @@ function AdminDashboard() {
             icon={AlertTriangle}
             subtitle="Trips currently stalled and waiting on an operator."
             action={
-              <Button variant="ghost" size="sm" onClick={() => navigate('/admin/trips')}>
+              <Button variant="ghost" size="sm" onClick={() => navigate('/admin/bookings')}>
                 View all
               </Button>
             }

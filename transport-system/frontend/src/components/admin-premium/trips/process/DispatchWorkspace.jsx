@@ -24,8 +24,7 @@
  *
  * THE THREE THINGS THIS PAGE REFUSES TO DO (§41)
  *   • Pretend the government e-way bill was updated. The e-way bill section
- *     shows the internal record and, separately, the government confirmation,
- *     which reads NOT_CONNECTED — because no government API exists here.
+ *     shows the internal record only — no government API exists here.
  *   • Pretend this is a government e-invoice. The billing section says
  *     "Internal customer invoice" in as many words.
  *   • Mark a customer bill paid because a truck left. Billing is its own
@@ -485,16 +484,11 @@ export default function DispatchWorkspace({
         </div>
       </Section>
 
-      {/* ══ H. E-WAY BILL ══════════════════════════════════════════════════ */}
-      <Section title="E-Way Bill" subtitle="Internal record and government confirmation, kept separate">
-        <Notice tone="warn" title="Government E-Way Bill API not connected">
-          {eway?.integration_notice}
-          {' Recording a number here records what our office holds. It does not notify the government portal.'}
-        </Notice>
+      {/* ══ H. E-WAY BILL ═══════════════════════════════════════════════════ */}
+      <Section title="E-WAY BILL">
 
         <div className="mt-3 grid gap-4 lg:grid-cols-2">
           <div className="rounded-lg border border-border p-3">
-            <p className="text-[10.5px] font-bold uppercase tracking-[0.14em] text-muted">Internal Record</p>
             <Facts
               columns={2}
               items={[
@@ -504,6 +498,7 @@ export default function DispatchWorkspace({
                 { label: 'Status', value: <Badge state={eway?.internal?.status} /> },
                 { label: 'Current Vehicle', value: eway?.internal?.current_vehicle_number || header?.vehicle?.vehicle_number },
                 { label: 'Previous Vehicle', value: eway?.internal?.previous_vehicle_number },
+                { label: 'Upload Status', value: eway?.internal?.document?.is_uploaded ? 'Uploaded' : 'Not uploaded' },
               ]}
             />
 
@@ -516,27 +511,27 @@ export default function DispatchWorkspace({
                   Current Vehicle: <strong>{eway.internal.current_vehicle_number || header?.vehicle?.vehicle_number || '—'}</strong>
                 </p>
                 <p className="mt-1">
-                  The paper we hold no longer matches the truck on this load. Amend it in the e-way bill
-                  portal; this screen cannot do it for you.
+                  The paper we hold no longer matches the truck on this load. Amend the internal record.
                 </p>
               </Notice>
             ) : null}
           </div>
 
-          <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3">
-            <p className="text-[10.5px] font-bold uppercase tracking-[0.14em] text-muted">Government Confirmation</p>
+          <div className="rounded-lg border border-border p-3">
+            <p className="text-[10.5px] font-bold uppercase tracking-[0.14em] text-muted">Document</p>
             <Facts
               columns={2}
               items={[
-                { label: 'Sync Status', value: <Badge state={eway?.government?.sync_status} label="Not connected" /> },
-                { label: 'Government E-Way Bill No.', value: eway?.government?.eway_bill_number || '—' },
-                { label: 'Last Synced', value: eway?.government?.synced_at ? fmtDate(eway.government.synced_at, true) : '—' },
+                { label: 'Original Filename', value: eway?.internal?.document?.file_name || eway?.internal?.document?.file_url ? 'No name recorded' : '—' },
+                { label: 'Uploaded', value: fmtDate(eway?.internal?.document?.uploaded_at) },
+                { label: 'Uploaded By', value: eway?.internal?.document?.uploaded_by ? 'Yes' : 'No' },
               ]}
             />
-            <p className="mt-2 text-[11.5px] leading-snug text-muted">
-              These stay empty until a real e-way bill API is integrated. Nothing in this system writes to
-              them, so nothing in this system can claim the government record was updated.
-            </p>
+            {eway?.internal?.document?.file_url ? (
+              <Button tone="ghost" className="mt-2 w-full" onClick={() => window.open(ops.documentFileUrl(tripId, eway.internal.document.document_id), '_blank')}>
+                View Uploaded Document
+              </Button>
+            ) : null}
           </div>
         </div>
 
@@ -548,9 +543,6 @@ export default function DispatchWorkspace({
               className={inputClass}
               placeholder="121234567890"
             />
-          </Field>
-          <Field label="Current Vehicle Number" hint="Defaults to the assigned vehicle. Changing it flags the paper for amendment.">
-            <input value={ewayForm.current_vehicle_number || ''} readOnly className={cx(inputClass, 'bg-slate-50 text-muted')} placeholder={header?.vehicle?.vehicle_number || '—'} />
           </Field>
           <Field label="E-Way Bill Date">
             <input
@@ -568,6 +560,9 @@ export default function DispatchWorkspace({
               className={inputClass}
             />
           </Field>
+          <Field label="Current Vehicle">
+            <input value={header?.vehicle?.vehicle_number || ''} readOnly className={cx(inputClass, 'bg-slate-50 text-muted')} placeholder={header?.vehicle?.vehicle_number || '—'} />
+          </Field>
           <Field label="Upload E-Way Bill" hint="Stored on the server and linked to this trip.">
             <input
               type="file"
@@ -577,10 +572,11 @@ export default function DispatchWorkspace({
             />
           </Field>
           <Field label="Remarks">
-            <input
+            <textarea
               value={ewayForm.remarks}
               onChange={(e) => setEwayForm({ ...ewayForm, remarks: e.target.value })}
               className={inputClass}
+              rows={3}
             />
           </Field>
         </div>
@@ -595,20 +591,7 @@ export default function DispatchWorkspace({
             file_content: await readFile(ewayFile),
           }))}
           >
-            {eway?.internal ? 'Update E-Way Bill' : 'Add E-Way Bill'}
-          </Button>
-          <Button
-            tone="ghost"
-            busy={busy === 'eway-vehicle'}
-            disabled={!eway?.internal || shipped}
-            onClick={() => run('eway-vehicle', () => ops.saveEwayBill(tripId, {
-              eway_bill_number: ewayForm.eway_bill_number || eway?.internal?.number,
-              current_vehicle_number: header?.vehicle?.vehicle_number,
-              vehicle_update_required: false,
-              remarks: `Vehicle on this load confirmed as ${header?.vehicle?.vehicle_number}`,
-            }))}
-          >
-            Update Vehicle on E-Way Bill
+            {eway?.internal ? 'Save E-Way Bill Record' : 'Save E-Way Bill Record'}
           </Button>
           {eway?.internal?.document?.file_url ? (
             <Button tone="ghost" onClick={() => window.open(ops.documentFileUrl(tripId, eway.internal.document.document_id), '_blank')}>
@@ -959,7 +942,6 @@ export default function DispatchWorkspace({
         <ConfirmRow label="Loading" value={loading?.completed ? 'Completed' : 'Not completed'} />
         <ConfirmRow label="LR/GR" value={lrGr?.number || lrGrForm.reference_number || '—'} />
         <ConfirmRow label="E-Way Bill" value={eway?.internal?.number || ewayForm.eway_bill_number || '—'} />
-        <ConfirmRow label="E-Way Bill Type" value="Internal record only — government API not connected" />
         <ConfirmRow label="Consignee" value={delivery?.consignee_name || deliveryForm?.consignee_name || '—'} />
         <ConfirmRow label="Invoice" value={billing?.invoice?.invoice_number || 'Not raised'} />
         <ConfirmRow label="POD Required" value={delivery?.pod_required ? 'Yes' : 'No'} />

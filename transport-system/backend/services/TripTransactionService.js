@@ -74,15 +74,28 @@ class TripTransactionService {
       metadata,
     } = params;
 
-    if (!trip_financial_id || !booking_id || !transaction_type || !amount || !direction || !from_party || !to_party || !purpose) {
+    // booking_id is NOT required. A Trip may be created independently of a
+    // Booking (see TripService.createTrip), and financial_transactions.
+    // booking_id has been nullable since migration
+    // 20260910010000_make_financial_tx_booking_nullable. Requiring it here
+    // meant every standalone trip silently failed to produce its canonical
+    // money rows. trip_id becomes the required anchor instead.
+    const anchor = booking_id || trip_id;
+    if (!trip_financial_id || !anchor || !transaction_type || !amount || !direction || !from_party || !to_party || !purpose) {
       throw new ValidationError('Missing required transaction fields');
     }
 
     const transaction = await this.financialTxRepo.create(
       {
         trip_financial_id,
-        booking_id,
+        booking_id: booking_id || null,
         trip_id: trip_id || null,
+        // Party columns live on the canonical row so a vendor ledger can be
+        // read straight off FinancialTransaction without joining Trip.
+        vehicle_id: params.vehicle_id || null,
+        driver_id: params.driver_id || null,
+        transport_owner_id: params.transport_owner_id || null,
+        client_id: params.client_id || null,
         transaction_type,
         amount,
         direction,
@@ -164,13 +177,15 @@ class TripTransactionService {
    * Bihar Transport → Transport Owner (DEBIT)
    */
   async createOwnerAdvance(params, tx = null) {
-    const { trip_financial_id, booking_id, trip_id, amount, payment_method, reference_number, transaction_date, notes, created_by, transport_owner_id } = params;
+    const { trip_financial_id, booking_id, trip_id, vehicle_id, amount, payment_method, reference_number, transaction_date, notes, created_by, transport_owner_id } = params;
 
     return this.createTransaction(
       {
         trip_financial_id,
         booking_id,
         trip_id,
+        vehicle_id,
+        transport_owner_id,
         transaction_type: 'OWNER_ADVANCE',
         amount,
         direction: 'DEBIT',
@@ -193,7 +208,7 @@ class TripTransactionService {
    * Bihar Transport → Driver (DEBIT)
    */
   async createDriverAdvance(params, tx = null) {
-    const { trip_financial_id, booking_id, trip_id, amount, payment_method, reference_number, transaction_date, notes, created_by, driver_id, advance_type } = params;
+    const { trip_financial_id, booking_id, trip_id, vehicle_id, amount, payment_method, reference_number, transaction_date, notes, created_by, driver_id, advance_type } = params;
 
     const purpose = advance_type === 'FUEL_ADVANCE' ? 'Fuel Advance' : 'Driver Advance';
 
@@ -202,6 +217,8 @@ class TripTransactionService {
         trip_financial_id,
         booking_id,
         trip_id,
+        vehicle_id,
+        driver_id,
         transaction_type: advance_type === 'FUEL_ADVANCE' ? 'FUEL_ADVANCE' : 'DRIVER_ADVANCE',
         amount,
         direction: 'DEBIT',
@@ -224,13 +241,15 @@ class TripTransactionService {
    * Bihar Transport → Transport Owner (DEBIT)
    */
   async createOwnerSettlement(params, tx = null) {
-    const { trip_financial_id, booking_id, trip_id, amount, payment_method, reference_number, transaction_date, notes, created_by, transport_owner_id } = params;
+    const { trip_financial_id, booking_id, trip_id, vehicle_id, amount, payment_method, reference_number, transaction_date, notes, created_by, transport_owner_id } = params;
 
     return this.createTransaction(
       {
         trip_financial_id,
         booking_id,
         trip_id,
+        vehicle_id,
+        transport_owner_id,
         transaction_type: 'OWNER_SETTLEMENT',
         amount,
         direction: 'DEBIT',
@@ -253,13 +272,15 @@ class TripTransactionService {
    * Bihar Transport → Driver (DEBIT)
    */
   async createDriverSettlement(params, tx = null) {
-    const { trip_financial_id, booking_id, trip_id, amount, payment_method, reference_number, transaction_date, notes, created_by, driver_id } = params;
+    const { trip_financial_id, booking_id, trip_id, vehicle_id, amount, payment_method, reference_number, transaction_date, notes, created_by, driver_id } = params;
 
     return this.createTransaction(
       {
         trip_financial_id,
         booking_id,
         trip_id,
+        vehicle_id,
+        driver_id,
         transaction_type: 'DRIVER_SETTLEMENT',
         amount,
         direction: 'DEBIT',

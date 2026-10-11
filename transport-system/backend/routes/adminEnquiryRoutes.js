@@ -18,6 +18,7 @@ const rateLimit = require('express-rate-limit');
 
 const { protect, adminOnly } = require('../middleware/auth');
 const controller = require('../controllers/adminEnquiryController');
+const quotationController = require('../controllers/quotationController');
 
 const router = express.Router();
 
@@ -75,5 +76,33 @@ router.post('/:id/reassign', writeLimiter, controller.reassign);
 
 /** POST /api/admin/enquiries/:id/cancel — admin cancellation. */
 router.post('/:id/cancel', writeLimiter, controller.cancelEnquiry);
+
+// ─────────────────────────────────────────────────────────────────────────
+// PHASE B — THE REAL QUOTATION / RATE MODULE (client document §2, §3)
+//
+// The ENQUIRY is the canonical quotation source:
+//     ENQUIRY → GIVE RATE → RATE QUOTED → CONFIRM ORDER → ORDER CONFIRMED
+//
+// These endpoints replace the Booking-based quote path in the quotation
+// workflow. They sit behind the SAME protect + adminOnly gate and the SAME
+// writeLimiter as every other enquiry mutation — no new trust boundary is
+// introduced. The legacy /quote and /send-quote endpoints above are left
+// untouched so existing flows keep working during the transition.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** GET /:id/quotation — the persisted quotation (or null). */
+router.get('/:id/quotation', readLimiter, quotationController.getQuotation);
+
+/** POST /:id/quotation — "[Save Quotation]": saves the rate. */
+router.post('/:id/quotation', writeLimiter, quotationController.saveQuotation);
+
+/** POST /:id/quotation/send — "[Send Quotation]": publishes it, enquiry stays OPEN. */
+router.post('/:id/quotation/send', writeLimiter, quotationController.sendQuotation);
+
+/** GET /:id/quotation/download — "[Download Quotation]": real PDF from the DB. */
+router.get('/:id/quotation/download', readLimiter, quotationController.downloadQuotation);
+
+/** POST /:id/quotation/confirm-order — "[Confirm Order]": converts to ONE order. */
+router.post('/:id/quotation/confirm-order', writeLimiter, quotationController.confirmOrder);
 
 module.exports = router;

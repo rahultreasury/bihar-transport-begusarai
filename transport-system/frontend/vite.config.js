@@ -39,8 +39,8 @@ export default defineConfig({
     },
     // Generate source maps for debug builds only
     sourcemap: false,
-    // Reduce CSS duplication
-    cssCodeSplit: false,
+    // Enable CSS code splitting for better caching
+    cssCodeSplit: true,
   },
 })
 

@@ -1,0 +1,98 @@
+-- =====================================================================
+-- Phase 7 — CUSTOMER BILLING → CUSTOMER PAYMENT INTEGRITY
+--
+-- ADDITIVE ONLY. No existing row is modified, no column is renamed or
+-- dropped, no data is deleted, no enum value is added or renamed, and no
+-- historical migration is edited.
+--
+-- WHAT THIS MIGRATION DOES *NOT* DO, AND WHY
+--   It adds NO invoice table, NO customer ledger, NO payment table and NO
+--   tax/GST column. The repository already owns the whole customer
+--   billing domain and Phase 7 REUSES it (see below). Creating a second
+--   `Invoice2` / `CustomerLedger2` would be exactly the duplication the
+--   client rules forbid
+--   (docs/PHASE2C_BUSINESS_RULES.md:443 "Customer billing belongs to
+--   FinancialTransaction — CLIENT CONFIRMED").
+--
+-- WHAT THE EXISTING MODELS ARE, AND WHICH IS AUTHORITATIVE
+--   Customer RECEIVABLE (money owed TO Bihar Transport)
+--     -> `invoices`              the billing document (booking-scoped)
+--     -> `trip_financials`       cached summary (customer_fare)
+--     -> `financial_transactions` THE single source of truth for money
+--     -> `trip_payments`         per-payment record written atomically
+--                                 with the FinancialTransaction row
+--
+--   Vendor PAYABLE (money owed BY Bihar Transport) is a DIFFERENT entity
+--   and a DIFFERENT financial relationship. It lives in the Phase 2–3
+--   `partner_ledger` / `partner_payments` / `settlements` architecture
+--   plus the trip-side owner/driver advances and settlements. Nothing in
+--   this migration touches, references or couples to any of it, so a
+--   customer payment can never move a vendor balance.
+--
+-- THE TWO INTEGRITY GAPS THIS CLOSES
+--
+--   1. ONE INVOICE PER BOOKING
+--      `invoices.booking_id` was a plain column with a NON-unique index,
+--      so the database itself permitted a second invoice for the same
+--      booking — a double bill. Two live code paths already write
+--      invoices, and nothing stopped both from firing for one booking.
+--      A unique index makes "duplicate invoice prevented" a DATABASE
+--      guarantee rather than a hope, which is what the invoice/payment
+--      relationship requirement actually needs.
+--
+--      Verified safe before writing: `SELECT booking_id FROM invoices
+--      GROUP BY booking_id HAVING COUNT(*) > 1` returns no rows, and the
+--      table currently holds 0 rows. Nothing is deduplicated or deleted
+--      because there is nothing to deduplicate.
+--
+--   2. CUSTOMER-PAYMENT IDEMPOTENCY KEY
+--      `financial_transactions.reference_number` already exists and the
+--      schema comment already calls it the reference a payment carries.
+--      Step 11 of the client brief says to use the provider/transaction
+--      reference as the idempotency/reconciliation key "where
+--      appropriate", and Step 7 says a repeated payment request "must
+--      not double-count a payment". A partial UNIQUE index on
+--      (trip_id, reference_number), restricted to real inbound customer
+--      money and to a reference that was actually supplied, makes a
+--      double click, a browser retry, a network retry or a duplicate
+--      callback collide in the database instead of creating a second
+--      money movement.
+--
+--      Deliberately PARTIAL, for three reasons:
+--        - only CUSTOMER_PAYMENT / CLIENT_PAYMENT (the inbound side).
+--          Owner/driver/vendor money is a different relationship and
+--          must not share the customer's idempotency key space.
+--        - only rows WITH a reference. `reference_number` is nullable
+--          and offline cash collection legitimately has no reference;
+--          forcing uniqueness on NULL rows would either invent a key or
+--          reject two unrelated cash payments. This keeps the index
+--          exactly as strong as the data it is given.
+--        - only rows that are not CANCELLED, so a cancelled payment can
+--          legitimately be re-recorded under the same reference.
+--
+--      Verified safe before writing: no duplicate (trip_id,
+--      reference_number) pair exists among customer payments.
+--
+-- PRODUCTION SAFETY
+--   Both objects are indexes, so no table is rewritten and no row is
+--   locked beyond the brief SHARE UPDATE EXCLUSIVE of CREATE INDEX.
+--   `IF NOT EXISTS` makes the migration re-runnable. `prisma migrate
+--   deploy` applies it; `db push` is never used.
+-- =====================================================================
+
+-- ── 1. One invoice per booking ────────────────────────────────────────────
+-- Mirrors the Prisma model: `@@unique([booking_id], name: "invoices_booking_id_key")`
+CREATE UNIQUE INDEX IF NOT EXISTS "invoices_booking_id_key"
+    ON "invoices" ("booking_id");
+
+-- ── 2. Customer-payment idempotency key ────────────────────────────────────
+-- PARTIAL unique index. Prisma's schema language cannot express a partial
+-- index, so it is created here and deliberately left out of schema.prisma
+-- (adding a plain `@@unique` there would produce a DIFFERENT, stricter
+-- index on refresh). The constraint is documented in the schema comment on
+-- FinancialTransaction so it is never lost.
+CREATE UNIQUE INDEX IF NOT EXISTS "financial_tx_customer_payment_reference_key"
+    ON "financial_transactions" ("trip_id", "reference_number")
+    WHERE "transaction_type" IN ('CUSTOMER_PAYMENT', 'CLIENT_PAYMENT')
+      AND "reference_number" IS NOT NULL
+      AND "status" <> 'CANCELLED';

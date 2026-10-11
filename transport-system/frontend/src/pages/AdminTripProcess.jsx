@@ -7,10 +7,10 @@
  *   /admin/trips/:tripId/vehicle    → Vehicle Workspace
  *   /admin/trips/:tripId/loading    → Loading Workspace
  *   /admin/trips/:tripId/dispatch   → Dispatch Workspace
- *   /admin/trips/:tripId/transit    → Transit & Tracking
- *   /admin/trips/:tripId/delivery   → Delivery Workspace
- *   /admin/trips/:tripId/pod        → POD Workspace
- *   /admin/trips/:tripId/completed  → Completion Summary
+ *   /admin/trips/:tripId/transit    → redirects to the central workspace Loading tab
+ *   /admin/trips/:tripId/delivery   → redirects to the central workspace POD tab
+ *   /admin/trips/:tripId/pod        → redirects to the central workspace POD tab
+ *   /admin/trips/:tripId/completed  → redirects to the central workspace POD tab
  *
  * WHY THIS PAGE EXISTS
  *   The process stepper used to write `?tab=loading` into the URL while
@@ -36,15 +36,17 @@ import { AlertTriangle } from 'lucide-react';
 import { adminAPI } from '../services/api';
 
 const { tripOperations } = adminAPI;
+import { vehicleHireAPI } from '../services/vehicleHireAPI';
+import { adminEnquiryAPI } from '../services/enquiryAPI';
 import AdminShell from '../components/admin-premium/layout/AdminShell';
 import { LoadingSkeleton } from '../components/admin-premium/ui/LoadingSkeleton';
 import TripProcessShell from '../components/admin-premium/trips/process/TripProcessShell';
 import LoadingWorkspace from '../components/admin-premium/trips/process/LoadingWorkspace';
 import DispatchWorkspace from '../components/admin-premium/trips/process/DispatchWorkspace';
+import VehicleWorkspace from '../components/admin-premium/trips/process/VehicleWorkspace';
 import { LOADING_AND_DISPATCH_ONLY, isKnownProcess, normalizeProcess } from '../components/admin-premium/trips/process/tripProcessModel';
 
 const NAV_ITEMS = [
-  { key: 'trips', label: 'Trips', icon: '🚛', path: '/admin/trips' },
   { key: 'bookings', label: 'Bookings', icon: '⟐', path: '/admin/bookings' },
   { key: 'clients', label: 'Clients', icon: '☍', path: '/admin/clients' },
   { key: 'owners', label: 'Transport Owners', icon: '⧉', path: '/admin/owners' },
@@ -66,6 +68,21 @@ export default function AdminTripProcess() {
   // trip row does not have (blockers, the e-way bill, the LR/GR record).
   const [dispatchWorkspace, setDispatchWorkspace] = useState(null);
   const [dispatchError, setDispatchError] = useState(null);
+  // The Vehicle stage reads the SAME canonical assignment the hire workspace
+  // writes, through TripVehicleAssignmentService — so the stage summary and the
+  // form can never disagree about who is engaged.
+  const [vehicleAssignment, setVehicleAssignment] = useState(null);
+  // §13 — the resolved customer name for the header.
+  //
+  // A trip raised from an enquiry carries `enquiry_id` but no `client_id`,
+  // `user_id` or `booking_id`, so the trip row alone renders "Customer: —" for a
+  // consignment that DOES have a named customer. The name lives on the enquiry.
+  //
+  // This is resolved from the EXISTING admin enquiry endpoint, and only when the
+  // trip cannot answer for itself — an ordinary trip never pays for the extra
+  // read. The field is not hidden and the trip is not rewritten: the trip keeps
+  // its own relation, and the display simply stops missing the real name.
+  const [customerName, setCustomerName] = useState(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -89,6 +106,30 @@ export default function AdminTripProcess() {
       setDocuments(docsRes?.data?.documents || docsRes?.data?.data?.documents || []);
       setTimeline(timelineRes?.data?.data || timelineRes?.data || []);
 
+      // §13 — resolve the customer name. The trip row answers for itself when it
+      // carries a client / user / booking relation; otherwise the name is on the
+      // enquiry it was raised from, and that is read through the existing admin
+      // enquiry endpoint. A failure here leaves the header as "—", which is the
+      // honest state; it must never be swallowed into a wrong name.
+      const loadedTrip = tripRes?.data?.data || tripRes?.data || null;
+      const inlineName =
+        loadedTrip?.booking?.customer_name || loadedTrip?.customer_name || null;
+      if (inlineName) {
+        setCustomerName(inlineName);
+      } else if (loadedTrip?.enquiry_id) {
+        const enq = await adminEnquiryAPI
+          .get(loadedTrip.enquiry_id)
+          .then((r) => r?.data?.data || r?.data || null)
+          .catch(() => null);
+        setCustomerName(
+          enq?.customer_name
+            || [enq?.customer_first_name, enq?.customer_last_name].filter(Boolean).join(' ')
+            || null
+        );
+      } else {
+        setCustomerName(null);
+      }
+
       // Process-specific reads, fetched only for the process on screen.
       if (key === 'dispatch') {
         // ONE call returns the whole workspace. A failure is NOT swallowed into
@@ -108,6 +149,13 @@ export default function AdminTripProcess() {
         setDispatchWorkspace(null);
         setDispatchError(null);
         setReadiness(null);
+      }
+
+      if (key === 'vehicle') {
+        const r = await vehicleHireAPI.getAssignment(tripId).catch(() => null);
+        setVehicleAssignment(r?.data?.data || null);
+      } else {
+        setVehicleAssignment(null);
       }
 
     } catch (err) {
@@ -175,10 +223,26 @@ export default function AdminTripProcess() {
     return timeline;
   }, [key, dispatchWorkspace, timeline]);
 
+  /* ══ downstream phases live in the central Trip Detail Workspace ═══════
+   *
+   * Transit, Delivery, POD and Completion are phases of the central
+   * workspace at /admin/trips/:tripId (its Loading and POD tabs), not
+   * separate process pages. This page is the L/D/V boundary only, so a
+   * request for one of those phases is redirected to the workspace tab
+   * that owns it — never rendered here, never a blank screen, and the
+   * process rail's links to those segments keep working.
+   */
+  const phaseTab =
+    { transit: 'loading', delivery: 'pod', pod: 'pod', completed: 'pod' }[key];
+  useEffect(() => {
+    if (phaseTab) navigate(`/admin/trips/${tripId}?tab=${phaseTab}`, { replace: true });
+  }, [phaseTab, tripId, navigate]);
+  if (phaseTab) return null;
+
   /* ══ §25 — an unknown process is an error, never a silent redirect ═══════ */
   if (!isKnownProcess(key) || !LOADING_AND_DISPATCH_ONLY.has(key)) {
     return (
-      <AdminShell navItems={NAV_ITEMS} activeKey="trips" onNav={() => navigate('/admin/trips')}>
+      <AdminShell navItems={NAV_ITEMS} activeKey="bookings" onNav={() => navigate('/admin/bookings')}>
         <div className="rounded-xl border border-amber-300 bg-amber-50 p-6">
           <p className="text-[15px] font-bold text-amber-800">Unknown process</p>
           <p className="mt-1 text-[13px] text-amber-900">
@@ -197,7 +261,7 @@ export default function AdminTripProcess() {
 
   if (loading) {
     return (
-      <AdminShell navItems={NAV_ITEMS} activeKey="trips" onNav={() => navigate('/admin/trips')}>
+      <AdminShell navItems={NAV_ITEMS} activeKey="bookings" onNav={() => navigate('/admin/bookings')}>
         <LoadingSkeleton />
       </AdminShell>
     );
@@ -205,17 +269,17 @@ export default function AdminTripProcess() {
 
   if (error || !trip) {
     return (
-      <AdminShell navItems={NAV_ITEMS} activeKey="trips" onNav={() => navigate('/admin/trips')}>
+      <AdminShell navItems={NAV_ITEMS} activeKey="bookings" onNav={() => navigate('/admin/bookings')}>
         <div className="rounded-xl border border-red-200 bg-red-50 p-6">
           <p className="flex items-center gap-2 text-[15px] font-bold text-red-800">
             <AlertTriangle size={16} aria-hidden="true" /> Trip not found
           </p>
           <p className="mt-1 text-[13px] text-red-900">{error || `No trip with id ${tripId}.`}</p>
           <Link
-            to="/admin/trips"
+            to="/admin/bookings"
             className="mt-3 inline-flex rounded-lg border border-border bg-white px-3.5 py-2 text-[12.5px] font-semibold text-text"
           >
-            Back to Trips
+            Back to Bookings
           </Link>
         </div>
       </AdminShell>
@@ -224,6 +288,27 @@ export default function AdminTripProcess() {
 
   // §23 — the selected process decides which component renders.
   const workspace = {
+    // THE VEHICLE STAGE.
+    //
+    // This is the trip's operational Vehicle workspace, NOT a read-only summary.
+    // It renders the SAME `VehicleHireWorkspace` the standalone `/vehicle-hire`
+    // route renders, so `/admin/trips/:id/vehicle` is where a vehicle is actually
+    // engaged — which is what the Vehicle step in the process rail points at.
+    //
+    // `ops` / `onRun` / `busy` are handed over so that, once a vehicle is hired,
+    // the next workflow action ("SEND TO LOADING") can call the EXISTING loading
+    // endpoint through this page's own runner — same one load, same error
+    // handling, same movement-history event written server-side.
+    vehicle: () => (
+      <VehicleWorkspace
+        trip={trip}
+        hire={vehicleAssignment}
+        hireStatus={vehicleAssignment?.hire_status || trip?.status || 'WAITING_FOR_VEHICLE'}
+        ops={tripOperations}
+        onRun={onRun}
+        busy={busy}
+      />
+    ),
     loading: () => (
       <LoadingWorkspace
         tripId={tripId}
@@ -253,13 +338,14 @@ export default function AdminTripProcess() {
   }[key];
 
   return (
-    <AdminShell navItems={NAV_ITEMS} activeKey="trips" onNav={() => navigate('/admin/trips')}>
+    <AdminShell navItems={NAV_ITEMS} activeKey="bookings" onNav={() => navigate('/admin/bookings')}>
       <TripProcessShell
         tripId={tripId}
         trip={trip}
         stages={stages}
         process={key}
         workflow={workflow}
+        customerName={customerName}
         aside={
           <>
             {actionError ? (
@@ -267,7 +353,7 @@ export default function AdminTripProcess() {
                 <p className="text-[12.5px] font-semibold text-red-800">{actionError}</p>
               </section>
             ) : null}
-            {/*
+             {/*
               §16 — MOVEMENT HISTORY on every process, not just at the end.
               These rows are written by the SERVER inside the same request that
               changes a status, so this list can never drift from the status it
@@ -277,29 +363,29 @@ export default function AdminTripProcess() {
               history inside their payload, because those are the two processes
               where the question "what happened to this load?" is actually
               asked. The plain timeline is used everywhere else.
-            */}
-            <section className="rounded-xl border border-border bg-white p-4">
+              */}
+            <section className="rounded-lg border border-border bg-white p-3.5">
               <p className="text-[10.5px] font-bold uppercase tracking-[0.14em] text-muted">
                 Movement History
               </p>
               {asideHistory.length === 0 ? (
-                <p className="mt-2 text-[12.5px] text-muted">
-                  No movement recorded yet. Events appear here automatically as the trip advances.
+                <p className="mt-2 text-[12px] text-muted">
+                  No movement recorded yet.
                 </p>
               ) : (
-                <ol className="mt-2 space-y-2">
+                <ol className="mt-2 space-y-1.5">
                   {asideHistory.slice(0, 14).map((e, i) => (
-                    <li key={e.timeline_id || e.id || e.event_id || i} className="flex gap-2 text-[12.5px]">
-                      <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-600" />
+                    <li key={e.timeline_id || e.id || e.event_id || i} className="flex gap-2 text-[12px]">
+                      <span className="mt-1 h-1 w-1 shrink-0 rounded-full bg-amber-600" />
                       <div className="min-w-0">
                         <p className="font-semibold text-text">
                           {e.description || e.notes || e.event_type || e.status}
                         </p>
                         {e.status && e.description ? (
-                          <p className="text-[11.5px] text-muted">{e.status}</p>
+                          <p className="text-[11px] text-muted">{e.status}</p>
                         ) : null}
                         {e.created_at || e.occurred_at ? (
-                          <p className="text-[11.5px] text-muted">
+                          <p className="text-[11px] text-muted">
                             {new Date(e.created_at || e.occurred_at).toLocaleString()}
                           </p>
                         ) : null}
@@ -311,50 +397,52 @@ export default function AdminTripProcess() {
             </section>
 
             {/* §19 / O — the workspaces for this trip, reachable from every process. */}
-            <section className="rounded-xl border border-border bg-white p-4">
+            <section className="rounded-lg border border-border bg-white p-3.5">
               <p className="text-[10.5px] font-bold uppercase tracking-[0.14em] text-muted">
-                Related Workspaces
+                Quick Links
               </p>
-              <div className="mt-2 flex flex-col gap-1.5">
+              <div className="mt-2 flex flex-col gap-1">
                 <Link
                   to={`/admin/trips/${tripId}`}
-                  className="text-[12.5px] font-semibold text-amber-700 hover:underline"
+                  className="text-[12px] font-semibold text-amber-700 hover:underline"
                 >
                   Trip Overview
                 </Link>
+                {/* `vehicle-hire` IS the canonical hire workspace — it is where a vehicle is
+                    engaged. The legacy `/vehicle` route redirects here. */}
                 <Link
-                  to={`/admin/trips/${tripId}/hire`}
-                  className="text-[12.5px] font-semibold text-amber-700 hover:underline"
+                  to={`/admin/trips/${tripId}/vehicle-hire`}
+                  className="text-[12px] font-semibold text-amber-700 hover:underline"
                 >
                   Vehicle Hire
                 </Link>
                 <Link
                   to={`/admin/trips/${tripId}/loading`}
-                  className="text-[12.5px] font-semibold text-amber-700 hover:underline"
+                  className="text-[12px] font-semibold text-amber-700 hover:underline"
                 >
                   Loading
                 </Link>
                 <Link
                   to={`/admin/trips/${tripId}/transit`}
-                  className="text-[12.5px] font-semibold text-amber-700 hover:underline"
+                  className="text-[12px] font-semibold text-amber-700 hover:underline"
                 >
                   Transit
                 </Link>
                 <Link
                   to={`/admin/trips/${tripId}/delivery`}
-                  className="text-[12.5px] font-semibold text-amber-700 hover:underline"
+                  className="text-[12px] font-semibold text-amber-700 hover:underline"
                 >
                   Delivery
                 </Link>
                 <Link
                   to={`/admin/trips/${tripId}/pod`}
-                  className="text-[12.5px] font-semibold text-amber-700 hover:underline"
+                  className="text-[12px] font-semibold text-amber-700 hover:underline"
                 >
                   POD
                 </Link>
                 <Link
                   to={`/admin/trips/${tripId}/finance`}
-                  className="text-[12.5px] font-semibold text-amber-700 hover:underline"
+                  className="text-[12px] font-semibold text-amber-700 hover:underline"
                 >
                   Finance
                 </Link>

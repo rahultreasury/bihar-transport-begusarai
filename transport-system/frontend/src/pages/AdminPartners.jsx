@@ -338,7 +338,7 @@ export default function AdminPartners() {
         sub: 'Currently in progress',
         accent: 'purple',
         loading: false,
-        onClick: () => navigate('/admin/trips'),
+        onClick: () => navigate('/admin/bookings?status=IN_TRANSIT'),
         ariaLabel: 'View active trips',
       },
       {

@@ -39,11 +39,15 @@ const { ValidationError, NotFoundError, ForbiddenError } = require('../utils/App
 const TripDispatchService = require('../services/TripDispatchService');
 const TripDocumentService = require('../services/TripDocumentService');
 const TripDocumentStorage = require('../services/TripDocumentStorage');
+const TripTransitOpsService = require('../services/TripTransitOpsService');
+const TripOperationalService = require('../services/TripOperationalService');
 const { EWAY_BILL_INTEGRATION_NOTICE } = require('../services/TripDispatchService');
 
 const dispatchService = new TripDispatchService();
 const documentService = new TripDocumentService();
 const documentStorage = new TripDocumentStorage();
+const transitOpsService = new TripTransitOpsService();
+const operationalService = new TripOperationalService();
 
 // ===========================================================================
 // HELPERS
@@ -107,9 +111,9 @@ async function resolveUpload(req, tripId, documentType) {
       fileName: req.body.file_name,
       contentBase64: req.body.file_content,
     });
-    return { file_url: stored.file_url, uploaded: stored };
+    return { file_url: stored.file_url, file_name: stored.file_name, uploaded: stored };
   }
-  return { file_url: req.body?.file_url || null, uploaded: null };
+  return { file_url: req.body?.file_url || null, file_name: req.body?.file_name || null, uploaded: null };
 }
 
 // ===========================================================================
@@ -246,14 +250,21 @@ router.post('/:id/dispatch/lr-gr', protect, adminOnly, async (req, res) => {
 });
 
 // ── E-WAY BILL ─────────────────────────────────────────────────────────────
+//
+// This module is an INTERNAL RECORD-KEEPING system. The E-Way Bill number,
+// date, expiry, vehicle numbers and the scanned document are recorded against
+// the Trip because the office needs them for operations and audits. This is
+// NOT a government or NIC integration: no government API is called anywhere
+// in this code, no government confirmation is claimed, and the status values
+// here describe only our internal record (RECORDED / ACTIVE / EXPIRED /
+// CANCELLED).
 
 /**
  * GET /api/trips/:id/dispatch/eway-bill
  *
- * The internal record and the government confirmation are returned as SEPARATE
- * objects, always. The government object reports `NOT_CONNECTED` and carries no
- * number, because no government e-way bill API exists in this system. A client
- * cannot read this response and conclude that the NIC portal was contacted.
+ * Returns the internal E-Way Bill record for this Trip. There is no
+ * government confirmation section: this system has no government e-way bill
+ * API.
  */
 router.get('/:id/dispatch/eway-bill', protect, adminOnly, async (req, res) => {
   const tripId = readId(req, res);
@@ -269,22 +280,71 @@ router.get('/:id/dispatch/eway-bill', protect, adminOnly, async (req, res) => {
     return res.json({
       success: true,
       data: {
-        internal: ewayBill,
-        government: ewayBill
-          ? {
-            sync_status: ewayBill.gov_sync_status,
-            eway_bill_number: ewayBill.gov_eway_bill_number,
-            synced_at: ewayBill.gov_synced_at,
-          }
-          : { sync_status: 'NOT_CONNECTED', eway_bill_number: null, synced_at: null },
-        api_connected: false,
-        integration_notice: EWAY_BILL_INTEGRATION_NOTICE,
+        record: ewayBill || null,
         current_vehicle_number: trip.vehicle?.vehicle_number || null,
-        document: trip.documents[0] || null,
       },
     });
   } catch (error) {
     sendError(res, error, 'Get E-Way Bill error:');
+  }
+});
+
+/**
+ * PUT /api/trips/:id/dispatch/eway-bill
+ *
+ * Fully replace the internal E-Way Bill record for this Trip.
+ */
+router.put('/:id/dispatch/eway-bill', protect, adminOnly, async (req, res) => {
+  const tripId = readId(req, res);
+  if (tripId === null) return;
+  try {
+    const upload = await resolveUpload(req, tripId, 'E_WAY_BILL');
+    const result = await dispatchService.saveEwayBill(tripId, {
+      ...req.body,
+      file_url: upload.file_url,
+      file_name: upload.file_name,
+    }, req.user);
+    return res.status(200).json({
+      success: true,
+      message: upload.uploaded ? 'E-Way Bill record updated and file stored' : 'E-Way Bill record updated',
+      data: { ...result, uploaded: upload.uploaded },
+    });
+  } catch (error) {
+    sendError(res, error, 'Update E-Way Bill error:');
+  }
+});
+
+/**
+ * DELETE /api/trips/:id/dispatch/eway-bill
+ *
+ * Remove the internal E-Way Bill record and its uploaded file for this Trip.
+ */
+router.delete('/:id/dispatch/eway-bill', protect, adminOnly, async (req, res) => {
+  const tripId = readId(req, res);
+  if (tripId === null) return;
+  try {
+    const ewayBill = await prisma.ewayBill.findFirst({ where: { trip_id: tripId } });
+    if (!ewayBill) {
+      return res.status(404).json({ success: false, message: 'No E-Way Bill record found' });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      const doc = ewayBill.document_id
+        ? await tx.tripDocument.findUnique({ where: { document_id: ewayBill.document_id } })
+        : null;
+
+      if (doc?.file_url) {
+        await documentStorage.remove(doc.file_url);
+      }
+      await tx.ewayBill.delete({ where: { eway_bill_id: ewayBill.eway_bill_id } });
+      await tx.tripDocument.delete({
+        where: { trip_id_document_type: { trip_id: tripId, document_type: 'E_WAY_BILL' } },
+      });
+    });
+
+    return res.json({ success: true, message: 'E-Way Bill record removed' });
+  } catch (error) {
+    sendError(res, error, 'Delete E-Way Bill error:');
   }
 });
 
@@ -306,11 +366,12 @@ router.post('/:id/dispatch/eway-bill', protect, adminOnly, async (req, res) => {
     const result = await dispatchService.saveEwayBill(tripId, {
       ...req.body,
       file_url: upload.file_url,
+      file_name: upload.file_name,
     }, req.user);
     const readiness = await dispatchService.getReadiness(tripId);
     return res.status(201).json({
       success: true,
-      message: upload.uploaded ? 'E-Way Bill recorded and file stored' : 'E-Way Bill recorded',
+      message: upload.uploaded ? 'E-Way Bill record saved and file stored' : 'E-Way Bill record saved',
       data: { ...result, uploaded: upload.uploaded },
       readiness,
     });
@@ -474,5 +535,49 @@ router.get('/:id/documents/:documentId/file', protect, adminOnly, async (req, re
     sendError(res, error, 'Download trip document error:');
   }
 });
-
+ 
+// ===========================================================================
+// TRANSIT WORKSPACE
+// ===========================================================================
+ 
+/**
+ * GET /api/trips/:id/transit
+ *
+ * Returns the full transit workspace for this Trip: the trip, customer, route,
+ * vehicle, driver, dispatch, tracking, vehicle changes, incidents, e-way bill
+ * and available actions. This is the canonical transit page data.
+ */
+router.get('/:id/transit', protect, adminOnly, async (req, res) => {
+  const tripId = readId(req, res);
+  if (tripId === null) return;
+  try {
+    const workspace = await transitOpsService.getWorkspace(tripId);
+    return res.json({ success: true, data: workspace });
+  } catch (error) {
+    sendError(res, error, 'Get transit workspace error:');
+  }
+});
+ 
+/**
+ * POST /api/trips/:id/transit/start
+ *
+ * Transitions the trip from DISPATCHED to IN_TRANSIT.
+ * This is the explicit action that moves the vehicle onto the road.
+ * Idempotent: if already IN_TRANSIT or further, returns unchanged trip.
+ */
+router.post('/:id/transit/start', protect, adminOnly, async (req, res) => {
+  const tripId = readId(req, res);
+  if (tripId === null) return;
+  try {
+    const result = await operationalService.startTransit(tripId, req.body, req.user);
+    return res.json({
+      success: true,
+      message: result.idempotent ? 'Trip is already in transit' : 'Trip started transit',
+      data: { trip: result.trip, idempotent: result.idempotent, status: result.status },
+    });
+  } catch (error) {
+    sendError(res, error, 'Start transit error:');
+  }
+});
+ 
 module.exports = router;

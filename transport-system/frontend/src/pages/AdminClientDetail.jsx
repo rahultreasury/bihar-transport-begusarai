@@ -10,7 +10,6 @@ const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: '▦', path: '/admin' },
   { key: 'financials', label: 'Financials', icon: '◷', path: '/admin/financials' },
   { key: 'bookings', label: 'Bookings', icon: '⟐', path: '/admin/bookings' },
-  { key: 'trips', label: 'Trips', icon: '🚛', path: '/admin/trips' },
   { key: 'clients', label: 'Clients', icon: '☍', path: '/admin/clients' },
   { key: 'owners', label: 'Transport Owners', icon: '⧉', path: '/admin/owners' },
   { key: 'vehicles', label: 'Vehicles', icon: '🚛', path: '/admin/vehicles' },

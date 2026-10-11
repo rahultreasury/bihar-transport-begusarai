@@ -1,40 +1,63 @@
 /**
  * emailService.js
  * Brevo SMTP email integration using Nodemailer.
- * 
+ *
+ * DELIVERY IS ENVIRONMENT-AWARE
+ * -----------------------------
+ * This file owns the TEMPLATES and the business rules. It does NOT talk to
+ * nodemailer directly any more: every send goes through
+ * `services/emailDelivery.js`, the single delivery layer that decides whether
+ * a message is really transmitted or merely simulated and logged.
+ *
+ *   EMAIL_MODE=production   -> real email (unchanged production behaviour)
+ *   EMAIL_MODE=development  -> no real email; logs "[EMAIL:TEST MODE] Would send ..."
+ *   EMAIL_MODE=test         -> no real email; fully blocked
+ *
+ * Without EMAIL_MODE, the mode is derived from NODE_ENV and defaults to
+ * 'development', so a developer machine sends no real mail even if real Brevo
+ * credentials are present in backend/.env. See services/emailDelivery.js.
+ *
  * Environment Variables (from .env):
- *   BREVO_SMTP_HOST       — smtp-relay.brevo.com
- *   BREVO_SMTP_PORT       — 587
- *   BREVO_SMTP_USER       — Brevo SMTP login
- *   BREVO_SMTP_PASSWORD   — Brevo SMTP key
- *   FROM_EMAIL            — Verified sender email in Brevo
- *   OWNER_EMAIL           — Where booking notifications are sent
+ *   EMAIL_MODE              — production | development | test  (delivery switch)
+ *   BREVO_SMTP_HOST         — smtp-relay.brevo.com
+ *   BREVO_SMTP_PORT         — 587
+ *   BREVO_SMTP_USER         — Brevo SMTP login
+ *   BREVO_SMTP_PASSWORD     — Brevo SMTP key
+ *   FROM_EMAIL              — Verified sender email in Brevo
+ *   OWNER_EMAIL             — Where booking notifications are sent
  */
 
-const nodemailer = require('nodemailer');
 const fs = require('fs');
 const path = require('path');
 
-// ---- SMTP Transporter ----
-function createTransporter() {
-  const host = process.env.BREVO_SMTP_HOST || 'smtp-relay.brevo.com';
-  const port = parseInt(process.env.BREVO_SMTP_PORT || '587', 10);
-  const user = process.env.BREVO_SMTP_USER || '';
-  const pass = process.env.BREVO_SMTP_PASSWORD || '';
+const emailDelivery = require('./emailDelivery');
 
-  return nodemailer.createTransport({
-    host,
-    port,
-    secure: port === 465,
-    auth: { user, pass },
-  });
-}
+const {
+  sendEmail,
+  createTransporter,
+  isRealDeliveryEnabled,
+  describeEmailMode,
+  resolveEmailMode,
+} = emailDelivery;
+
+// ---- SMTP Transporter (delegated to the delivery layer) ----
+// Kept as a named export for backwards compatibility; the delivery layer
+// refuses to hand out a live transporter outside an allowed environment.
 
 /**
- * verifyConnection — verifies SMTP connection using transporter.verify().
+ * verifyConnection — verifies the SMTP connection.
+ * In a non-production environment this does NOT touch the network: it reports
+ * the simulated mode instead, so a developer boot never opens an SMTP socket.
  * Returns { success: boolean, message: string, smtpResponse?: string, error?: string }
  */
 async function verifyConnection() {
+  if (!isRealDeliveryEnabled()) {
+    const message = `SMTP verification skipped — ${describeEmailMode()}`;
+    console.log(`[EMAIL:TEST MODE] Would verify the SMTP connection`);
+    console.log(`Mode: ${message}`);
+    return { success: true, simulated: true, message, mode: resolveEmailMode() };
+  }
+
   const transporter = createTransporter();
   try {
     const success = await transporter.verify();
@@ -54,7 +77,6 @@ async function verifyConnection() {
  * Returns { success: boolean, message: string, smtpResponse?: string, error?: string }
  */
 async function sendTestEmail() {
-  const transporter = createTransporter();
   const fromEmail = process.env.FROM_EMAIL;
   const ownerEmail = process.env.OWNER_EMAIL;
 
@@ -69,10 +91,12 @@ async function sendTestEmail() {
   }
 
   try {
-    const info = await transporter.sendMail({
+    const info = await sendEmail({
       from: `"Bihar Transport" <${fromEmail}>`,
       to: ownerEmail,
       subject: '🧪 Test Email — Bihar Transport SMTP Working',
+      template: 'smtp_test',
+      description: 'SMTP test email',
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 20px auto; background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
           <div style="background: linear-gradient(135deg, #f59e0b, #d97706); padding: 24px; text-align: center;">
@@ -99,164 +123,43 @@ async function sendTestEmail() {
 }
 
 /**
- * sendBookingNotification — sends a booking notification to the owner.
+ * sendBookingNotification — PERMANENTLY DISABLED (no-op).
  *
- * The booking is ALWAYS committed first, and the only caller
- * (BookingService.createBooking, via BookingNotificationService) invokes this
- * AFTER the transaction has committed and AWAITS it, so the send is not lost when
- * a host closes the request. This function itself never throws: a provider
- * failure is reported in the returned object, and the booking is unaffected.
+ * The "🚚 New Booking Received - BTB-…" owner email has been REMOVED at the
+ * owner's explicit request. This function is intentionally kept as an exported
+ * symbol ONLY so that every historical caller keeps resolving and no module
+ * throws a TypeError — it performs NO work at all:
  *
- * This is the BOOKING notification (a booking row now exists). It is a
- * different event from sendNewInquiryNotificationEmail (a pre-booking enquiry
- * was submitted) and neither replaces the other.
+ *   - it does NOT build a subject line
+ *   - it does NOT render the `booking_notification` HTML template
+ *   - it does NOT read FROM_EMAIL / OWNER_EMAIL / SMTP credentials
+ *   - it does NOT call `emailDelivery.sendEmail()` (and therefore cannot open an
+ *     SMTP socket, in ANY environment, including EMAIL_MODE=production)
+ *   - it does NOT log, queue, retry or persist the message for later delivery
  *
- * @param {Object} booking — Must contain:
- *   booking_reference, customerName, mobile, pickup, drop,
- *   vehicle, goodsType, price, [pickupDate], [pickupTime]
- * 
- * Returns { success: boolean, message: string }
+ * There is deliberately NO "simulated" mode here: a simulation still renders and
+ * logs the email, which is exactly what was asked to stop. This is a hard stop,
+ * not a downgrade.
+ *
+ * Callers must treat the return value as "nothing was sent".
+ *
+ * NOT AFFECTED — these remain fully active and unchanged:
+ *   - sendNewInquiryNotificationEmail  (the pre-booking ENQUIRY email)
+ *   - sendPasswordResetEmail           (account recovery)
+ *   - sendTestEmail / verifyConnection (manual SMTP diagnostics)
+ *
+ * @param {Object} _booking — ignored entirely.
+ * @returns {Promise<{success:false, skipped:true, disabled:true, message:string}>}
  */
-async function sendBookingNotification(booking) {
-  const fromEmail = process.env.FROM_EMAIL;
-  const ownerEmail = process.env.OWNER_EMAIL;
-
-  if (!fromEmail) {
-    console.warn('[email] FROM_EMAIL not set — skipping booking notification');
-    return { success: false, message: 'FROM_EMAIL not configured' };
-  }
-  if (!ownerEmail) {
-    console.warn('[email] OWNER_EMAIL not set — skipping booking notification');
-    return { success: false, message: 'OWNER_EMAIL not configured' };
-  }
-  if (!process.env.BREVO_SMTP_USER || !process.env.BREVO_SMTP_PASSWORD) {
-    console.warn('[email] SMTP credentials not set — skipping booking notification');
-    return { success: false, message: 'SMTP not configured' };
-  }
-
-  const {
-    booking_reference = '—',
-    customerName = '—',
-    mobile = '—',
-    pickup = '—',
-    drop = '—',
-    vehicle = '—',
-    goodsType = '—',
-    price = '—',
-    pickupDate = '—',
-    pickupTime = '—',
-  } = booking;
-
-  const bookingTime = pickupDate !== '—' && pickupTime !== '—'
-    ? `${pickupDate} at ${pickupTime}`
-    : pickupDate !== '—' ? pickupDate : '—';
-
-  const subject = `🚚 New Booking Received - ${booking_reference}`;
-
-  // Professional HTML email template
-  const html = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <style>
-    body { font-family: 'Segoe UI', Arial, sans-serif; background: #f3f4f6; margin: 0; padding: 20px; }
-    .container { max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
-    .header { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); padding: 28px 24px; text-align: center; }
-    .header h1 { color: #fff; margin: 0 0 4px; font-size: 24px; font-weight: 700; letter-spacing: -0.5px; }
-    .header p { color: rgba(255,255,255,0.85); margin: 0; font-size: 15px; }
-    .badge { display: inline-block; margin-top: 8px; padding: 4px 14px; border-radius: 20px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; background: rgba(255,255,255,0.2); color: #fff; }
-    .body { padding: 24px; }
-    .greeting { font-size: 15px; color: #374151; margin-bottom: 20px; }
-    .card { background: #f9fafb; border-radius: 12px; padding: 16px; margin-bottom: 16px; border: 1px solid #e5e7eb; }
-    .card-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #9ca3af; margin-bottom: 12px; }
-    .row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f3f4f6; }
-    .row:last-child { border-bottom: none; }
-    .label { font-size: 13px; color: #6b7280; }
-    .value { font-size: 13px; font-weight: 600; color: #111827; text-align: right; }
-    .status { display: inline-block; padding: 3px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; background: #fef3c7; color: #92400e; }
-    .footer { text-align: center; padding: 20px; color: #9ca3af; font-size: 12px; background: #f9fafb; border-top: 1px solid #e5e7eb; }
-    .footer a { color: #f59e0b; text-decoration: none; font-weight: 600; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h1>🚚 New Booking Received</h1>
-      <p>Booking #${escapeHtml(booking_reference)}</p>
-      <div class="badge">Pending</div>
-    </div>
-    <div class="body">
-      <p class="greeting">A new booking has been placed. Review the details below.</p>
-
-      <div class="card">
-        <div class="card-title">Customer Details</div>
-        <div class="row"><span class="label">Name</span><span class="value">${escapeHtml(customerName)}</span></div>
-        <div class="row"><span class="label">Phone</span><span class="value">${escapeHtml(mobile)}</span></div>
-      </div>
-
-      <div class="card">
-        <div class="card-title">Route</div>
-        <div class="row"><span class="label">Pickup</span><span class="value">${escapeHtml(pickup)}</span></div>
-        <div class="row"><span class="label">Drop</span><span class="value">${escapeHtml(drop)}</span></div>
-        <div class="row"><span class="label">Booking Time</span><span class="value">${escapeHtml(bookingTime)}</span></div>
-      </div>
-
-      <div class="card">
-        <div class="card-title">Shipment Details</div>
-        <div class="row"><span class="label">Vehicle</span><span class="value">${escapeHtml(vehicle)}</span></div>
-        <div class="row"><span class="label">Goods Type</span><span class="value">${escapeHtml(goodsType)}</span></div>
-        <div class="row"><span class="label">Est. Price</span><span class="value">₹${escapeHtml(String(price))}</span></div>
-      </div>
-
-      <p style="text-align: center; margin-top: 24px;">
-        <a href="${escapeHtml(process.env.ADMIN_URL || 'http://localhost:3000/admin')}"
-           style="display: inline-block; padding: 12px 28px; background: #f59e0b; color: #fff; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px;">
-          View in Admin Dashboard →
-        </a>
-      </p>
-    </div>
-    <div class="footer">
-      <p>Bihar Transport Begusarai &bull; Enterprise Logistics</p>
-      <p>📍 Begusarai, Bihar</p>
-      <p style="margin-top: 8px;">
-        <a href="${escapeHtml(process.env.ADMIN_URL || 'http://localhost:3000/admin')}">Admin Dashboard</a>
-      </p>
-    </div>
-  </div>
-</body>
-</html>`;
-
-  const transporter = createTransporter();
-
-  try {
-    const info = await transporter.sendMail({
-      from: `"Bihar Transport" <${fromEmail}>`,
-      to: ownerEmail,
-      subject,
-      html,
-    });
-
-    console.log(`[email] Booking notification sent — booking=${booking_reference} to=${ownerEmail} messageId=${info.messageId}`);
-    // messageId is returned (not just logged) so the caller can surface the
-    // provider's own id in its structured logs without re-sending anything.
-    return {
-      success: true,
-      message: 'Booking notification sent',
-      messageId: info.messageId,
-      accepted: Array.isArray(info.accepted) ? info.accepted : undefined,
-    };
-  } catch (err) {
-    console.error(`[email] Booking notification failed — booking=${booking_reference} to=${ownerEmail} error="${err.message}"`);
-    return {
-      success: false,
-      message: `SMTP error: ${err.message}`,
-      error: err.message,
-      code: err.code,
-      responseCode: err.responseCode,
-      command: err.command,
-    };
-  }
+async function sendBookingNotification(_booking) {
+  return {
+    success: false,
+    skipped: true,
+    disabled: true,
+    message: 'Booking email notifications are permanently disabled — no email was sent',
+  };
 }
+
 
 /**
  * sendPasswordResetEmail — sends a password reset email to the user.
@@ -348,17 +251,17 @@ async function sendPasswordResetEmail({ email, resetUrl, userName }) {
 </body>
 </html>`;
 
-  const transporter = createTransporter();
-
   try {
-    const info = await transporter.sendMail({
+    const info = await sendEmail({
       from: `"Bihar Transport" <${fromEmail}>`,
       to: email,
       subject,
       html,
+      template: 'password_reset',
+      description: 'password reset email',
     });
 
-    console.log(`[email] Password reset email sent — to=${email} messageId=${info.messageId}`);
+    console.log(`[email] Password reset email ${info?.simulated ? 'SIMULATED (not sent)' : 'sent'} — to=${email} messageId=${info?.messageId || 'none'}`);
     return { success: true, message: 'Password reset email sent', messageId: info.messageId };
   } catch (err) {
     console.error(`[email] Password reset email failed — to=${email} error="${err.message}"`);
@@ -411,23 +314,24 @@ async function sendNewInquiryNotificationEmail(enquiry) {
     hasLogo: Boolean(logo),
   });
 
-  const transporter = createTransporter();
   console.log('[email] Sending inquiry notification...');
   console.log(`[email] Brand logo embedded: ${logo ? 'yes' : 'no (text wordmark used)'}`);
 
   try {
-    const info = await transporter.sendMail({
+    const info = await sendEmail({
       from: `"Bihar Transport" <${fromEmail}>`,
       to: ownerEmail,
       subject,
       text,
       html,
+      template: 'new_inquiry_notification',
+      description: 'new enquiry notification',
       // Embedded CID part — the logo travels inside the message, so it needs no
       // public URL and no client can fail to load it.
       ...(logo ? { attachments: [logo] } : {}),
     });
 
-    console.log('[email] SMTP accepted message');
+    console.log(`[email] ${info?.simulated ? 'SIMULATED — no real message sent' : 'SMTP accepted message'}`);
     console.log(`[email] Message ID: ${info?.messageId}`);
     console.log(`[email] Accepted: ${JSON.stringify(info?.accepted || [])}`);
     console.log(`[email] Rejected: ${JSON.stringify(info?.rejected || [])}`);
@@ -743,5 +647,10 @@ module.exports = {
   // exported for tests
   buildNewInquiryEmail,
   newInquiryRows,
+  // Delivery-mode introspection — lets a diagnostic script or an admin route
+  // report "would a real email be sent right now?" without sending one.
+  resolveEmailMode,
+  isRealDeliveryEnabled,
+  describeEmailMode,
 };
 

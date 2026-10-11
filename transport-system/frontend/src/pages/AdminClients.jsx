@@ -20,7 +20,6 @@ const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: '▦', path: '/admin' },
   { key: 'financials', label: 'Financials', icon: '◷', path: '/admin/financials' },
   { key: 'bookings', label: 'Bookings', icon: '⟐', path: '/admin/bookings' },
-  { key: 'trips', label: 'Trips', icon: '🚛', path: '/admin/trips' },
   { key: 'clients', label: 'Clients', icon: '☍', path: '/admin/clients' },
   { key: 'owners', label: 'Transport Owners', icon: '⧉', path: '/admin/owners' },
   { key: 'vehicles', label: 'Vehicles', icon: '🚛', path: '/admin/vehicles' },
@@ -180,8 +179,7 @@ function AdminClients() {
 
   return (
     <AdminShell navItems={NAV_ITEMS} activeKey="clients" onNav={(key) => {
-      if (key === 'trips') navigate('/admin/trips');
-      else if (key === 'financials') navigate('/admin/financials');
+      if (key === 'financials') navigate('/admin/financials');
       else if (key === 'dashboard') navigate('/admin');
     }}>
       <div className="space-y-5 lg:space-y-6">

@@ -232,6 +232,95 @@ function serializeForDriver(tripFinancial, driverId) {
 }
 
 /**
+ * PHASE 7 — the trip transaction LEDGER projection.
+ *
+ * WHY THIS EXISTS
+ *   `GET /api/trips/:tripId/transactions` was mounted behind `protect` alone,
+ *   so ANY authenticated principal — a customer, a driver, a partner — could
+ *   read the whole money ledger for a trip: the customer's freight, the
+ *   driver's payout, the owner's share, advances, settlements and commission.
+ *   That is exactly the "customer must NOT see vendor payable / commission /
+ *   internal margins" rule.
+ *
+ *   Rather than change the shape admins get (the admin trip UI reads these
+ *   rows directly), this is an explicit ALLOW-LIST projection: a caller sees
+ *   only the money that concerns their own side of the trip, and nothing is
+ *   returned by default. It is an allow list, not a deny list, so a new
+ *   transaction type is invisible to a non-admin until someone consciously
+ *   adds it.
+ *
+ * @param {Array} transactions - FinancialTransaction rows
+ * @param {'ADMIN'|'TRANSPORT_OWNER'|'DRIVER'|'CUSTOMER'} role
+ * @param {Object} user - requesting principal (for driver_id / owner_id)
+ * @returns {Array} rows safe to serialise to this role
+ */
+function projectTransactionsForRole(transactions, role, user = null) {
+  if (role === 'ADMIN') return transactions;
+
+  // The columns a row legitimately needs to render. Nothing internal, no
+  // trip_financial_id, no created_by, no free-text notes, no metadata.
+  const shape = (tx) => ({
+    transaction_id: tx.transaction_id,
+    trip_id: tx.trip_id,
+    transaction_date: tx.transaction_date,
+    transaction_type: tx.transaction_type,
+    direction: tx.direction,
+    amount: tx.amount,
+    from_party: tx.from_party,
+    to_party: tx.to_party,
+    payment_method: tx.payment_method,
+    reference_number: tx.reference_number,
+  });
+
+  if (role === 'CUSTOMER') {
+    // The customer sees their OWN money only: what they were billed and what
+    // they paid. No vendor payable, no commission, no internal margin, no
+    // driver or owner figures.
+    return transactions
+      .filter(
+        (t) =>
+          t.transaction_type === 'CUSTOMER_PAYMENT' ||
+          t.transaction_type === 'CLIENT_PAYMENT' ||
+          t.transaction_type === 'REVERSAL' ||
+          t.transaction_type === 'REFUND'
+      )
+      .map((t) => ({
+        ...shape(t),
+        // A reversal is BT-side bookkeeping; the customer only needs that the
+        // payment it points at was undone, not the internal link.
+        transaction_type: t.transaction_type,
+      }));
+  }
+
+  if (role === 'DRIVER') {
+    // A driver sees only advances and settlements made to them. They are
+    // checked against the trip's own driver id by the caller.
+    return transactions
+      .filter(
+        (t) =>
+          t.transaction_type === 'DRIVER_ADVANCE' ||
+          t.transaction_type === 'FUEL_ADVANCE' ||
+          t.transaction_type === 'DRIVER_SETTLEMENT'
+      )
+      .map(shape);
+  }
+
+  if (role === 'TRANSPORT_OWNER') {
+    // An owner sees only money that moved to or for the owner. They never see
+    // the customer's freight or BT commission.
+    return transactions
+      .filter(
+        (t) =>
+          t.transaction_type === 'OWNER_ADVANCE' ||
+          t.transaction_type === 'OWNER_SETTLEMENT'
+      )
+      .map(shape);
+  }
+
+  return [];
+}
+
+/**
  * Main serializer function.
  * Routes to the appropriate role-based serializer.
  *
@@ -259,4 +348,5 @@ module.exports = {
   serializeForTransportOwner,
   serializeForDriver,
   calculateFromTransactions,
+  projectTransactionsForRole,
 };

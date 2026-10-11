@@ -35,6 +35,8 @@ const RING = {
  * @param {object[]} props.stages     the server rail from workflow.stages
  * @param {string} props.process       the selected process segment
  * @param {object} [props.workflow]    the whole workflow payload (blockers etc.)
+ * @param {string} [props.customerName] resolved customer name, when the trip row
+ *   alone cannot answer it (an enquiry-raised trip carries no client/user/booking)
  * @param {React.ReactNode} props.children  the process workspace
  * @param {React.ReactNode} [props.aside]
  */
@@ -44,13 +46,20 @@ export default function TripProcessShell({
   stages = [],
   process,
   workflow,
+  customerName,
   children,
   aside,
 }) {
   const meta = processMeta(process);
   const rail = buildRail(stages, process);
 
-  const customer = trip?.booking?.customer_name || trip?.customer_name || '—';
+  // A trip raised from an enquiry carries `enquiry_id` but no client/user/booking
+  // relation, so the row on its own cannot name the customer. The caller resolves
+  // that case and passes the real name down; the local reads stay as the fast path
+  // for the ordinary trip. The field is never simply hidden — an unnamed customer
+  // is a data problem, and the honest thing is to show the name that exists.
+  const customer =
+    customerName || trip?.booking?.customer_name || trip?.customer_name || '—';
   const route = [trip?.pickup_location, trip?.drop_location].filter(Boolean).join(' → ') || '—';
   const vehicle = trip?.vehicle?.vehicle_number || trip?.vehicle_number || 'Not assigned';
   const driver = trip?.driver?.driver_name || trip?.driver_name || 'Not assigned';
@@ -74,34 +83,34 @@ export default function TripProcessShell({
       </nav>
 
       {/* ══ HEADER — which trip, which process ════════════════════════════ */}
-      <header className="rounded-xl border border-border bg-white p-4">
+      <header className="rounded-lg border border-border bg-white p-3.5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="font-mono text-[17px] font-bold leading-tight text-[#1e3a5f]">
+            <p className="font-mono text-[16px] font-bold leading-tight text-[#1e3a5f]">
               {trip?.trip_number || `Trip ${tripId}`}
             </p>
             {/* The PROCESS, named. A generic "Trips" heading here is what made
                 it look as though no process had been selected at all. */}
-            <p className="mt-1 text-[12px] font-bold uppercase tracking-[0.16em] text-amber-700">
+            <p className="mt-0.5 text-[10.5px] font-bold uppercase tracking-[0.14em] text-amber-700">
               {meta?.title || meta?.label || 'Process'}
             </p>
-            <p className="mt-1 text-[13px] text-text">{route}</p>
+            <p className="mt-0.5 text-[12.5px] text-text">{route}</p>
           </div>
-          <dl className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-[12.5px] sm:grid-cols-2">
+          <dl className="grid grid-cols-2 gap-x-5 gap-y-1 text-[12px] sm:grid-cols-2">
             <div>
-              <dt className="text-[10.5px] font-semibold uppercase tracking-wider text-muted">Customer</dt>
+              <dt className="text-[10px] font-semibold uppercase tracking-wider text-muted">Customer</dt>
               <dd className="font-semibold text-text">{customer}</dd>
             </div>
             <div>
-              <dt className="text-[10.5px] font-semibold uppercase tracking-wider text-muted">Current Vehicle</dt>
+              <dt className="text-[10px] font-semibold uppercase tracking-wider text-muted">Current Vehicle</dt>
               <dd className="font-mono font-semibold text-text">{vehicle}</dd>
             </div>
             <div>
-              <dt className="text-[10.5px] font-semibold uppercase tracking-wider text-muted">Current Driver</dt>
+              <dt className="text-[10px] font-semibold uppercase tracking-wider text-muted">Current Driver</dt>
               <dd className="font-semibold text-text">{driver}</dd>
             </div>
             <div>
-              <dt className="text-[10.5px] font-semibold uppercase tracking-wider text-muted">Current Status</dt>
+              <dt className="text-[10px] font-semibold uppercase tracking-wider text-muted">Current Status</dt>
               <dd className="font-semibold uppercase text-text">{status}</dd>
             </div>
           </dl>
@@ -113,7 +122,7 @@ export default function TripProcessShell({
           generic trip page, and a future stage opens its own (not started)
           view rather than bouncing the operator back. */}
       <nav aria-label="Trip process" className="overflow-x-auto">
-        <ol className="flex min-w-max items-center gap-1 rounded-xl border border-border bg-white p-3">
+        <ol className="flex min-w-max items-center gap-1 rounded-lg border border-border bg-white px-3 py-2">
           {rail.map((node, i) => {
             const isLast = i === rail.length - 1;
             const Icon = node.state === STAGE_STATE.DONE
@@ -128,7 +137,7 @@ export default function TripProcessShell({
                   aria-current={node.isSelected ? 'page' : undefined}
                   title={node.requirement || node.title}
                   className={cx(
-                    'flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] font-semibold transition',
+                    'flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[11.5px] font-semibold transition',
                     node.isSelected
                       ? 'bg-amber-600 text-white'
                       : node.state === STAGE_STATE.DONE
@@ -136,10 +145,10 @@ export default function TripProcessShell({
                         : 'text-muted hover:bg-slate-50',
                   )}
                 >
-                  <Icon size={12} aria-hidden="true" />
+                  <Icon size={11} aria-hidden="true" />
                   <span>{node.short}</span>
                 </Link>
-                {!isLast ? <span className="text-muted/50" aria-hidden="true">›</span> : null}
+                {!isLast ? <span className="text-muted/40" aria-hidden="true">›</span> : null}
               </li>
             );
           })}
@@ -147,9 +156,9 @@ export default function TripProcessShell({
       </nav>
 
       {/* ══ THE WORKSPACE ═════════════════════════════════════════════════ */}
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="min-w-0 space-y-4">{children}</div>
-        <aside className="space-y-4">{aside}</aside>
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="min-w-0 space-y-3">{children}</div>
+        <aside className="space-y-3">{aside}</aside>
       </div>
 
       {workflow?.blockers?.length ? (

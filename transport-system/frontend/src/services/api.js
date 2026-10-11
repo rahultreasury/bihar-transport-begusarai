@@ -298,6 +298,12 @@ updateDriver: (id, data) => api.put(`/admin/drivers/${id}`, data),
   getTripWorkflow: (tripId) => api.get(`/trips/${tripId}/workflow`),
 
   /**
+   * Get a trip by ID with all relations (vehicle, driver, owner, etc.).
+   * Used by Order / Trip Master to display canonical vehicle/driver data.
+   */
+  getTrip: (tripId) => api.get(`/trips/${tripId}`),
+
+  /**
    * THE OPERATIONAL ACTIONS, one per process workspace.
    *
    * These wrap endpoints that ALREADY EXIST on the backend — nothing here is a
@@ -311,6 +317,9 @@ updateDriver: (id, data) => api.put(`/admin/drivers/${id}`, data),
     arriveAtLoading: (tripId, data) => api.post(`/trips/${tripId}/loading/arrive`, data),
     saveLoadingFacts: (tripId, data) => api.post(`/trips/${tripId}/loading/facts`, data),
     completeLoading: (tripId, data) => api.post(`/trips/${tripId}/loading/complete`, data),
+
+    // ── CANCELLATION (terminal; reason preserved in timeline metadata) ──
+    cancelTrip: (tripId, data) => api.post(`/trips/${tripId}/cancel`, data),
 
     // ── DISPATCH ──────────────────────────────────────────────────────────
     // `getDispatchWorkspace` is the ONE call the Dispatch page makes on load.
@@ -355,6 +364,7 @@ updateDriver: (id, data) => api.put(`/admin/drivers/${id}`, data),
 
     // ── TRANSIT ───────────────────────────────────────────────────────────
     getTracking: (tripId) => api.get(`/trips/${tripId}/tracking`),
+    getTransitWorkspace: (tripId) => api.get(`/trips/${tripId}/transit`),
     startTransit: (tripId, data) => api.post(`/trips/${tripId}/transit/start`, data),
 
     // ── DELIVERY ──────────────────────────────────────────────────────────
@@ -366,6 +376,10 @@ updateDriver: (id, data) => api.put(`/admin/drivers/${id}`, data),
     // ── POD ───────────────────────────────────────────────────────────────
     submitPod: (tripId, data) => api.post(`/trips/${tripId}/pod`, data),
     verifyPod: (tripId, documentId) => api.post(`/trips/${tripId}/pod/${documentId}/verify`),
+
+    // ── COMPLETION ────────────────────────────────────────────────────────
+    getCompletionReadiness: (tripId) => api.get(`/trips/${tripId}/completion/readiness`),
+    completeTrip: (tripId, data) => api.post(`/trips/${tripId}/complete`, data),
 
     /**
      * §16 — MOVEMENT HISTORY. The server writes these events inside the SAME
@@ -400,44 +414,20 @@ updateDriver: (id, data) => api.put(`/admin/drivers/${id}`, data),
   createTripTransaction: (bookingId, data) => api.post(`/trips/${bookingId}/transactions`, data),
   reverseTripTransaction: (bookingId, transactionId, data) => api.post(`/trips/${bookingId}/transactions/${transactionId}/reverse`, data),
 
-  // Trip Management (CRUD + expenses + payments)
+  // Trip Management (CRUD + payments)
   getTrips: (params) => api.get('/trips', { params }),
   getTripSummary: () => api.get('/trips/summary'),
-  getTopClients: (limit) => api.get('/trips/top-clients', { params: { limit } }),
   getTrip: (id) => api.get(`/trips/${id}`),
-  createTrip: (data) => api.post('/trips', data),
-  updateTrip: (id, data) => api.put(`/trips/${id}`, data),
-  deleteTrip: (id) => api.delete(`/trips/${id}`),
   updateTripStatus: (id, status) => api.patch(`/trips/${id}/status`, { status }),
 
-  // Trip Expenses
-  getTripExpenses: (tripId) => api.get(`/trips/${tripId}/expenses`),
-  addTripExpense: (tripId, data) => api.post(`/trips/${tripId}/expenses`, data),
-  
   // Trip Financial Summary (authoritative calculation)
   getTripFinancialSummary: (tripId) => api.get(`/trips/${tripId}/financial-summary`),
-  updateTripExpense: (tripId, expenseId, data) => api.put(`/trips/${tripId}/expenses/${expenseId}`, data),
-  deleteTripExpense: (tripId, expenseId) => api.delete(`/trips/${tripId}/expenses/${expenseId}`),
 
   // Trip Payments
   getTripPayments: (tripId) => api.get(`/trips/${tripId}/payments`),
   addTripPayment: (tripId, data) => api.post(`/trips/${tripId}/payments`, data),
 
-  // Lookup data
-  getTripClients: (search) => api.get('/trips/lookup/clients', { params: { search } }),
-  getTripOfflineClients: (search) => api.get('/trips/lookup/offline-clients', { params: { search } }),
-  getTripDrivers: (search) => api.get('/trips/lookup/drivers', { params: { search } }),
-  getTripVehicles: (search) => api.get('/trips/lookup/vehicles', { params: { search } }),
-  getTripOwners: (search) => api.get('/trips/lookup/owners', { params: { search } }),
-  getVehiclesByOwner: (ownerId) => api.get(`/trips/lookup/vehicles-by-owner/${ownerId}`),
-  getDriversByOwner: (ownerId, search = '') => api.get(`/trips/lookup/drivers-by-owner/${ownerId}`, { params: { search } }),
-  // Resolve the VehicleOwner linked to a Partner (VehicleOwner.partner_link).
-  // Used by the Admin trip-creation wizard to select a Partner and then load
-  // that Partner's linked transport owner, vehicles, and drivers.
-  getOwnerByPartner: (partnerId) => api.get(`/trips/lookup/owner-by-partner/${partnerId}`),
-
   // Trips by entity
-  getTripsByClientId: (clientId, params) => api.get(`/trips/client/${clientId}`, { params }),
   getTripsByDriverId: (driverId, params) => api.get(`/trips/driver/${driverId}`, { params }),
   getTripsByVehicleId: (vehicleId, params) => api.get(`/trips/vehicle/${vehicleId}`, { params }),
   getTripsByOwnerId: (ownerId, params) => api.get(`/trips/owner/${ownerId}`, { params }),
@@ -596,6 +586,11 @@ export const clientAPI = {
 // Standalone Trip Financial APIs (for trips without booking)
 export const tripFinancialAPI = {
   getTripFinancials: (tripId) => api.get(`/trips/${tripId}/financials`),
+  getTripTransactions: (tripId) => api.get(`/trips/${tripId}/transactions`),
+  recordClientPayment: (tripId, payload) => api.post(`/trips/${tripId}/payments/client`, payload),
+  recordTransaction: (tripId, payload) => api.post(`/trips/${tripId}/transactions`, payload),
+  reverseTransaction: (tripId, transactionId) =>
+    api.post(`/trips/${tripId}/transactions/${transactionId}/reverse`),
 };
 
 export default api;

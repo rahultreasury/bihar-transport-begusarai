@@ -9,6 +9,7 @@
  */
 
 import React from 'react';
+import { ChevronRight } from 'lucide-react';
 
 /** Brand palette — mirrors AdminSidebar's navy/amber. */
 export const BRAND = {
@@ -90,13 +91,41 @@ export function stateTone(state) {
 /**
  * Large status card used by the OPERATIONAL STATUS grid (§11).
  * `meta` lines are the timestamp / responsible person / note the backend gave us.
+ *
+ * IT BECOMES CLICKABLE ONLY WHEN IT HAS SOMEWHERE TO GO.
+ *   Passing `onClick` turns the whole card into a control: pointer cursor, a
+ *   hover border/elevation change and a chevron. Passing nothing leaves it a plain
+ *   informational card — no hover, no cursor — so a card never LOOKS actionable
+ *   when there is no action or view behind it (§13).
+ *
+ * Clicking only ever NAVIGATES to an existing workspace. It never changes a
+ * status.
  */
-export function StatusCard({ title, status, tone = 'neutral', meta = [], action, icon: Icon }) {
-  return (
-    <div className="rounded-xl border border-slate-200/80 bg-slate-50/60 p-4">
+export function StatusCard({
+  title,
+  status,
+  tone = 'neutral',
+  meta = [],
+  action,
+  icon: Icon,
+  onClick,
+  hrefLabel,
+}) {
+  const clickable = typeof onClick === 'function';
+
+  const body = (
+    <>
       <div className="flex items-start justify-between gap-2">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{title}</p>
-        {Icon ? <Icon className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" /> : null}
+        <div className="flex shrink-0 items-center gap-1">
+          {Icon ? <Icon className="h-4 w-4 text-slate-400" aria-hidden="true" /> : null}
+          {clickable ? (
+            <ChevronRight
+              className="h-4 w-4 text-slate-400 transition-transform group-hover:translate-x-0.5"
+              aria-hidden="true"
+            />
+          ) : null}
+        </div>
       </div>
       <div className="mt-2">
         <Badge tone={tone}>{status}</Badge>
@@ -111,7 +140,24 @@ export function StatusCard({ title, status, tone = 'neutral', meta = [], action,
         </ul>
       ) : null}
       {action ? <div className="mt-3">{action}</div> : null}
-    </div>
+    </>
+  );
+
+  if (!clickable) {
+    return (
+      <div className="rounded-xl border border-slate-200/80 bg-slate-50/60 p-4">{body}</div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={hrefLabel ? `Open ${hrefLabel}` : undefined}
+      className="group cursor-pointer rounded-xl border border-slate-200/80 bg-slate-50/60 p-4 text-left transition hover:border-[#F5A000]/50 hover:bg-amber-50/40 hover:shadow-[0_2px_6px_rgba(15,43,85,0.08)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#F5A000]/50"
+    >
+      {body}
+    </button>
   );
 }
 
