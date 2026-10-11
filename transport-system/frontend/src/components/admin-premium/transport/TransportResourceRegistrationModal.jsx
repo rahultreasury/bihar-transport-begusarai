@@ -154,12 +154,12 @@ export default function TransportResourceRegistrationModal({
   const handleFormDataChange = useCallback((resource, field, value) => {
     setFormData(prev => ({
       ...prev,
-      [resource]: { ...prev[resource], [field]: value },
+      [resource]: { ...(prev[resource] || {}), [field]: value },
     }));
     // Clear error for this field
     setErrors(prev => ({
       ...prev,
-      [resource]: { ...prev[resource], [field]: null },
+      [resource]: { ...(prev[resource] || {}), [field]: null },
     }));
   }, []);
 
@@ -207,7 +207,7 @@ export default function TransportResourceRegistrationModal({
 
     if (selectedResources.vehicle) {
       const vehicleErrors = {};
-      const vehicleForm = formData.vehicle;
+      const vehicleForm = formData.vehicle || {};
       if (!vehicleForm.vehicle_number?.trim()) vehicleErrors.vehicle_number = 'Vehicle number is required';
       if (!vehicleForm.vehicle_type?.trim()) vehicleErrors.vehicle_type = 'Vehicle type is required';
       if (!vehicleForm.vehicle_name?.trim()) vehicleErrors.vehicle_name = 'Vehicle name is required';
