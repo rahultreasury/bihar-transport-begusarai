@@ -59,6 +59,7 @@ const bookingMvpRoutes = require('./routes/bookingMvpRoutes');
 const webhookRoutes = require('./routes/webhookRoutes');
 const testEmailRoutes = require('./routes/testEmailRoutes');
 const driverManagementRoutes = require('./routes/driverManagementRoutes');
+const transportResourceRoutes = require('./routes/transportResourceRoutes');
 const partnerRoutes = require('./routes/partnerRoutes');
 const partnerApplicationRoutes = require('./routes/partnerApplicationRoutes');
 const partnerSettlementRoutes = require('./routes/partnerSettlementRoutes');
@@ -277,6 +278,9 @@ app.use('/api/admin/settlements', adminLimiter, partnerSettlementRoutes);
 
 // Vehicle Owner Management Routes
 app.use('/api/admin/vehicle-owners', adminLimiter, vehicleOwnerRoutes);
+
+// Transport Resource Registration (combined owner/driver/vehicle)
+app.use('/api/admin/transport-resources', adminLimiter, transportResourceRoutes);
 
 // Client Management Routes (Offline Corporate Clients)
 app.use('/api/admin/clients', adminLimiter, clientRoutes);

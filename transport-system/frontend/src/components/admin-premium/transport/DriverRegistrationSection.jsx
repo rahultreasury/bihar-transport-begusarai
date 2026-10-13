@@ -124,7 +124,11 @@ export default function DriverRegistrationSection({
     return () => { active = false; };
   }, []);
 
-  // Pre-select owner from context or created owner
+  // Pre-select owner from context or created owner.
+  // When opened from an owner profile ("+ Add Driver"), context.ownerId carries
+  // the owner's database ID. Look in the loaded list first; if not found (owner
+  // beyond the first page), fetch it directly so the association is preselected.
+  const ownerFetchAttemptedRef = useRef(false);
   useEffect(() => {
     if (createdOwner) {
       setSelectedOwner(createdOwner);
@@ -136,9 +140,25 @@ export default function DriverRegistrationSection({
         setSelectedOwner(owner);
         onChange('transport_owner_id', String(owner.owner_id));
         onChange('is_self_owner', false);
+      } else if (!ownerLoading && owners.length > 0 && !ownerFetchAttemptedRef.current) {
+        ownerFetchAttemptedRef.current = true;
+        let active = true;
+        (async () => {
+          try {
+            const res = await adminAPI.getVehicleOwner(context.ownerId);
+            if (active && res.data?.success && res.data.data) {
+              setSelectedOwner(res.data.data);
+              onChange('transport_owner_id', String(res.data.data.owner_id));
+              onChange('is_self_owner', false);
+            }
+          } catch (err) {
+            console.error('Failed to fetch owner by ID for pre-selection:', err);
+          }
+        })();
+        return () => { active = false; };
       }
     }
-  }, [createdOwner, context.ownerId, owners, onChange]);
+  }, [createdOwner, context.ownerId, owners, onChange, selectedOwner, ownerLoading]);
 
   // Load vehicles when selectedOwner changes
   useEffect(() => {
@@ -226,18 +246,19 @@ export default function DriverRegistrationSection({
   }, [formData, onChange]);
 
   const inputCls = (f) =>
-    `w-full px-3 py-2.5 rounded-xl border text-sm bg-card/40 focus:outline-none focus:ring-2 focus:ring-amber-500/30 transition ${
-      errors[f] ? 'border-red-500/50' : 'border-border/60'
-    }`;
+    `w-full px-3.5 py-2.5 rounded-lg border text-sm transition-colors duration-150 ${
+      errors[f] ? 'border-bt-danger bg-bt-danger-bg' : 'border-bt-border bg-bt-surface hover:border-bt-border-strong'
+    } focus:outline-none focus:ring-2 focus:ring-bt-orange/40 focus:border-bt-orange text-bt-ink placeholder-bt-ink-3`;
 
   const labelCls = 'block text-sm font-medium mb-1.5';
 
   return (
-    <fieldset className="space-y-5 border border-blue-200 dark:border-blue-800 rounded-2xl p-5 bg-blue-50/30 dark:bg-blue-900/10">
-      <legend className="flex items-center gap-2 px-3 py-1 bg-blue-100 dark:bg-blue-900/30 rounded-xl text-sm font-semibold text-blue-700 dark:text-blue-300">
-        <span className="text-xl">👨‍✈️</span>
-        <span>Driver</span>
-      </legend>
+    <section className="overflow-hidden rounded-xl border border-bt-border bg-bt-surface">
+      <div className="flex items-center gap-2.5 border-b border-bt-border bg-bt-surface-soft px-4 py-2.5">
+        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-bt-navy/10 text-sm text-bt-navy">👨‍✈️</span>
+        <h2 className="text-sm font-bold text-bt-navy">Driver</h2>
+      </div>
+      <div className="space-y-4 p-4">
 
       {/* Driver Information */}
       <div>
@@ -463,6 +484,7 @@ export default function DriverRegistrationSection({
         )}
       </div>
 
-      </fieldset>
+        </div>
+    </section>
   );
 }

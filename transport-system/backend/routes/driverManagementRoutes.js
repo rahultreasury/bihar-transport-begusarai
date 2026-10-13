@@ -122,8 +122,11 @@ router.post('/', protect, adminCheck, [
   body('driver_name').trim().notEmpty().withMessage('Driver name is required'),
   body('mobile').trim().notEmpty().withMessage('Mobile number is required')
     .matches(/^[6-9]\d{9}$/).withMessage('Enter a valid 10-digit mobile number'),
-  body('vehicle_type').trim().notEmpty().withMessage('Vehicle type is required'),
-  body('vehicle_number').trim().notEmpty().withMessage('Vehicle number is required')
+  // vehicle_type / vehicle_number are NOT columns on the Driver table.
+  // They live on TransportVehicle and are reached via Driver.current_vehicle_id.
+  // Accept them optionally for backward compatibility but never require them.
+  body('vehicle_type').optional({ values: 'falsy' }).trim(),
+  body('vehicle_number').optional({ values: 'falsy' }).trim()
     .matches(/^[A-Z]{2}\d{2}[A-Z]{1,2}\d{4}$/i).withMessage('Enter a valid vehicle number (e.g. BR09AB1234)'),
   body('license_number').trim().notEmpty().withMessage('Driving licence number is required'),
   // Phase 2: transport_owner_id is REQUIRED unless is_self_owner is true.
@@ -181,7 +184,20 @@ router.post('/', protect, adminCheck, [
       });
     }
     if (error.code === 'P2002') {
-      return res.status(400).json({ success: false, message: 'A driver with this mobile number already exists' });
+      // Prisma P2002 is a unique-constraint violation. The constraint that
+      // failed is carried in error.meta.target (an array of column names).
+      // Only the `mobile` constraint is a genuine duplicate-driver signal;
+      // any other unique field (e.g. driver_code) is an internal
+      // code-generation collision and must NOT be misreported to the user
+      // as a duplicate mobile.
+      const target = Array.isArray(error.meta?.target) ? error.meta.target : [];
+      if (target.includes('mobile')) {
+        return res.status(409).json({ success: false, message: 'A driver with this mobile number already exists' });
+      }
+      return res.status(500).json({
+        success: false,
+        message: 'Could not complete registration due to a conflicting unique value. Please try again.',
+      });
     }
     if (error.code === 'OWNER_REQUIRED' ||
         error.code === 'OWNER_INVALID'  ||

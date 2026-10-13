@@ -46,6 +46,7 @@ const AdminAssignVehicle = lazy(() => import('./pages/AdminAssignVehicle'));
 const AdminLogin = lazy(() => import('./pages/AdminLogin'));
 const AdminDrivers = lazy(() => import('./pages/AdminDrivers'));
 const AdminDriverProfile = lazy(() => import('./pages/AdminDriverProfile'));
+const AdminRegisterResources = lazy(() => import('./pages/AdminRegisterResources'));
 const AdminVehicles = lazy(() => import('./pages/AdminVehicles'));
 const AdminVehicleProfile = lazy(() => import('./pages/AdminVehicleProfile'));
 const AdminVehicleOwners = lazy(() => import('./pages/AdminVehicleOwners'));
@@ -536,15 +537,23 @@ function AppContent() {
               <Suspense fallback={<PageLoader label="Loading Vehicle Assignment..." />}><AdminAssignVehicle /></Suspense>
             </ProtectedRoute>
           } 
-        />
-        <Route
-          path="/admin/drivers"
-          element={
-            <ProtectedRoute>
-              <Suspense fallback={<PageLoader label="Loading Drivers..." />}><AdminDrivers /></Suspense>
-            </ProtectedRoute>
-          }
-        />
+          />
+          <Route
+            path="/admin/drivers/register-resources"
+            element={
+              <ProtectedRoute>
+                <Suspense fallback={<PageLoader label="Loading Register Resources..." />}><AdminRegisterResources /></Suspense>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/drivers"
+            element={
+              <ProtectedRoute>
+                <Suspense fallback={<PageLoader label="Loading Drivers..." />}><AdminDrivers /></Suspense>
+              </ProtectedRoute>
+            }
+          />
 <Route
   path="/admin/drivers/:id"
   element={

@@ -7,7 +7,6 @@ import KpiCard from '../components/admin-premium/ui/KpiCard';
 import PremiumTable from '../components/admin-premium/ui/PremiumTable';
 import EmptyState from '../components/admin-premium/ui/EmptyState';
 import { LoadingSkeleton } from '../components/admin-premium/ui/LoadingSkeleton';
-import TransportResourceRegistrationModal from '../components/admin-premium/transport/TransportResourceRegistrationModal';
 
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: '▦' },
@@ -97,11 +96,9 @@ export default function AdminVehicles() {
   const [ownerFilter, setOwnerFilter] = useState(searchParams.get('owner_id') || '');
   const [driverFilter, setDriverFilter] = useState(searchParams.get('driver_id') || '');
   const [docFilter, setDocFilter] = useState(searchParams.get('document_status') || '');
-  const [showRegisterModal, setShowRegisterModal] = useState(false);
   const [toast, setToast] = useState(null);
   const [owners, setOwners] = useState([]);
   const [drivers, setDrivers] = useState([]);
-  const [registerContext, setRegisterContext] = useState({});
   const [searchResetKey, setSearchResetKey] = useState(0);
   const requestIdRef = useRef(0);
 
@@ -287,12 +284,6 @@ export default function AdminVehicles() {
       page: '',
     });
   }, [updateVehicleQuery]);
-
-  const handleRegisterSuccess = useCallback(() => {
-    fetchVehicles(1);
-    fetchStats();
-    showToast('Vehicle added successfully');
-  }, [fetchVehicles, fetchStats, showToast]);
 
   const getDocumentStatus = (v) => {
     const today = new Date();
@@ -492,7 +483,7 @@ export default function AdminVehicles() {
             </p>
           </div>
           <button
-            onClick={() => { setRegisterContext({ sourcePage: 'vehicles' }); setShowRegisterModal(true); }}
+            onClick={() => navigate('/admin/drivers/register-resources', { state: { context: { sourcePage: 'vehicles' } } })}
             className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition shadow-sm shadow-amber-500/20"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -708,7 +699,7 @@ export default function AdminVehicles() {
                   Add your first vehicle to start managing your transport fleet.
                 </p>
                 <button
-                  onClick={() => { setRegisterContext({ sourcePage: 'vehicles' }); setShowRegisterModal(true); }}
+                  onClick={() => navigate('/admin/drivers/register-resources', { state: { context: { sourcePage: 'vehicles' } } })}
                   className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition shadow-lg shadow-amber-500/20"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -760,15 +751,9 @@ export default function AdminVehicles() {
           </div>
         )}
 
-        {/* Register Modal */}
-        {showRegisterModal && (
-          <TransportResourceRegistrationModal
-            isOpen={showRegisterModal}
-            onClose={() => setShowRegisterModal(false)}
-            onSuccess={handleRegisterSuccess}
-            context={registerContext}
-          />
-        )}
+        {/* Registration now opens as a dedicated full-screen workspace at
+            /admin/drivers/register-resources (see the + Register Resource
+            button above). The old inline modal has been removed. */}
       </div>
     </AdminShell>
   );

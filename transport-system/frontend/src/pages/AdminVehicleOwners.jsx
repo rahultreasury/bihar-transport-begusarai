@@ -311,7 +311,7 @@ export default function AdminVehicleOwners() {
             <p className="text-muted text-sm mt-1">Manage vehicle owners and their fleet</p>
           </div>
           <button
-            onClick={() => { setRegisterContext({ sourcePage: 'owners', resourceType: 'owner' }); setShowRegisterModal(true); }}
+            onClick={() => navigate('/admin/drivers/register-resources', { state: { context: { sourcePage: 'owners', resourceType: 'owner' } } })}
             className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-medium transition"
           >
             + Register Owner

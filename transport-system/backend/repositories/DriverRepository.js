@@ -55,16 +55,25 @@ class DriverRepository {
    */
   async generateDriverCode(tx = null) {
     const client = tx || db();
-    const lastDriver = await client.driver.findFirst({
-      orderBy: { driver_code: 'desc' },
-      select: { driver_code: true },
-    });
-    
+    // Order NULLs LAST. PostgreSQL returns NULLs first for DESC ordering,
+    // so a naive orderBy: { driver_code: 'desc' } would always pick a NULL
+    // row and keep regenerating DRV000001, colliding with the unique
+    // constraint. Use a raw query with explicit NULLS LAST so the highest
+    // existing non-null code is always used as the seed.
+    const rows = await client.$queryRaw`
+      SELECT driver_code
+      FROM drivers
+      WHERE driver_code IS NOT NULL
+      ORDER BY driver_code DESC
+      LIMIT 1
+    `;
+
     let nextNum = 1;
-    if (lastDriver && lastDriver.driver_code) {
-      const match = lastDriver.driver_code.match(/DRV(\d+)/);
+    const lastCode = rows[0] && rows[0].driver_code;
+    if (lastCode) {
+      const match = String(lastCode).match(/DRV(\d+)/);
       if (match) {
-        nextNum = parseInt(match[1]) + 1;
+        nextNum = parseInt(match[1], 10) + 1;
       }
     }
     return `DRV${String(nextNum).padStart(6, '0')}`;

@@ -45,16 +45,25 @@ class VehicleOwnerRepository {
    */
   async generateOwnerCode(tx = null) {
     const client = tx || prisma;
-    const lastOwner = await client.vehicleOwner.findFirst({
-      orderBy: { owner_code: 'desc' },
-      select: { owner_code: true },
-    });
+    // Order NULLs LAST. PostgreSQL returns NULLs first for DESC ordering,
+    // so a naive orderBy: { owner_code: 'desc' } would always pick a NULL
+    // row and keep regenerating VOW000001, colliding with the unique
+    // constraint. Use a raw query with explicit NULLS LAST so the highest
+    // existing non-null code is always used as the seed.
+    const rows = await client.$queryRaw`
+      SELECT owner_code
+      FROM vehicle_owners
+      WHERE owner_code IS NOT NULL
+      ORDER BY owner_code DESC
+      LIMIT 1
+    `;
 
     let nextNum = 1;
-    if (lastOwner && lastOwner.owner_code) {
-      const match = lastOwner.owner_code.match(/VOW(\d+)/);
+    const lastCode = rows[0] && rows[0].owner_code;
+    if (lastCode) {
+      const match = String(lastCode).match(/VOW(\d+)/);
       if (match) {
-        nextNum = parseInt(match[1]) + 1;
+        nextNum = parseInt(match[1], 10) + 1;
       }
     }
     return `VOW${String(nextNum).padStart(6, '0')}`;
@@ -502,7 +511,12 @@ class VehicleOwnerRepository {
     const client = tx || prisma;
     return await client.driver.findUnique({
       where: { driver_id: driverId },
-      select: { driver_id: true, driver_code: true, driver_name: true, partner_id: true, current_vehicle_id: true },
+      // transport_owner_id MUST be selected: VehicleOwnerService.createOwnerVehicle
+      // compares driver.transport_owner_id against the owner id to enforce that
+      // the vehicle and driver belong to the same owner. Without it the field is
+      // undefined and every legitimate owner-scoped vehicle creation fails with
+      // "Driver belongs to a different transport owner".
+      select: { driver_id: true, driver_code: true, driver_name: true, partner_id: true, current_vehicle_id: true, transport_owner_id: true },
     });
   }
 

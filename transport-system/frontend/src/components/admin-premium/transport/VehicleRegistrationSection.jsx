@@ -231,15 +231,40 @@ export default function VehicleRegistrationSection({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Pre-select owner from context or created owner
- useEffect(() => {
-   if (createdOwner || context.ownerId || selectedOwner) return;
-   if (!initialOwner?.owner_id) return;
-
-   setSelectedOwner(initialOwner);
-   onChange('owner_id', String(initialOwner.owner_id));
-   setOwnerType(initialOwner.owner_type || '');
- }, [createdOwner, context.ownerId, initialOwner, onChange, selectedOwner]);
+  // Pre-select owner from context or created owner.
+  // When opened from an owner profile ("+ Add Vehicle"), context.ownerId carries
+  // the owner's database ID. Fetch it directly so the owner is preselected even
+  // when it is not in the first page of the searchable owner list.
+  useEffect(() => {
+    if (createdOwner) {
+      setSelectedOwner(createdOwner);
+      onChange('owner_id', String(createdOwner.owner_id));
+      setOwnerType(createdOwner.owner_type || '');
+      return;
+    }
+    if (selectedOwner) return;
+    if (context.ownerId) {
+      let active = true;
+      (async () => {
+        try {
+          const res = await adminAPI.getVehicleOwner(context.ownerId);
+          if (active && res.data?.success && res.data.data) {
+            setSelectedOwner(res.data.data);
+            onChange('owner_id', String(res.data.data.owner_id));
+            setOwnerType(res.data.data.owner_type || '');
+          }
+        } catch (err) {
+          console.error('Failed to fetch owner by ID for pre-selection:', err);
+        }
+      })();
+      return () => { active = false; };
+    }
+    if (initialOwner?.owner_id) {
+      setSelectedOwner(initialOwner);
+      onChange('owner_id', String(initialOwner.owner_id));
+      setOwnerType(initialOwner.owner_type || '');
+    }
+  }, [createdOwner, context.ownerId, initialOwner, onChange, selectedOwner]);
 
  // Pre-select driver from context or created driver
  useEffect(() => {
@@ -391,9 +416,9 @@ export default function VehicleRegistrationSection({
   }, [errors, onChange, onErrorsChange]);
 
   const inputCls = (f) =>
-    `w-full px-3 py-2.5 rounded-xl border text-sm bg-card/40 focus:outline-none focus:ring-2 focus:ring-amber-500/30 transition ${
-      errors[f] ? 'border-red-500/50' : 'border-border/60'
-    }`;
+    `w-full px-3.5 py-2.5 rounded-lg border text-sm transition-colors duration-150 ${
+      errors[f] ? 'border-bt-danger bg-bt-danger-bg' : 'border-bt-border bg-bt-surface hover:border-bt-border-strong'
+    } focus:outline-none focus:ring-2 focus:ring-bt-orange/40 focus:border-bt-orange text-bt-ink placeholder-bt-ink-3`;
 
   const labelCls = 'block text-sm font-medium mb-1.5';
 
@@ -435,11 +460,12 @@ export default function VehicleRegistrationSection({
   );
 
   return (
-    <fieldset className="space-y-5 border border-purple-200 dark:border-purple-800 rounded-2xl p-5 bg-purple-50/30 dark:bg-purple-900/10">
-      <legend className="flex items-center gap-2 px-3 py-1 bg-purple-100 dark:bg-purple-900/30 rounded-xl text-sm font-semibold text-purple-700 dark:text-purple-300">
-        <span className="text-xl">🚛</span>
-        <span>Vehicle</span>
-      </legend>
+    <section className="overflow-hidden rounded-xl border border-bt-border bg-bt-surface">
+      <div className="flex items-center gap-2.5 border-b border-bt-border bg-bt-surface-soft px-4 py-2.5">
+        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-teal-100 text-sm text-teal-600">🚛</span>
+        <h2 className="text-sm font-bold text-bt-navy">Vehicle</h2>
+      </div>
+      <div className="space-y-4 p-4">
 
       {/* ── STEP 1 — Vehicle Identification ─────────────────────────── */}
       <div className="space-y-3">
@@ -904,6 +930,7 @@ export default function VehicleRegistrationSection({
           </label>
         )}
       </div>
-    </fieldset>
+      </div>
+    </section>
   );
 }

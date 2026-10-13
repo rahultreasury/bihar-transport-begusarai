@@ -238,11 +238,10 @@ const handleSubmit = useCallback(async (e) => {
 
     // Use ref for synchronous access to latest form data
     const currentFormData = formDataRef.current;
-  
+   
     setSubmitting(true);
     setServerError(null);
-    const newEntities = {};
-  
+   
     try {
       if (isEdit) {
         const vehicleForm = currentFormData.vehicle;
@@ -270,7 +269,7 @@ const handleSubmit = useCallback(async (e) => {
           current_status: vehicleForm.current_status || 'available',
           is_available: (vehicleForm.current_status || 'available') === 'available',
         };
- 
+  
         const res = await adminAPI.updateVehicle(editingVehicle.vehicle_id, vehiclePayload);
         if (res.data?.success) {
           const updatedVehicle = res.data.data || editingVehicle;
@@ -282,42 +281,28 @@ const handleSubmit = useCallback(async (e) => {
         }
         return;
       }
- 
-      // Create Owner first (if selected)
-      if (selectedResources.owner) {
-        const ownerPayload = {
+  
+      // Prepare payload for combined endpoint
+      const payload = {
+        owner: selectedResources.owner ? {
           owner_name: currentFormData.owner.owner_name.trim(),
-          mobile: formData.owner.phone.replace(/\D/g, ''),
-          city: formData.owner.city.trim(),
-          commission_percentage: parseFloat(formData.owner.commission_percentage) || 10,
-          company_name: formData.owner.company_name?.trim() || null,
-          email: formData.owner.email?.trim() || null,
-          state: formData.owner.state || 'Bihar',
-          gst_number: formData.owner.gst_number?.trim() || null,
-          pan_number: formData.owner.pan_number?.trim() || null,
-          bank_name: formData.owner.bank_name?.trim() || null,
-          bank_account: formData.owner.bank_account?.trim() || null,
-          bank_ifsc: formData.owner.bank_ifsc?.trim() || null,
-          upi_id: formData.owner.upi_id?.trim() || null,
-          address: formData.owner.address?.trim() || null,
-          alternate_mobile: formData.owner.alternate_mobile?.trim() || null,
-        };
-        const res = await adminAPI.createVehicleOwner(ownerPayload);
-        if (res.data?.success) {
-          newEntities.owner = res.data.data;
-          showToast('✓ Transport Owner registered successfully.');
-        } else {
-          throw new Error(res.data?.message || 'Failed to create owner');
-        }
-      }
-
-      // Create Driver (if selected)
-      if (selectedResources.driver) {
-        // Auto-enable self-owner if no owner is being created/selected and driver doesn't have explicit owner
-        const hasOwner = selectedResources.owner || currentFormData.driver.transport_owner_id;
-        const useSelfOwner = currentFormData.driver.is_self_owner || (!hasOwner && !selectedResources.owner);
+          mobile: currentFormData.owner.phone.replace(/\D/g, ''),
+          city: currentFormData.owner.city.trim(),
+          commission_percentage: parseFloat(currentFormData.owner.commission_percentage) || 10,
+          company_name: currentFormData.owner.company_name?.trim() || null,
+          email: currentFormData.owner.email?.trim() || null,
+          state: currentFormData.owner.state || 'Bihar',
+          gst_number: currentFormData.owner.gst_number?.trim() || null,
+          pan_number: currentFormData.owner.pan_number?.trim() || null,
+          bank_name: currentFormData.owner.bank_name?.trim() || null,
+          bank_account: currentFormData.owner.bank_account?.trim() || null,
+          bank_ifsc: currentFormData.owner.bank_ifsc?.trim() || null,
+          upi_id: currentFormData.owner.upi_id?.trim() || null,
+          address: currentFormData.owner.address?.trim() || null,
+          alternate_mobile: currentFormData.owner.alternate_mobile?.trim() || null,
+        } : null,
         
-        const driverPayload = {
+        driver: selectedResources.driver ? {
           driver_name: currentFormData.driver.driver_name.trim(),
           mobile: currentFormData.driver.mobile.trim(),
           alternate_mobile: currentFormData.driver.alternate_mobile?.trim() || undefined,
@@ -329,31 +314,12 @@ const handleSubmit = useCallback(async (e) => {
           state: currentFormData.driver.state || 'Bihar',
           address: currentFormData.driver.address?.trim() || undefined,
           emergency_contact: currentFormData.driver.emergency_contact?.trim() || undefined,
-          ...(useSelfOwner
+          ...(currentFormData.driver.is_self_owner
             ? { is_self_owner: true }
-            : { transport_owner_id: currentFormData.driver.transport_owner_id ? parseInt(currentFormData.driver.transport_owner_id) : (newEntities.owner?.owner_id || undefined) }),
-        };
-        const res = await adminAPI.createDriver(driverPayload);
-        if (res.data?.success) {
-          newEntities.driver = res.data.data;
-          showToast('✓ Driver registered successfully.');
-          
-          // Assign vehicle after driver creation if selected
-          if (formData.driver.vehicle_id && res.data.data?.driver_id) {
-            try {
-              await adminAPI.assignVehicleToDriver(res.data.data.driver_id, parseInt(formData.driver.vehicle_id));
-            } catch (assignErr) {
-              console.error('Vehicle assignment failed:', assignErr);
-            }
-          }
-        } else {
-          throw new Error(res.data?.message || 'Failed to create driver');
-        }
-      }
-
-      // Create Vehicle (if selected)
-      if (selectedResources.vehicle) {
-        const vehiclePayload = {
+            : { transport_owner_id: currentFormData.driver.transport_owner_id ? parseInt(currentFormData.driver.transport_owner_id) : undefined }),
+        } : null,
+        
+        vehicle: selectedResources.vehicle ? {
           vehicle_number: currentFormData.vehicle.vehicle_number.trim(),
           vehicle_type: currentFormData.vehicle.vehicle_type.trim(),
           vehicle_name: currentFormData.vehicle.vehicle_name.trim(),
@@ -372,31 +338,24 @@ const handleSubmit = useCallback(async (e) => {
           base_location: currentFormData.vehicle.base_location?.trim() || null,
           hourly_rate: currentFormData.vehicle.hourly_rate ? Number(currentFormData.vehicle.hourly_rate) : null,
           per_km_rate: currentFormData.vehicle.per_km_rate ? Number(currentFormData.vehicle.per_km_rate) : null,
-          driver_id: currentFormData.vehicle.driver_id ? Number(currentFormData.vehicle.driver_id) : (newEntities.driver?.driver_id || null),
+          driver_id: currentFormData.vehicle.driver_id ? Number(currentFormData.vehicle.driver_id) : undefined,
           current_status: currentFormData.vehicle.current_status,
           assign_owner_driver: currentFormData.vehicle.assign_owner_driver,
-        };
-        // Owner is optional - vehicle can be created independently
-        const ownerId = currentFormData.vehicle.owner_id ? parseInt(currentFormData.vehicle.owner_id) : (newEntities.owner?.owner_id);
-        let res;
-        if (ownerId) {
-          // Create vehicle under a specific owner
-          res = await adminAPI.createVehicleOwnerVehicle(ownerId, vehiclePayload);
-        } else {
-          // Create standalone vehicle (no owner) - use admin vehicle creation endpoint
-          res = await adminAPI.createVehicle(vehiclePayload);
-        }
-        if (res.data?.success) {
-          newEntities.vehicle = res.data.data;
-          showToast('✓ Vehicle registered successfully.');
-        } else {
-          throw new Error(res.data?.message || 'Failed to create vehicle');
-        }
+        } : null,
+        
+        owner_context_id: undefined,
+        driver_context_id: undefined
+      };
+  
+      // Call the combined endpoint
+      const res = await adminAPI.registerTransportResources(payload);
+      if (res.data?.success) {
+        setCreatedEntities(res.data.data);
+        setStep('success');
+        onSuccess?.(res.data.data);
+      } else {
+        throw new Error(res.data?.message || 'Failed to register transport resources');
       }
-
-      setCreatedEntities(newEntities);
-      setStep('success');
-      onSuccess?.(newEntities);
       
     } catch (err) {
       console.error('Registration error:', err);

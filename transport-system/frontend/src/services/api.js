@@ -450,6 +450,8 @@ updateDriver: (id, data) => api.put(`/admin/drivers/${id}`, data),
   getVehicleOwnerDrivers: (id, params) => api.get(`/admin/vehicle-owners/${id}/drivers`, { params }),
   getVehicleOwnerVehicles: (id, params) => api.get(`/admin/vehicle-owners/${id}/vehicles`, { params }),
   createVehicleOwnerVehicle: (id, data) => api.post(`/admin/vehicle-owners/${id}/vehicles`, data),
+  // Combined Transport Resource Registration (owner + driver + vehicle in one transaction)
+  registerTransportResources: (data) => api.post('/admin/transport-resources', data),
   // Vehicle RC lookup — proxied by OUR backend, which holds the Parse CarInfo
   // API key server-side. The browser never talks to Parse and never sees the key.
   // `refresh: true` bypasses the backend's short-lived lookup cache.

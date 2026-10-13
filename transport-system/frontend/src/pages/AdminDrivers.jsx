@@ -11,7 +11,6 @@ import DriverStatusBadge from '../components/admin-premium/drivers/DriverStatusB
 import DriverFilters from '../components/admin-premium/drivers/DriverFilters';
 import DriverTransactionModal from '../components/admin-premium/drivers/DriverTransactionModal';
 import DriverVehicleAssignModal from '../components/admin-premium/drivers/DriverVehicleAssignModal';
-import TransportResourceRegistrationModal from '../components/admin-premium/transport/TransportResourceRegistrationModal';
 
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: '▦' },
@@ -109,11 +108,9 @@ function AdminDrivers() {
   const [showFilters, setShowFilters] = useState(false);
   const [sortField, setSortField] = useState('created_at');
   const [sortDirection, setSortDirection] = useState('desc');
-  const [showRegisterModal, setShowRegisterModal] = useState(false);
   const [showTransactionModal, setShowTransactionModal] = useState(false);
   const [showVehicleAssignModal, setShowVehicleAssignModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
-  const [registerContext, setRegisterContext] = useState({});
 const [selectedDriver, setSelectedDriver] = useState(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
@@ -339,12 +336,6 @@ const searchInputRef = useRef(null);
     setPagination(prev => ({ ...prev, page: 1 }));
     searchInputRef.current?.focus();
   }, []);
-
-  // Handle driver registration success
-  const handleRegisterSuccess = useCallback(() => {
-    fetchDrivers(1);
-    fetchStats();
-  }, [fetchDrivers, fetchStats]);
 
   // KPI data
   const noVehicleCount = useMemo(() => drivers.filter(d => !d.currentVehicle && !d.transportVehicles?.length).length, [drivers]);
@@ -671,7 +662,7 @@ const searchInputRef = useRef(null);
             </p>
           </div>
           <button
-            onClick={() => { setRegisterContext({ sourcePage: 'drivers' }); setShowRegisterModal(true); }}
+            onClick={() => navigate('/admin/drivers/register-resources')}
             className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition shadow-sm shadow-amber-500/20"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -852,7 +843,7 @@ const searchInputRef = useRef(null);
                 </p>
                 {activeFilterCount === 0 && (
                   <button
-                    onClick={() => { setRegisterContext({ sourcePage: 'drivers' }); setShowRegisterModal(true); }}
+                    onClick={() => navigate('/admin/drivers/register-resources', { state: { context: { sourcePage: 'drivers' } } })}
                     className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition shadow-lg shadow-amber-500/20"
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1005,16 +996,6 @@ const searchInputRef = useRef(null);
               </button>
             </div>
           </div>
-        )}
-
-        {/* Register Resource Modal */}
-        {showRegisterModal && (
-          <TransportResourceRegistrationModal
-            isOpen={showRegisterModal}
-            onClose={() => setShowRegisterModal(false)}
-            onSuccess={handleRegisterSuccess}
-            context={registerContext}
-          />
         )}
 
         {/* Edit Driver Modal */}

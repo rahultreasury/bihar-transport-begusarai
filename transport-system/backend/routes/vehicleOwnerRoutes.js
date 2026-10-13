@@ -39,7 +39,19 @@ const handleError = (res, error, defaultMsg = 'Server error') => {
     return res.status(409).json({ success: false, message: error.message, data: error.data });
   }
   if (error.code === 'P2002') {
-    return res.status(400).json({ success: false, message: 'A vehicle owner with this mobile already exists' });
+    // Prisma P2002 is a unique-constraint violation. The constraint that
+    // failed is carried in error.meta.target (an array of column names).
+    // Only the `mobile` constraint is a genuine duplicate-owner signal;
+    // any other unique field (e.g. owner_code) is an internal code-generation
+    // collision and must NOT be misreported to the user as a duplicate mobile.
+    const target = Array.isArray(error.meta?.target) ? error.meta.target : [];
+    if (target.includes('mobile')) {
+      return res.status(409).json({ success: false, message: 'A vehicle owner with this mobile already exists' });
+    }
+    return res.status(500).json({
+      success: false,
+      message: 'Could not complete registration due to a conflicting unique value. Please try again.',
+    });
   }
   res.status(500).json({ success: false, message: error.message || defaultMsg });
 };

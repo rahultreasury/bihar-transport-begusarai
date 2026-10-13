@@ -7,7 +7,6 @@ import KpiCard from '../components/admin-premium/ui/KpiCard';
 import PremiumTable from '../components/admin-premium/ui/PremiumTable';
 import EmptyState from '../components/admin-premium/ui/EmptyState';
 import { LoadingSkeleton } from '../components/admin-premium/ui/LoadingSkeleton';
-import TransportResourceRegistrationModal from '../components/admin-premium/transport/TransportResourceRegistrationModal';
 
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: '▦' },
@@ -120,8 +119,6 @@ export default function AdminPartners() {
   const [statusFilter, setStatusFilter] = useState('');
   const [sortField, setSortField] = useState('created_at');
   const [sortDirection, setSortDirection] = useState('desc');
-  const [showRegisterModal, setShowRegisterModal] = useState(false);
-  const [registerContext, setRegisterContext] = useState({});
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deletingOwner, setDeletingOwner] = useState(false);
   const [deleteOwnerError, setDeleteOwnerError] = useState(null);
@@ -284,11 +281,6 @@ export default function AdminPartners() {
     }
   }, [deleteTarget, deletingOwner, pagination.page, fetchOwners, fetchStats, showToast]);
 
-  const handleRegisterSuccess = useCallback(() => {
-    fetchOwners(1);
-    fetchStats();
-  }, [fetchOwners, fetchStats]);
-
   const formatCurrency = (amount) => {
     if (amount === null || amount === undefined) return '₹0';
     return new Intl.NumberFormat('en-IN', {
@@ -432,14 +424,8 @@ export default function AdminPartners() {
 
   return (
 <AdminShell navItems={NAV_ITEMS} activeKey="owners" onNav={(k) => {}}>
-      {showRegisterModal && (
-        <TransportResourceRegistrationModal
-          isOpen={showRegisterModal}
-          onClose={() => { setShowRegisterModal(false); setRegisterContext({}); }}
-          onSuccess={handleRegisterSuccess}
-          context={registerContext}
-        />
-      )}
+      {/* Registration now opens as a dedicated full-screen workspace at
+          /admin/drivers/register-resources (see the + Register button). */}
 
       {/* Toast notification */}
       {toast && (
@@ -564,8 +550,8 @@ export default function AdminPartners() {
                 >
                   Settlements
                 </button>
-                <button
-                  onClick={() => { setRegisterContext({ sourcePage: 'owners', resourceType: 'owner' }); setShowRegisterModal(true); }}
+                  <button
+                    onClick={() => navigate('/admin/drivers/register-resources', { state: { context: { sourcePage: 'owners', resourceType: 'owner' } } })}
                   className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition shadow-sm shadow-amber-500/20"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

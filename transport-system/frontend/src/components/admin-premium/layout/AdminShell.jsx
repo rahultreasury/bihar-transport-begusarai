@@ -41,7 +41,7 @@ import AdminNavigationDrawer from './AdminNavigationDrawer';
 import { useAdminTheme } from '../theme/useAdminTheme';
 import { DEFAULT_NAV_ITEMS, usePendingEnquiryCount } from './adminNavigation';
 
-export default function AdminShell({ navItems, activeKey, onNav, children }) {
+export default function AdminShell({ navItems, activeKey, onNav, children, fullBleed = false }) {
   const { themeClass } = useAdminTheme();
 
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -84,29 +84,42 @@ export default function AdminShell({ navItems, activeKey, onNav, children }) {
 
       {/* ── FULL-WIDTH WORKSPACE ──────────────────────────────────────────
           There is no sidebar sibling and no left offset. `max-w-none`
-          (i.e. no max-width utility) is the whole point of this refactor. */}
+          (i.e. no max-width utility) is the whole point of this refactor.
+
+          `fullBleed` opts a single route (the Register Resources workspace)
+          out of the shared centred/padded container so it can own its own
+          horizontal gutters. It deliberately keeps the SAME natural
+          document scroll as every other page — no fixed height, no nested
+          scroll container — so the page title and progress scroll away
+          normally. Every other page keeps the standard container untouched. */}
       <div className="flex w-full max-w-full min-w-0 flex-col">
         <main
           id="admin-main-content"
           role="main"
           tabIndex={-1}
-          className="w-full max-w-none min-w-0 flex-1 overflow-x-hidden"
+          className={`w-full max-w-none min-w-0 flex-1 ${fullBleed ? '' : 'overflow-x-hidden'}`}
         >
-          {/*
-            The page container.
+          {fullBleed ? (
+            children
+          ) : (
+            <>
+              {/*
+                The page container.
 
-            `max-w-[1680px]` rather than an unbounded stretch: a 40-column table
-            pushed to a 2560px monitor is unreadable, and an operations console
-            is meant to be scanned, not admired. Capping the measure keeps line
-            lengths sane on very wide screens while still giving data-heavy
-            tables every pixel they need on a laptop.
+                `max-w-[1680px]` rather than an unbounded stretch: a 40-column table
+                pushed to a 2560px monitor is unreadable, and an operations console
+                is meant to be scanned, not admired. Capping the measure keeps line
+                lengths sane on very wide screens while still giving data-heavy
+                tables every pixel they need on a laptop.
 
-            The padding lives here rather than on each page, so all ~30 modules
-            share one gutter: 16px on mobile, 24px on tablet, 32px on desktop.
-          */}
-          <div className="mx-auto w-full max-w-[1680px] min-w-0 px-4 pb-10 pt-6 sm:px-6 lg:px-8 lg:pb-12 lg:pt-8">
-            {children}
-          </div>
+                The padding lives here rather than on each page, so all ~30 modules
+                share one gutter: 16px on mobile, 24px on tablet, 32px on desktop.
+              */}
+              <div className="mx-auto w-full max-w-[1680px] min-w-0 px-4 pb-10 pt-6 sm:px-6 lg:px-8 lg:pb-12 lg:pt-8">
+                {children}
+              </div>
+            </>
+          )}
         </main>
       </div>
 

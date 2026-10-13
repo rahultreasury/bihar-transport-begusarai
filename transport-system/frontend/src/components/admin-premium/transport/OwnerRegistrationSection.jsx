@@ -151,20 +151,21 @@ export default function OwnerRegistrationSection({
   }, [createdOwner, context.ownerId, formData]);
 
   const inputCls = (f) =>
-    `w-full px-4 py-3.5 rounded-xl border text-[15px] leading-relaxed transition duration-150 ${
+    `w-full px-3.5 py-2.5 rounded-lg border text-sm transition-colors duration-150 ${
       errors[f]
-        ? 'border-red-400 bg-red-50 dark:bg-red-900/10 dark:border-red-500/50'
-        : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:border-gray-300 dark:hover:border-gray-600'
-    } focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500 dark:text-white placeholder-gray-400 dark:placeholder-gray-500`;
+        ? 'border-bt-danger bg-bt-danger-bg'
+        : 'border-bt-border bg-bt-surface hover:border-bt-border-strong'
+    } focus:outline-none focus:ring-2 focus:ring-bt-orange/40 focus:border-bt-orange text-bt-ink placeholder-bt-ink-3`;
 
   const labelCls = 'block text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1.5';
 
   return (
-    <fieldset className="space-y-5 border border-amber-200 dark:border-amber-800 rounded-2xl p-5 bg-amber-50/30 dark:bg-amber-900/10">
-      <legend className="flex items-center gap-2 px-3 py-1 bg-amber-100 dark:bg-amber-900/30 rounded-xl text-sm font-semibold text-amber-700 dark:text-amber-300">
-        <span className="text-xl">🏢</span>
-        <span>Transport Owner</span>
-      </legend>
+    <section className="overflow-hidden rounded-xl border border-bt-border bg-bt-surface">
+      <div className="flex items-center gap-2.5 border-b border-bt-border bg-bt-surface-soft px-4 py-2.5">
+        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-100 text-sm text-amber-600">🏢</span>
+        <h2 className="text-sm font-bold text-bt-navy">Transport Owner</h2>
+      </div>
+      <div className="space-y-4 p-4">
       
       {/* Required Fields */}
       <div>
@@ -317,6 +318,7 @@ export default function OwnerRegistrationSection({
           </div>
         </div>
       )}
-    </fieldset>
+      </div>
+    </section>
   );
 }
