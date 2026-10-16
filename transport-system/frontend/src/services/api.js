@@ -570,6 +570,8 @@ export const financialAPI = {
     api.get(`/financials/client-ledger/${encodeURIComponent(clientId)}`, { params }),
   getVendorLedger: (ownerId, params) =>
     api.get(`/financials/vendor-ledger/${encodeURIComponent(ownerId)}`, { params }),
+  getDriverLedger: (driverId, params) =>
+    api.get(`/financials/driver-ledger/${encodeURIComponent(driverId)}`, { params }),
 };
 
 // Client APIs (with financial summary)

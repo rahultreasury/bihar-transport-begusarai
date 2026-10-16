@@ -139,7 +139,7 @@ export default function AdminOrderMaster() {
 
         // Load full trip data with relations (vehicle, driver, owner, etc.) when a trip exists
         // This provides the canonical vehicle/driver/owner data for the Vehicle & Driver section
-        const fullTrip = tripRow?.trip_id ? await safeGet(tripAPI.getTrip(tripRow.trip_id)) : null;
+        const fullTrip = tripRow?.trip_id ? await safeGet(adminAPI.getTrip(tripRow.trip_id)) : null;
         if (fullTrip) setTrip(fullTrip);
 
         // The operational stage comes from the trip's OWN workflow endpoint, so
@@ -208,32 +208,29 @@ export default function AdminOrderMaster() {
         case 'vehicle_hire':
           // The vehicle PROCESS workspace. `/vehicle-hire` is the canonical
           // Universal Vehicle Hire page for actually engaging a truck.
-          if (tripId) navigate(`/admin/trips/${tripId}/vehicle-hire`);
+          if (tripId) {
+            navigate(`/admin/trips/${tripId}/vehicle-hire`);
+          } else {
+            navigate(`/admin/bookings/${orderNo}`);
+          }
           break;
         case 'overview':
           navigate(`/admin/bookings/${orderNo}`);
           break;
         case 'trip_tab':
-          // ── THE FIX ──────────────────────────────────────────────────────
-          // This used to navigate to `/admin/trips/:id?tab=loading`. The trip
-          // page never read `tab`, so every process rendered the identical
-          // overview — clicking "Loading" looked exactly like doing nothing.
-          //
-          // A process is now a ROUTE SEGMENT that selects its own workspace, so
-          // the tab is a real destination rather than a decoration. The legacy
-          // values the server still sends (`tracking`, `summary`) are mapped by
-          // `normalizeProcess` rather than 404-ing, so the existing stage policy
-          // keeps working untouched.
+          const process = normalizeProcess(
+            String(extra.tab || 'loading').toLowerCase().replace(/_/g, ''),
+          );
           if (tripId) {
-            const process = normalizeProcess(
-              String(extra.tab || 'loading').toLowerCase().replace(/_/g, ''),
-            );
             navigate(`/admin/trips/${tripId}/${process}`);
+          } else {
+            // No trip exists yet; avoid passing invalid IDs
+            navigate(`/admin/bookings/${orderNo}`);
           }
           break;
         case 'finance':
           if (tripId) navigate(`/admin/trips/${tripId}/finance`);
-          else navigate('/admin/financials');
+          else navigate(`/admin/bookings/${orderNo}`);
           break;
         default:
           break;

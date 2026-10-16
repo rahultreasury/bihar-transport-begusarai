@@ -622,10 +622,22 @@ class TripDeliveryService {
    */
   async getCompletionReadiness(tripId) {
     const trip = await this._loadTrip(tripId);
+    const pod = await this._getPod(tripId);
     const blockers = [];
+
     if (trip.status !== 'DELIVERED' && trip.status !== 'COMPLETED') {
       blockers.push(deliveryPolicy.COMPLETION_REQUIREMENTS[0]);
     }
+
+    // If POD is required, it must be verified before completion
+    const podRequired = trip.documents_required !== false && trip.pod_required !== false;
+    if (podRequired && !deliveryPolicy.isPodVerified(pod?.document_status)) {
+      blockers.push({
+        code: 'POD_NOT_VERIFIED',
+        message: 'Proof of Delivery must be verified before the trip can be completed.',
+      });
+    }
+
     return {
       trip_id: trip.trip_id,
       status: trip.status,

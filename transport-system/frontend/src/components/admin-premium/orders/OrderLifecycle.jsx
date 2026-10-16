@@ -78,6 +78,34 @@ const LABEL = {
 export default function OrderLifecycle({ resolved, workflow, onSelect, className = '' }) {
   if (!resolved && !workflow) return null;
 
+  const gotoFor = (key) => {
+    const k = String(key || '').toUpperCase();
+    switch (k) {
+      case 'ENQUIRY':
+        return { kind: 'enquiry' };
+      case 'QUOTATION':
+        return { kind: 'enquiry', anchor: 'quote' };
+      case 'ORDER_CONFIRMED':
+        return { kind: 'overview' };
+      case 'VEHICLE_HIRED':
+        return { kind: 'vehicle_hire' };
+      case 'LOADING':
+        return { kind: 'trip_tab', tab: 'loading' };
+      case 'DISPATCH':
+        return { kind: 'trip_tab', tab: 'dispatch' };
+      case 'TRANSIT':
+        return { kind: 'trip_tab', tab: 'tracking' };
+      case 'DELIVERY':
+        return { kind: 'trip_tab', tab: 'delivery' };
+      case 'POD':
+        return { kind: 'trip_tab', tab: 'pod' };
+      case 'COMPLETED':
+        return { kind: 'trip_tab', tab: 'summary' };
+      default:
+        return null;
+    }
+  };
+
   // Prefer the SERVER projection. `stages` from the backend already carry the
   // four states and the click destination, so nothing is recomputed here.
   const stages = workflow?.stages?.length
@@ -86,10 +114,10 @@ export default function OrderLifecycle({ resolved, workflow, onSelect, className
         label: s.label,
         short: s.label,
         state: s.state,
-        goto: s.goto,
+        goto: s.goto || gotoFor(s.key),
         requirement: s.requirement,
       }))
-    : (resolved?.stages || []).map((s) => ({ ...s, goto: null, requirement: null }));
+    : (resolved?.stages || []).map((s) => ({ ...s, goto: gotoFor(s.key), requirement: null }));
 
   const stageLabel = workflow?.current_stage_label || resolved?.stageLabel || '';
   const state = resolved?.state || 'current';

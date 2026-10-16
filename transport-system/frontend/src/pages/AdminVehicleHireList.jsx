@@ -164,7 +164,8 @@ export default function AdminVehicleHireList() {
         throw new Error(response.data?.message || 'Failed to load vehicle hires');
       }
 
-      setRows(response.data.data || []);
+      const apiRows = response.data.data || [];
+      setRows(apiRows);
       setCounts({
         waiting: response.data.counts?.waiting || 0,
         assigned: response.data.counts?.assigned || 0,
@@ -216,8 +217,12 @@ export default function AdminVehicleHireList() {
       <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-6">
         <button
           type="button"
-          onClick={() => setOperationalStatus('WAITING_FOR_VEHICLE')}
-          className="flex items-center justify-between gap-2 rounded-lg border border-bt-border bg-bt-surface-soft px-3 py-2 text-left text-[11px] font-semibold text-bt-ink-2 hover:bg-white"
+          onClick={() => setOperationalStatus(operationalStatus === 'WAITING_FOR_VEHICLE' ? '' : 'WAITING_FOR_VEHICLE')}
+          className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-[11px] font-semibold transition-colors ${
+            operationalStatus === 'WAITING_FOR_VEHICLE'
+              ? 'border-orange-300 bg-orange-50 text-orange-700'
+              : 'border-bt-border bg-bt-surface-soft text-bt-ink-2 hover:bg-white'
+          }`}
         >
           <div className="flex items-center gap-1.5">
             <StatusBadge status="WAITING_FOR_VEHICLE" label="Waiting for Vehicle" tone="warning" />
@@ -226,8 +231,12 @@ export default function AdminVehicleHireList() {
         </button>
         <button
           type="button"
-          onClick={() => setOperationalStatus('VEHICLE_HIRED')}
-          className="flex items-center justify-between gap-2 rounded-lg border border-bt-border bg-bt-surface-soft px-3 py-2 text-left text-[11px] font-semibold text-bt-ink-2 hover:bg-white"
+          onClick={() => setOperationalStatus(operationalStatus === 'VEHICLE_HIRED' ? '' : 'VEHICLE_HIRED')}
+          className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-[11px] font-semibold transition-colors ${
+            operationalStatus === 'VEHICLE_HIRED'
+              ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+              : 'border-bt-border bg-bt-surface-soft text-bt-ink-2 hover:bg-white'
+          }`}
         >
           <div className="flex items-center gap-1.5">
             <StatusBadge status="VEHICLE_HIRED" label="Vehicle Hired" tone="success" />
@@ -236,26 +245,52 @@ export default function AdminVehicleHireList() {
         </button>
         <button
           type="button"
-          onClick={() => setOperationalStatus('TO_LOADING_POINT')}
-          className="flex items-center justify-between gap-2 rounded-lg border border-bt-border bg-bt-surface-soft px-3 py-2 text-left text-[11px] font-semibold text-bt-ink-2 hover:bg-white"
+          onClick={() => setOperationalStatus(operationalStatus === 'TO_LOADING_POINT' ? '' : 'TO_LOADING_POINT')}
+          className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-[11px] font-semibold transition-colors ${
+            operationalStatus === 'TO_LOADING_POINT'
+              ? 'border-blue-300 bg-blue-50 text-blue-700'
+              : 'border-bt-border bg-bt-surface-soft text-bt-ink-2 hover:bg-white'
+          }`}
         >
           <div className="flex items-center gap-1.5">
             <StatusBadge status="TO_LOADING_POINT" label="To Loading" tone="info" />
           </div>
           <span className="text-bt-navy">{counts.to_loading}</span>
         </button>
-        <div className="flex items-center justify-between gap-2 rounded-lg border border-bt-border bg-bt-surface-soft px-3 py-2 text-left text-[11px] font-semibold text-bt-ink-2">
+        <button
+          type="button"
+          onClick={() => {
+            // Filter to hired trips for financial drill-down
+            setOperationalStatus('VEHICLE_HIRED');
+          }}
+          className="flex items-center justify-between gap-2 rounded-lg border border-bt-border bg-bt-surface-soft px-3 py-2 text-left text-[11px] font-semibold text-bt-ink-2 hover:bg-white transition-colors"
+          title="View trips with financial data (hired trips)"
+        >
           <span>Gross Vehicle Hire</span>
           <span className="text-bt-navy">{inr(counts.gross_hire || 0)}</span>
-        </div>
-        <div className="flex items-center justify-between gap-2 rounded-lg border border-bt-border bg-bt-surface-soft px-3 py-2 text-left text-[11px] font-semibold text-bt-ink-2">
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setOperationalStatus('VEHICLE_HIRED');
+          }}
+          className="flex items-center justify-between gap-2 rounded-lg border border-bt-border bg-bt-surface-soft px-3 py-2 text-left text-[11px] font-semibold text-bt-ink-2 hover:bg-white transition-colors"
+          title="View trips with commission data (hired trips)"
+        >
           <span>Commission</span>
           <span className="text-bt-navy">{inr(counts.commission_amount || 0)}</span>
-        </div>
-        <div className="flex items-center justify-between gap-2 rounded-lg border border-bt-border bg-bt-surface-soft px-3 py-2 text-left text-[11px] font-semibold text-bt-ink-2">
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setOperationalStatus('VEHICLE_HIRED');
+          }}
+          className="flex items-center justify-between gap-2 rounded-lg border border-bt-border bg-bt-surface-soft px-3 py-2 text-left text-[11px] font-semibold text-bt-ink-2 hover:bg-white transition-colors"
+          title="View trips with net payable data (hired trips)"
+        >
           <span>Net Vendor Payable</span>
           <span className="text-bt-navy">{inr(counts.net_vendor_payable || 0)}</span>
-        </div>
+        </button>
       </div>
 
       {/* ── FILTERS ───────────────────────────────────────────────────────── */}
@@ -361,112 +396,44 @@ export default function AdminVehicleHireList() {
             {
               key: 'trip_number',
               header: 'Trip / Order',
-              width: '20%',
-              render: (r) => (
-                <div className="min-w-0">
-                  <p className="truncate text-[13px] font-semibold text-bt-navy">{r.trip_number}</p>
-                  {r.booking_number ? (
-                    <p className="truncate text-[11px] text-bt-ink-3">Booking: {r.booking_number}</p>
-                  ) : null}
-                </div>
-              ),
-            },
-            {
-              key: 'customer',
-              header: 'Customer',
-              width: '20%',
-              render: (r) => (
-                <div className="min-w-0">
-                  <p className="truncate text-[13px] font-medium text-bt-navy">{r.customer || '—'}</p>
-                  <p className="truncate text-[11px] text-bt-ink-3">{humanize(r.customer_type || '')}</p>
-                </div>
-              ),
-            },
-            {
-              key: 'trip_date',
-              header: 'Trip / Delivery Date',
-              width: '15%',
-              render: (r) => (
-                <div className="min-w-0 text-[12px]">
-                  <p className="text-bt-navy">{r.trip_date ? fmtDate(r.trip_date) : '—'}</p>
-                  <p className="text-bt-ink-3">{r.expected_delivery_date ? fmtDate(r.expected_delivery_date) : '—'}</p>
-                </div>
-              ),
-            },
-            {
-              key: 'vehicle_driver_vendor',
-              header: 'Vehicle / Driver / Vendor',
-              width: '20%',
-              render: (r) => (
-                <div className="min-w-0 text-[11px]">
-                  <p className="truncate text-bt-navy">{r.vehicle?.vehicle_number || '—'}</p>
-                  <p className="truncate text-bt-ink-3">{r.driver?.driver_name || '—'}</p>
-                  <p className="truncate text-bt-ink-3">{r.transportOwner?.owner_name || '—'}</p>
-                </div>
-              ),
-            },
-            {
-              key: 'status',
-              header: 'Operational Status',
-              width: '12%',
+              width: '16%',
               render: (r) => {
-                const hireState = r.hire_status || (r.vehicle_id ? (r.vehicleHire ? 'VEHICLE_HIRED' : 'VEHICLE_ASSIGNED') : 'WAITING_FOR_VEHICLE');
-                const hireLabels = {
-                  WAITING_FOR_VEHICLE: 'Waiting',
-                  VEHICLE_ASSIGNED: 'Assigned',
-                  VEHICLE_HIRED: 'Hired',
-                };
+                const tripId = r.trip_id;
+                const bookingNum = r.booking_number || r.booking?.booking_number;
                 return (
-                  <div className="flex flex-col items-start gap-1">
-                    <StatusBadge status={hireState} label={hireLabels[hireState] || humanize(hireState)} tone={hireState === 'VEHICLE_HIRED' ? 'success' : hireState === 'VEHICLE_ASSIGNED' ? 'info' : 'warning'} />
-                    <p className="text-[10px] text-bt-ink-3/50 mt-0.5">
-                      {humanize(r.status)}
-                    </p>
+                  <div className="min-w-0">
+                    {tripId ? (
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/admin/trips/${tripId}`)}
+                        className="truncate text-[13px] font-semibold !text-orange-500 hover:!text-orange-600 hover:underline cursor-pointer text-left focus:outline-none focus:ring-1 focus:ring-orange-500 focus:ring-offset-1 rounded"
+                        title={`View trip ${r.trip_number || tripId}`}
+                      >
+                        {r.trip_number || `Trip #${tripId}`}
+                      </button>
+                    ) : (
+                      <p className="truncate text-[13px] font-semibold text-bt-navy" title="No associated trip">
+                        {r.trip_number || '—'}
+                      </p>
+                    )}
+                    {bookingNum ? (
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/admin/bookings/${bookingNum}`)}
+                        className="truncate text-[11px] !text-blue-500 hover:!text-blue-600 hover:underline cursor-pointer text-left focus:outline-none focus:ring-1 focus:ring-blue-500 focus:ring-offset-1 rounded block"
+                        title={`View booking ${bookingNum}`}
+                      >
+                        Booking: {bookingNum}
+                      </button>
+                    ) : null}
                   </div>
                 );
               },
             },
             {
-              key: 'billing_model',
-              header: 'Billing Model',
-              width: '8%',
-              render: (r) => (
-                <span className="text-[11px] text-bt-ink-2">
-                  {humanize(r.vehicleHire?.business_model || r.business_model || '') || '—'}
-                </span>
-              ),
-            },
-            {
-              key: 'gross_hire',
-              header: 'Gross Hire',
-              width: '10%',
-              align: 'right',
-              render: (r) => (
-                <span className="text-[11px] text-bt-navy">{inr(r.vehicleHire?.gross_hire || 0)}</span>
-              ),
-            },
-            {
-              key: 'commission',
-              header: 'Commission',
-              width: '10%',
-              align: 'right',
-              render: (r) => (
-                <span className="text-[11px] text-bt-ink-2">{inr(r.vehicleHire?.commission_amount || 0)}</span>
-              ),
-            },
-            {
-              key: 'net_payable',
-              header: 'Net Vendor Payable',
-              width: '12%',
-              align: 'right',
-              render: (r) => (
-                <span className="text-[11px] font-medium text-bt-navy">{inr(r.vehicleHire?.net_vendor_payable || 0)}</span>
-              ),
-            },
-            {
               key: 'action',
               header: 'Action',
-              width: '12%',
+              width: '14%',
               align: 'center',
               render: (r) => {
                 const hasHire = Boolean(r.vehicleHire);
@@ -503,6 +470,184 @@ export default function AdminVehicleHireList() {
                   </div>
                 );
               },
+            },
+            {
+              key: 'customer',
+              header: 'Customer',
+              width: '16%',
+              render: (r) => {
+                const clientId = r.client?.client_id || r.client_id;
+                const customerName = r.customer || '—';
+                return (
+                  <div className="min-w-0">
+                    {clientId && r.customer_type === 'CLIENT' ? (
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/admin/clients/${clientId}`)}
+                        className="truncate text-[13px] font-medium !text-orange-500 hover:!text-orange-600 hover:underline cursor-pointer text-left focus:outline-none focus:ring-1 focus:ring-orange-500 focus:ring-offset-1 rounded"
+                        title={`View client ${customerName}`}
+                      >
+                        {customerName}
+                      </button>
+                    ) : (
+                      <p className="truncate text-[13px] font-medium text-bt-navy">{customerName}</p>
+                    )}
+                    <p className="truncate text-[11px] text-bt-ink-3">{humanize(r.customer_type || '')}</p>
+                  </div>
+                );
+              },
+            },
+            {
+              key: 'trip_date',
+              header: 'Trip / Delivery Date',
+              width: '14%',
+              render: (r) => (
+                <button
+                  type="button"
+                  onClick={() => navigate(`/admin/trips/${r.trip_id}`)}
+                  className="min-w-0 text-[12px] text-left focus:outline-none focus:ring-1 focus:ring-orange-500 focus:ring-offset-1 rounded"
+                  title={`View trip ${r.trip_number || r.trip_id} details`}
+                >
+                  <p className="text-bt-navy !text-orange-500 hover:!text-orange-600 hover:underline">{r.trip_date ? fmtDate(r.trip_date) : '—'}</p>
+                  <p className="text-bt-ink-3 !text-orange-500 hover:!text-orange-600 hover:underline">{r.expected_delivery_date ? fmtDate(r.expected_delivery_date) : '—'}</p>
+                </button>
+              ),
+            },
+            {
+              key: 'vehicle_driver_vendor',
+              header: 'Vehicle / Driver / Vendor',
+              width: '16%',
+              render: (r) => (
+                <div className="min-w-0 text-[11px]">
+                  {r.vehicle?.vehicle_id ? (
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/admin/vehicles/${r.vehicle.vehicle_id}`)}
+                      className="truncate text-bt-navy !text-orange-500 hover:!text-orange-600 hover:underline cursor-pointer text-left focus:outline-none focus:ring-1 focus:ring-orange-500 focus:ring-offset-1 rounded block"
+                      title={`View vehicle ${r.vehicle.vehicle_number}`}
+                    >
+                      {r.vehicle.vehicle_number}
+                    </button>
+                  ) : (
+                    <p className="truncate text-bt-navy">—</p>
+                  )}
+                  {r.driver?.driver_id ? (
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/admin/drivers/${r.driver.driver_id}`)}
+                      className="truncate text-bt-ink-3 !text-orange-500 hover:!text-orange-600 hover:underline cursor-pointer text-left focus:outline-none focus:ring-1 focus:ring-orange-500 focus:ring-offset-1 rounded block"
+                      title={`View driver ${r.driver.driver_name}`}
+                    >
+                      {r.driver.driver_name}
+                    </button>
+                  ) : (
+                    <p className="truncate text-bt-ink-3">{r.driver?.driver_name || '—'}</p>
+                  )}
+                  {r.transportOwner?.owner_id ? (
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/admin/vehicle-owners/${r.transportOwner.owner_id}`)}
+                      className="truncate text-bt-ink-3 !text-orange-500 hover:!text-orange-600 hover:underline cursor-pointer text-left focus:outline-none focus:ring-1 focus:ring-orange-500 focus:ring-offset-1 rounded block"
+                      title={`View vendor ${r.transportOwner.owner_name}`}
+                    >
+                      {r.transportOwner.owner_name}
+                    </button>
+                  ) : (
+                    <p className="truncate text-bt-ink-3">{r.transportOwner?.owner_name || '—'}</p>
+                  )}
+                </div>
+              ),
+            },
+            {
+              key: 'status',
+              header: 'Operational Status',
+              width: '10%',
+              render: (r) => {
+                const hireState = r.hire_status || (r.vehicle_id ? (r.vehicleHire ? 'VEHICLE_HIRED' : 'VEHICLE_ASSIGNED') : 'WAITING_FOR_VEHICLE');
+                const hireLabels = {
+                  WAITING_FOR_VEHICLE: 'Waiting',
+                  VEHICLE_ASSIGNED: 'Assigned',
+                  VEHICLE_HIRED: 'Hired',
+                };
+                return (
+                  <div className="flex flex-col items-start gap-1">
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/admin/trips/${r.trip_id}`)}
+                      className="focus:outline-none focus:ring-1 focus:ring-orange-500 focus:ring-offset-1 rounded"
+                      title={`View trip ${r.trip_number || r.trip_id} details`}
+                    >
+                      <StatusBadge status={hireState} label={hireLabels[hireState] || humanize(hireState)} tone={hireState === 'VEHICLE_HIRED' ? 'success' : hireState === 'VEHICLE_ASSIGNED' ? 'info' : 'warning'} />
+                    </button>
+                    <p className="text-[10px] text-bt-ink-3/50 mt-0.5">
+                      {humanize(r.status)}
+                    </p>
+                  </div>
+                );
+              },
+            },
+            {
+              key: 'billing_model',
+              header: 'Billing Model',
+              width: '7%',
+              render: (r) => (
+                <button
+                  type="button"
+                  onClick={() => navigate(`/admin/trips/${r.trip_id}`)}
+                  className="text-[11px] text-bt-ink-2 !text-orange-500 hover:!text-orange-600 hover:underline cursor-pointer text-left focus:outline-none focus:ring-1 focus:ring-orange-500 focus:ring-offset-1 rounded"
+                  title="View trip details for billing info"
+                >
+                  {humanize(r.vehicleHire?.business_model || r.business_model || '') || '—'}
+                </button>
+              ),
+            },
+            {
+              key: 'gross_hire',
+              header: 'Gross Hire',
+              width: '9%',
+              align: 'right',
+              render: (r) => (
+                <button
+                  type="button"
+                  onClick={() => navigate(`/admin/trips/${r.trip_id}`)}
+                  className="text-[11px] text-bt-navy !text-orange-500 hover:!text-orange-600 hover:underline cursor-pointer text-right focus:outline-none focus:ring-1 focus:ring-orange-500 focus:ring-offset-1 rounded"
+                  title="View trip financial details"
+                >
+                  {inr(r.vehicleHire?.gross_hire || 0)}
+                </button>
+              ),
+            },
+            {
+              key: 'commission',
+              header: 'Commission',
+              width: '8%',
+              align: 'right',
+              render: (r) => (
+                <button
+                  type="button"
+                  onClick={() => navigate(`/admin/trips/${r.trip_id}`)}
+                  className="text-[11px] text-bt-ink-2 !text-orange-500 hover:!text-orange-600 hover:underline cursor-pointer text-right focus:outline-none focus:ring-1 focus:ring-orange-500 focus:ring-offset-1 rounded"
+                  title="View trip financial details"
+                >
+                  {inr(r.vehicleHire?.commission_amount || 0)}
+                </button>
+              ),
+            },
+            {
+              key: 'net_payable',
+              header: 'Net Vendor Payable',
+              width: '10%',
+              align: 'right',
+              render: (r) => (
+                <button
+                  type="button"
+                  onClick={() => navigate(`/admin/trips/${r.trip_id}`)}
+                  className="text-[11px] font-medium text-bt-navy !text-orange-500 hover:!text-orange-600 hover:underline cursor-pointer text-right focus:outline-none focus:ring-1 focus:ring-orange-500 focus:ring-offset-1 rounded"
+                  title="View trip financial details"
+                >
+                  {inr(r.vehicleHire?.net_vendor_payable || 0)}
+                </button>
+              ),
             },
           ]}
         />

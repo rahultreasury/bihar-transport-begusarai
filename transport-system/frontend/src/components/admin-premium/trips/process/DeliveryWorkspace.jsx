@@ -43,10 +43,16 @@ export default function DeliveryWorkspace({
 
   return (
     <>
-      <Panel title="Current Status">
-        <p className="text-[15px] font-bold uppercase tracking-wide text-amber-700">
-          {delivered ? 'DELIVERED' : arrived ? 'AT DELIVERY POINT' : status.replace(/_/g, ' ')}
-        </p>
+      <Panel title="Current Status" subtitle={delivered ? 'Delivery completed' : arrived ? 'Vehicle at delivery point' : 'En route to destination'}>
+        <div className="mb-2">
+          <span className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-sm font-semibold ${
+            delivered ? 'bg-emerald-100 text-emerald-800'
+            : arrived ? 'bg-sky-100 text-sky-800'
+            : 'bg-amber-100 text-amber-800'
+          }`}>
+            {delivered ? 'DELIVERED' : arrived ? 'AT DELIVERY POINT' : status.replace(/_/g, ' ')}
+          </span>
+        </div>
         {arrived ? (
           <FactGrid
             items={[
@@ -93,24 +99,24 @@ export default function DeliveryWorkspace({
         />
       )}
 
-      <Panel title="Delivery Details">
+      <Panel title="Delivery Details" subtitle="Consignment and assignment information">
         <div className="grid gap-3 sm:grid-cols-2">
-          <label className="block text-[12px] font-semibold text-text">
+          <label className="block text-[12px] font-semibold text-slate-900">
             Receiver
             <input
               value={receiver}
               onChange={(e) => setReceiver(e.target.value)}
               placeholder={trip?.delivered_receiver_name || ''}
-              className="mt-1 w-full rounded-lg border border-border px-2.5 py-2 text-[13px] font-normal"
+              className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-[13px] font-normal focus:border-amber-500 focus:ring-1 focus:ring-amber-200"
             />
           </label>
-          <label className="block text-[12px] font-semibold text-text">
+          <label className="block text-[12px] font-semibold text-slate-900">
             Remarks
             <input
               value={remarks}
               onChange={(e) => setRemarks(e.target.value)}
               placeholder={trip?.delivery_remarks || ''}
-              className="mt-1 w-full rounded-lg border border-border px-2.5 py-2 text-[13px] font-normal"
+              className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-[13px] font-normal focus:border-amber-500 focus:ring-1 focus:ring-amber-200"
             />
           </label>
         </div>

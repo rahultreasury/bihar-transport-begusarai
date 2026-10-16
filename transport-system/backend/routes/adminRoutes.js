@@ -1645,12 +1645,14 @@ const booking = await prisma.booking.findUnique({
     }
 
     // Flatten Prisma result to match original SQL response format
-    const flattened = {
+const flattened = {
       booking_id: booking.booking_id,
       booking_reference: booking.booking_reference,
       booking_number: booking.booking_number,
-user_id: booking.user_id,
+      user_id: booking.user_id,
       driver_id: booking.driver_id,
+      vehicle_id: booking.vehicle_id,
+      vehicle_owner_id: booking.vehicle_owner_id,
       pickup_location: booking.pickup_location,
       pickup_address: booking.pickup_address,
       pickup_city: booking.pickup_city,
@@ -1771,8 +1773,15 @@ router.put('/bookings/:id', protect, async (req, res) => {
       vehicle_type_required,
       estimated_distance_km,
       estimated_price,
-      final_price
+      final_price,
+      vehicle_id,
+      driver_id,
+      vehicle_owner_id
     } = req.body || {};
+
+    console.log('DEBUG: req.body =', JSON.stringify(req.body));
+    console.log('DEBUG: extracted vehicle_id =', vehicle_id);
+    console.log('DEBUG: extracted vehicle_owner_id =', vehicle_owner_id);
 
     // Build update data, only including provided fields
     const updateData = {};
@@ -1789,10 +1798,19 @@ router.put('/bookings/:id', protect, async (req, res) => {
     if (estimated_distance_km !== undefined) updateData.estimated_distance_km = estimated_distance_km ? parseFloat(estimated_distance_km) : null;
     if (estimated_price !== undefined) updateData.estimated_price = estimated_price ? parseFloat(estimated_price) : null;
     if (final_price !== undefined) updateData.final_price = final_price ? parseFloat(final_price) : null;
+    if (vehicle_id !== undefined) updateData.vehicle_id = vehicle_id ? parseInt(vehicle_id) : null;
+    if (driver_id !== undefined) updateData.driver_id = driver_id ? parseInt(driver_id) : null;
+    if (vehicle_owner_id !== undefined) updateData.vehicle_owner_id = vehicle_owner_id ? parseInt(vehicle_owner_id) : null;
+
+    console.log('DEBUG: updateData =', JSON.stringify(updateData));
 
     await prisma.booking.update({
       where: { booking_id: bookingId },
       data: updateData,
+    }).then(result => {
+      console.log('DEBUG: Prisma update result =', JSON.stringify(result));
+    }).catch(err => {
+      console.error('DEBUG: Prisma update error =', err);
     });
 
     res.json({

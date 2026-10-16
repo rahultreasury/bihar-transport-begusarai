@@ -259,11 +259,15 @@ router.post('/provision', protect, adminOnly, async (req, res) => {
       const { trip, created } = await provisioningService.ensureTripForBooking(bookingId);
       // Carry the order's existing vehicle/driver onto the new trip so an
       // already-assigned consignment shows as VEHICLE ASSIGNED, not blank.
-      const assignment = await assignmentService.assign(
-        { tripId: trip.trip_id },
-        { vehicle_id: trip.vehicle_id ?? undefined, driver_id: trip.driver_id ?? undefined },
-        req.user
-      );
+      // Only call assign if there's at least a vehicle or driver to assign.
+      let assignment = null;
+      if (trip.vehicle_id != null || trip.driver_id != null) {
+        assignment = await assignmentService.assign(
+          { tripId: trip.trip_id },
+          { vehicle_id: trip.vehicle_id ?? undefined, driver_id: trip.driver_id ?? undefined },
+          req.user
+        );
+      }
       return res.json({ success: true, data: { trip, created, assignment } });
     }
 

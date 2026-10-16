@@ -201,10 +201,10 @@ function TrackBooking() {
               </div>
             </div>
             <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-2">
-              Track Your Booking
+              Track Your Shipment
             </h1>
             <p className="text-gray-500 text-sm md:text-base">
-              Enter your booking reference number to track your shipment.
+              Enter your booking reference number to track your shipment in real time.
             </p>
           </div>
 
@@ -219,13 +219,13 @@ function TrackBooking() {
                 type="text"
                 value={searchRef}
                 onChange={(e) => setSearchRef(e.target.value.toUpperCase())}
-                placeholder="e.g. BT-20260723-000125"
+                placeholder="e.g. BTB-2026-00001"
                 className="w-full px-4 py-3.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition-all bg-white text-gray-900 text-base"
                 autoFocus
                 autoComplete="off"
               />
               <p className="text-xs text-gray-400 mt-1.5">
-                Enter the booking reference you received after booking.
+                Enter the booking reference (e.g. BTB-2026-00001) you received after booking.
               </p>
             </div>
 
@@ -243,7 +243,7 @@ function TrackBooking() {
                   Searching...
                 </span>
               ) : (
-                'Track Booking'
+                'Track Shipment'
               )}
             </button>
 

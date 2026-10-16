@@ -1710,6 +1710,32 @@ class TripDispatchService {
     const byType = new Map(documents.map((d) => [d.document_type, d]));
     const required = documentPolicy.requiredDocumentsFor(trip);
 
+    // Helper to check if a document type is satisfied (considering LR/GR equivalence)
+    // LR and GR are equivalent for requirement satisfaction (same physical document)
+    const isSatisfied = (type) => {
+      const doc = byType.get(type) || null;
+      const expired = doc && (doc.document_status === 'EXPIRED' || (doc.expires_at && new Date(doc.expires_at) < new Date()));
+      const satisfied = Boolean(doc) && !expired && documentPolicy.SATISFIES_REQUIREMENT.includes(doc.document_status);
+      if (satisfied) return true;
+
+      // LR and GR are equivalent for requirement satisfaction (same physical document)
+      if (type === 'LR') {
+        const grDoc = byType.get('GR');
+        const grExpired = grDoc && (grDoc.document_status === 'EXPIRED' || (grDoc.expires_at && new Date(grDoc.expires_at) < new Date()));
+        if (grDoc && !grExpired && documentPolicy.SATISFIES_REQUIREMENT.includes(grDoc.document_status)) {
+          return true;
+        }
+      }
+      if (type === 'GR') {
+        const lrDoc = byType.get('LR');
+        const lrExpired = lrDoc && (lrDoc.document_status === 'EXPIRED' || (lrDoc.expires_at && new Date(lrDoc.expires_at) < new Date()));
+        if (lrDoc && !lrExpired && documentPolicy.SATISFIES_REQUIREMENT.includes(lrDoc.document_status)) {
+          return true;
+        }
+      }
+      return false;
+    };
+
     return documentPolicy.DOCUMENT_TYPES.map((type) => {
       const doc = byType.get(type) || null;
       const expired = Boolean(
@@ -1723,7 +1749,8 @@ class TripDispatchService {
         // Expiry is judged HERE rather than trusting the stored status, so a
         // document whose date has passed can never satisfy a requirement
         // simply because nobody has updated its row.
-        satisfied: Boolean(doc) && !expired && documentPolicy.SATISFIES_REQUIREMENT.includes(doc.document_status),
+        // LR and GR are equivalent for requirement satisfaction (same physical document).
+        satisfied: isSatisfied(type),
       };
     });
   }

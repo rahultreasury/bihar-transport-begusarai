@@ -17,6 +17,7 @@
 
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Truck, MapPin } from 'lucide-react';
 
 import { Panel, FactGrid, NotStarted, CompletedRecord, Action, Blocked } from './TripProcessShell';
 import { describeProcessState } from './tripProcessModel';
@@ -32,6 +33,12 @@ export default function PodWorkspace({
   const status = String(trip?.status || 'PENDING').toUpperCase();
   const completed = status === 'COMPLETED';
   const delivered = ['DELIVERED', 'COMPLETED'].includes(status);
+  let arrived = false;
+  try {
+    arrived = Boolean(trip?.arrived_at_destination_at || trip?.arrived_at_destination || trip?.arrival_time || trip?.arrived_at) || delivered;
+  } catch (e) {
+    arrived = delivered;
+  }
 
   const { headline, waitingFor } = describeProcessState({
     processKey: 'pod',
@@ -59,31 +66,193 @@ export default function PodWorkspace({
 
   return (
     <>
-      <Panel title="POD Status">
-        <p
-          className={`text-[15px] font-bold uppercase tracking-wide ${
-            podStatus === 'POD RECEIVED' || podStatus === 'NOT REQUIRED'
-              ? 'text-emerald-700'
-              : 'text-amber-700'
-          }`}
-        >
-          {podStatus}
-        </p>
-        {podRequired ? (
-          <FactGrid
-            items={[
-              { label: 'POD Required', value: 'Yes' },
-              { label: 'Delivery Date', value: trip?.trip_delivered_date },
-              { label: 'Consignee', value: trip?.delivered_receiver_name || trip?.booking?.consignee_name },
-              { label: 'Delivery Location', value: trip?.drop_location },
-            ]}
-          />
-        ) : (
-          <p className="mt-1.5 text-[12.5px] text-muted">
-            No Proof of Delivery is required for this consignment. It completes on delivery.
-          </p>
-        )}
-      </Panel>
+      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#FFF4E2]">
+              <svg className="h-5 w-5 text-[#FF9900]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14,2 14,8 20,8"></polyline>
+                <line x1="16" y1="13" x2="8" y2="13"></line>
+                <line x1="16" y1="17" x2="8" y2="17"></line>
+                <polyline points="10,9 9,9 8,9"></polyline>
+              </svg>
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-[#18345B]">Proof of Delivery (POD)</h2>
+              <p className="text-sm text-slate-500">Track and manage delivery confirmation for this trip.</p>
+            </div>
+          </div>
+          <div className="flex items-start gap-2 rounded-lg border border-[#FFE4B5] bg-[#FFF4E2] px-4 py-2">
+            <svg className="h-4 w-4 text-[#FF9900] mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <path d="M12 16v-4"></path>
+              <path d="M12 8h.01"></path>
+            </svg>
+            <p className="text-sm text-[#B26A00]">
+              This section shows the current delivery status and related information. Record the delivery when it is completed.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="mb-3 flex items-center gap-2">
+          <svg className="h-4 w-4 text-teal-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M12 1v6m0 6v6m11-7h-6m-6 0H1"></path>
+          </svg>
+          <h3 className="text-base font-semibold text-[#18345B]">Current Status</h3>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl bg-[#FFF7E6] p-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#FFE4B5]">
+              <Truck className="h-5 w-5 text-[#B26A00]" />
+            </div>
+            <div>
+              <p className="text-base font-bold uppercase tracking-wide text-[#B26A00]">
+                {delivered ? 'DELIVERED' : arrived ? 'AT DELIVERY POINT' : status.replace(/_/g, ' ')}
+              </p>
+              <p className="text-sm text-slate-600">
+                {delivered ? 'Delivery completed' : arrived ? 'Vehicle has arrived at delivery location and is ready for unloading' : 'In transit to delivery location'}
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-2 pr-4 sm:border-r sm:border-slate-300">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white">
+                <svg className="h-4 w-4 text-[#2878E5]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                  <line x1="16" y1="2" x2="16" y2="6"></line>
+                  <line x1="8" y1="2" x2="8" y2="6"></line>
+                  <line x1="3" y1="10" x2="21" y2="10"></line>
+                </svg>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">Arrival Date</p>
+                <p className="text-sm font-semibold text-slate-900">{trip?.arrived_at_destination_at?.slice(0, 10) || trip?.trip_delivered_date || '—'}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 pr-4 sm:border-r sm:border-slate-300">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white">
+                <svg className="h-4 w-4 text-[#FF9900]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <polyline points="12,6 12,12 16,14"></polyline>
+                </svg>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">Arrival Time</p>
+                <p className="text-sm font-semibold text-slate-900">{trip?.arrived_at_destination_at?.slice(11, 16) || '—'}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white">
+                <MapPin className="h-4 w-4 text-[#2878E5]" />
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">Delivery Location</p>
+                <p className="text-sm font-semibold text-slate-900">{trip?.drop_location || trip?.delivery_location || '—'}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h3 className="text-base font-semibold text-[#18345B]">Delivery Progress</h3>
+        <p className="mt-1 text-sm text-slate-500">Track the key milestones for this delivery.</p>
+        <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <div className="space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-green-100">
+                <svg className="h-4 w-4 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20,6 9,17 4,12"></polyline>
+                </svg>
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Dispatched</p>
+                <p className="text-xs text-slate-500">Vehicle dispatched from loading point</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-green-100">
+                <svg className="h-4 w-4 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20,6 9,17 4,12"></polyline>
+                </svg>
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Arrived at destination</p>
+                <p className="text-xs text-slate-500">Vehicle arrived at delivery location</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100">
+                <div className="h-2 w-2 rounded-full bg-slate-400"></div>
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Delivery not started</p>
+                <p className="text-xs text-slate-500">Awaiting delivery recording</p>
+              </div>
+            </div>
+          </div>
+          <div className="rounded-xl bg-[#EFF6FF] p-4">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#DBEAFE]">
+                <svg className="h-5 w-5 text-[#2878E5]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <polyline points="12,6 12,12 16,14"></polyline>
+                </svg>
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-[#2878E5] uppercase tracking-wide">
+                  {delivered ? 'DELIVERED' : arrived ? 'AT DELIVERY POINT' : 'DELIVERY NOT STARTED'}
+                </p>
+                <p className="mt-1 text-sm text-slate-600">
+                  {delivered ? 'Delivery has been completed.' : arrived ? 'Vehicle has arrived. Delivery recording pending.' : 'This step has not been recorded yet.'}
+                </p>
+                <p className="mt-1 text-xs text-slate-500">Please record the delivery once it is completed.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex items-center gap-2">
+          <svg className="h-4 w-4 text-[#2878E5]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14,2 14,8 20,8"></polyline>
+          </svg>
+          <h3 className="text-base font-semibold text-[#18345B]">Delivery Details</h3>
+        </div>
+        <p className="mt-1 text-sm text-slate-500">Additional information about the delivery</p>
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div>
+            <p className="text-xs font-medium text-slate-500">Consignee</p>
+            <p className="mt-1 text-sm font-semibold text-slate-900">{trip?.delivered_receiver_name || trip?.booking?.consignee_name || '—'}</p>
+          </div>
+          <div>
+            <p className="text-xs font-medium text-slate-500">Delivery Date</p>
+            <p className="mt-1 text-sm font-semibold text-slate-900">{trip?.trip_delivered_date || trip?.arrived_at_destination_at?.slice(0, 10) || '—'}</p>
+          </div>
+          <div>
+            <p className="text-xs font-medium text-slate-500">Delivery Location</p>
+            <p className="mt-1 text-sm font-semibold text-slate-900">{trip?.drop_location || trip?.delivery_location || '—'}</p>
+          </div>
+          <div>
+            <p className="text-xs font-medium text-slate-500">Vehicle</p>
+            <p className="mt-1 text-sm font-semibold text-slate-900">{trip?.vehicle?.vehicle_number || trip?.vehicle_number || '—'}</p>
+          </div>
+          <div>
+            <p className="text-xs font-medium text-slate-500">Driver</p>
+            <p className="mt-1 text-sm font-semibold text-slate-900">{trip?.driver?.driver_name || trip?.driver_name || '—'}</p>
+          </div>
+          <div>
+            <p className="text-xs font-medium text-slate-500">POD Status</p>
+            <p className="mt-1 text-sm font-semibold text-slate-900">{podStatus}</p>
+          </div>
+        </div>
+      </div>
 
       {podRequired && !podReceived ? (
         <NotStarted

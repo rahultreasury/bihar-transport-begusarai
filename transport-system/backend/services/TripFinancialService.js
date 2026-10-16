@@ -152,6 +152,76 @@ class TripFinancialService {
   }
 
   /**
+   * Parse the JSON payload stored in FinancialTransaction.metadata.
+   * A row written by an older path (or hand-edited) may not be valid JSON,
+   * and a single bad row must never throw inside a balance calculation.
+   *
+   * @param {string|null|undefined} raw
+   * @returns {Object|null}
+   */
+  _parseMetadata(raw) {
+    if (raw == null) return null;
+    if (typeof raw === 'object') return raw;
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Does this row represent money that actually stayed in the books?
+   * Only CANCELLED and REFUNDED are excluded.
+   *
+   * @param {Object} tx
+   * @returns {boolean}
+   */
+  _isLiveMoney(tx) {
+    return tx.status !== 'CANCELLED' && tx.status !== 'REFUNDED';
+  }
+
+  /**
+   * Subtract a reversed transaction from the matching aggregate bucket.
+   * @private
+   */
+  _applyReversal(result, original, reversal) {
+    if (!this._isLiveMoney(reversal)) return;
+    const amount = reversal.amount || original.amount || 0;
+    switch (original.transaction_type) {
+      case 'CUSTOMER_PAYMENT':
+        result.totalCustomerPayments -= amount;
+        break;
+      case 'CLIENT_PAYMENT':
+        result.totalClientPayments -= amount;
+        break;
+      case 'DRIVER_ADVANCE':
+        result.totalDriverAdvance -= amount;
+        break;
+      case 'FUEL_ADVANCE':
+        result.totalFuelAdvance -= amount;
+        break;
+      case 'OWNER_ADVANCE':
+        result.totalOwnerAdvance -= amount;
+        break;
+      case 'OWNER_SETTLEMENT':
+        result.totalOwnerSettlements -= amount;
+        break;
+      case 'DRIVER_SETTLEMENT':
+        result.totalDriverSettlements -= amount;
+        break;
+      case 'TRIP_EXPENSE':
+        // intentionally excluded from trip financial calculations
+        break;
+      case 'COMMISSION':
+        // intentionally excluded from trip financial calculations
+        break;
+      default:
+        break;
+    }
+  }
+
+  /**
    * Calculate financial values from FinancialTransaction records.
    * This is the SINGLE SOURCE OF TRUTH calculation.
    * Expenses are excluded from the trip financial workflow.
@@ -167,7 +237,59 @@ class TripFinancialService {
       totalDriverSettlements: 0,
     };
 
+    // PHASE 7 — reversals. The repository ALREADY writes a REVERSAL row with
+    // the opposite direction (TripTransactionService.createReversal), but the
+    // switch below had no REVERSAL case, so a reversed customer payment kept
+    // counting as collected forever. That is a direct contradiction: the
+    // persisted ledger said "money given back" while the balance said
+    // "money received".
+    //
+    // A REVERSAL row does not repeat the original's type, so it is resolved
+    // against the original it points at — by `original_transaction_id` first,
+    // then by `reference_number`, which is the same reconciliation key the
+    // idempotency index uses. Anything we cannot resolve is left alone rather
+    // than guessed at, and the result is floored at zero so a reversal can
+    // never manufacture a negative receivable.
+    const byId = new Map();
     for (const tx of transactions) {
+      if (tx && tx.transaction_id != null) byId.set(Number(tx.transaction_id), tx);
+    }
+
+    const reversalsByReference = new Map();
+    for (const tx of transactions) {
+      if (!tx || tx.transaction_type !== 'REVERSAL') continue;
+      const meta = this._parseMetadata(tx.metadata);
+      const originalId = Number(meta?.original_transaction_id);
+      let original = Number.isFinite(originalId) ? byId.get(originalId) : null;
+      if (!original && tx.reference_number) {
+        const bucket = reversalsByReference.get(tx.reference_number) || [];
+        bucket.push(tx);
+        reversalsByReference.set(tx.reference_number, bucket);
+        continue;
+      }
+      if (original) this._applyReversal(result, original, tx);
+    }
+
+    // Second pass: reversals that could not be resolved by id are matched to
+    // a customer payment carrying the same reference.
+    for (const [reference, pending] of reversalsByReference.entries()) {
+      for (const reversal of pending) {
+        const original = transactions.find(
+          (t) =>
+            t &&
+            t.transaction_type !== 'REVERSAL' &&
+            t.reference_number === reference &&
+            (t.transaction_type === 'CUSTOMER_PAYMENT' || t.transaction_type === 'CLIENT_PAYMENT')
+        );
+        if (original) this._applyReversal(result, original, reversal);
+      }
+    }
+
+    for (const tx of transactions) {
+      if (!tx) continue;
+      if (tx.transaction_type === 'REVERSAL') continue; // already applied above
+      if (!this._isLiveMoney(tx)) continue;
+
       const amount = tx.amount || 0;
 
       switch (tx.transaction_type) {
@@ -197,7 +319,14 @@ class TripFinancialService {
           result.totalDriverSettlements += amount;
           break;
         // TRIP_EXPENSE is intentionally excluded from trip financial calculations
+        // COMMISSION is intentionally excluded from trip financial calculations
       }
+    }
+
+    // Floor every bucket at zero: a reversal can only ever give money back,
+    // never create a receivable that the ledger does not support.
+    for (const key of Object.keys(result)) {
+      if (result[key] < 0) result[key] = 0;
     }
 
     return result;
@@ -222,6 +351,30 @@ class TripFinancialService {
     // Calculate from transactions - SINGLE SOURCE OF TRUTH
     const txCalc = this._calculateFromTransactions(transactions);
 
+    // PHASE 7 — TripPayment fallback: only use legacy TripPayment rows when
+    // the canonical ledger has NO customer payment rows. This prevents
+    // double-counting payments that exist in both tables (TripService.addPayment
+    // writes to BOTH).
+    let tripPaymentFallback = 0;
+    let ledgerHasCustomerPayments = false;
+    for (const tx of transactions) {
+      if (
+        tx &&
+        (tx.transaction_type === 'CUSTOMER_PAYMENT' || tx.transaction_type === 'CLIENT_PAYMENT')
+      ) {
+        ledgerHasCustomerPayments = true;
+        break;
+      }
+    }
+    if (!ledgerHasCustomerPayments && tripFinancial.booking?.payments && tripFinancial.booking.payments.length > 0) {
+      for (const p of tripFinancial.booking.payments) {
+        const cat = (p.payment_category || '').toUpperCase();
+        if (cat === 'CLIENT_PAYMENT' || cat === 'CUSTOMER_PAYMENT' || cat === 'CUSTOMER') {
+          tripPaymentFallback += Number(p.amount) || 0;
+        }
+      }
+    }
+
     // PHASE 7 — THE AUTHORITATIVE BILLED AMOUNT
     //   `TripFinancial.customer_fare` is a CACHED summary column that only gets
     //   a value when `calculateTripFinancial()` runs. On a freshly confirmed
@@ -241,6 +394,11 @@ class TripFinancialService {
       return Number(tripFinancial.customer_fare) || 0;
     })();
 
+    // Customer collected: ledger is authoritative; TripPayment is fallback only
+    const customerCollected = ledgerHasCustomerPayments
+      ? txCalc.totalCustomerPayments + txCalc.totalClientPayments
+      : tripPaymentFallback;
+
     const base = {
       bookingId: booking.booking_id,
       bookingNumber: booking.booking_number,
@@ -256,10 +414,10 @@ class TripFinancialService {
           ...base,
           // Customer Financials
           customerFare: billedAmount,
-          amountReceived: txCalc.totalCustomerPayments + txCalc.totalClientPayments,
-          paymentStatus: this._getPaymentStatus(billedAmount, txCalc.totalCustomerPayments + txCalc.totalClientPayments),
+          amountReceived: customerCollected,
+          paymentStatus: this._getPaymentStatus(billedAmount, customerCollected),
           paymentMethod: this._getPaymentMethod(transactions),
-          outstandingAmount: this._getOutstandingAmount(billedAmount, txCalc.totalCustomerPayments + txCalc.totalClientPayments),
+          outstandingAmount: this._getOutstandingAmount(billedAmount, customerCollected),
 
           // Driver Financials
           driverPayout: tripFinancial.driver_payout,
@@ -294,8 +452,8 @@ class TripFinancialService {
           // All transactions for money flow
           transactions: transactions,
           balances: {
-            customer: { received: txCalc.totalCustomerPayments },
-            client: { received: txCalc.totalClientPayments },
+            customer: { received: ledgerHasCustomerPayments ? txCalc.totalCustomerPayments : tripPaymentFallback },
+            client: { received: ledgerHasCustomerPayments ? txCalc.totalClientPayments : 0 },
             owner: {
               advance: txCalc.totalOwnerAdvance,
               settlement: txCalc.totalOwnerSettlements,
@@ -359,7 +517,7 @@ class TripFinancialService {
         // The SAME authoritative figure the admin branch uses, so a customer
         // and an admin can never disagree about what was billed.
         const billed = billedAmount;
-        const received = txCalc.totalCustomerPayments + txCalc.totalClientPayments;
+        const received = customerCollected;
 
         return {
           bookingId: booking.booking_id,

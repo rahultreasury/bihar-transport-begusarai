@@ -225,14 +225,70 @@ export default function VehicleHireWorkspace({
     loadContext();
   }, [loadContext]);
 
+  const fetchedDetailsRef = useRef({ vehicle: null, driver: null, vendor: null });
+  // Fetch details for pre-selected items after context loads
+  useEffect(() => {
+    const fetchPreselectedDetails = async () => {
+      if (form.vehicle_id && fetchedDetailsRef.current.vehicle !== form.vehicle_id) {
+        try {
+          const res = await vehicleHireAPI.getVehicle(form.vehicle_id);
+          const detail = res.data?.data;
+          if (detail) {
+            setVehicleDetail(detail);
+            fetchedDetailsRef.current.vehicle = form.vehicle_id;
+            if (detail.vendor && fetchedDetailsRef.current.vendor !== detail.vendor.owner_id) {
+              setVendorDetail(detail.vendor);
+              fetchedDetailsRef.current.vendor = detail.vendor.owner_id;
+            }
+            if (detail.driver && fetchedDetailsRef.current.driver !== detail.driver.driver_id) {
+              setDriverDetail({ driver: detail.driver });
+              fetchedDetailsRef.current.driver = detail.driver.driver_id;
+            }
+          }
+        } catch (err) {
+          console.error('Failed to fetch preselected vehicle details:', err);
+        }
+      } else if (form.driver_id && !form.vehicle_id && fetchedDetailsRef.current.driver !== form.driver_id) {
+        try {
+          const res = await vehicleHireAPI.getDriver(form.driver_id);
+          const detail = res.data?.data;
+          if (detail) {
+            setDriverDetail(detail);
+            fetchedDetailsRef.current.driver = form.driver_id;
+          }
+        } catch (err) {
+          console.error('Failed to fetch preselected driver details:', err);
+        }
+      } else if (form.vendor_id && !form.vehicle_id && fetchedDetailsRef.current.vendor !== form.vendor_id) {
+        try {
+          const res = await vehicleHireAPI.getVendor(form.vendor_id);
+          const detail = res.data?.data;
+          if (detail?.vendor) {
+            setVendorDetail(detail.vendor);
+            fetchedDetailsRef.current.vendor = form.vendor_id;
+          }
+        } catch (err) {
+          console.error('Failed to fetch preselected vendor details:', err);
+        }
+      }
+    };
+    if (!loading && context) {
+      fetchPreselectedDetails();
+    }
+  }, [loading, context, form.vehicle_id, form.driver_id, form.vendor_id]);
+
   /* ── Load the searchable selectors from the existing masters ────────────── */
+  const lookupsReqRef = useRef(0);
   const loadLookups = useCallback(async (search = '') => {
+    const reqId = lookupsReqRef.current + 1;
+    lookupsReqRef.current = reqId;
     setLookupsLoading(true);
     try {
       // `trip_id` is what makes the server annotate and rank for THIS pickup —
       // vacant vehicles and drivers first, each labelled AVAILABLE / BUSY /
       // CONFLICT / UNAVAILABLE against the consignment being booked.
       const response = await vehicleHireAPI.getLookups({ search, limit: 25, tripId: tripId || undefined });
+      if (reqId !== lookupsReqRef.current) return; // stale response
       if (response.data?.success) {
         const d = response.data.data;
         setVehicles(d.vehicles || []);
@@ -240,18 +296,22 @@ export default function VehicleHireWorkspace({
         setDrivers(d.drivers || []);
       }
     } catch (err) {
-      showToast('Could not load vehicle / vendor / driver lists', 'error');
+      if (lookupsReqRef.current === reqId) {
+        showToast('Could not load vehicle / vendor / driver lists', 'error');
+      }
     } finally {
-      setLookupsLoading(false);
+      if (lookupsReqRef.current === reqId) {
+        setLookupsLoading(false);
+      }
     }
-  }, [showToast]);
+  }, [showToast, tripId]);
 
   useEffect(() => {
     loadLookups('');
   }, [loadLookups]);
 
   /* ── Selecting a vehicle: real detail + auto-populated vendor ───────────── */
-  const selectVehicle = useCallback(async (opt) => {
+  const selectVehicle = useCallback(async (opt, source = 'user') => {
     setField('vehicle_id', String(opt.id));
     setDetailLoading(true);
     try {
@@ -260,6 +320,12 @@ export default function VehicleHireWorkspace({
       if (!detail) return;
 
       setVehicleDetail(detail);
+      // Ensure the selected vehicle is in the options list for display
+      setVehicles((prev) => {
+        const exists = prev.some((v) => v.vehicle_id === detail.vehicle.vehicle_id);
+        if (exists) return prev;
+        return [...prev, { ...detail.vehicle, documents: detail.documents, vendor: detail.vendor, driver: detail.driver }];
+      });
       // Vendor mobile and the vendor itself come from the vehicle's OWNER in
       // the existing master — never a hardcoded or duplicated vendor list.
       if (detail.vendor) {
@@ -271,6 +337,22 @@ export default function VehicleHireWorkspace({
         if (vres.data?.data?.drivers) setDrivers(vres.data.data.drivers);
       } else {
         setVendorDetail(null);
+      }
+      // Auto-populate assigned driver if vehicle has one
+      // Only auto-select driver if the selection came from user action (not from driver selection)
+      if (detail.driver && source === 'user') {
+        setField('driver_id', String(detail.driver.driver_id));
+        setDriverDetail({ driver: detail.driver });
+        // Ensure the auto-selected driver is in the options list
+        setDrivers((prev) => {
+          const exists = prev.some((d) => d.driver_id === detail.driver.driver_id);
+          if (exists) return prev;
+          return [...prev, { ...detail.driver, label: detail.driver.driver_name }];
+        });
+      } else if (!detail.driver && source === 'user') {
+        // Clear driver if vehicle has no assigned driver and user selected vehicle
+        setField('driver_id', '');
+        setDriverDetail(null);
       }
     } catch (err) {
       showToast('Could not load vehicle details', 'error');
@@ -296,7 +378,7 @@ export default function VehicleHireWorkspace({
     }
   }, [setField, showToast]);
 
-  const selectDriver = useCallback(async (opt) => {
+  const selectDriver = useCallback(async (opt, source = 'user') => {
     setField('driver_id', String(opt.id));
     setDetailLoading(true);
     try {
@@ -304,10 +386,56 @@ export default function VehicleHireWorkspace({
       const detail = response.data?.data;
       if (!detail) return;
       setDriverDetail(detail);
+      // Ensure the selected driver is in the options list for display
+      setDrivers((prev) => {
+        const exists = prev.some((d) => d.driver_id === detail.driver.driver_id);
+        if (exists) return prev;
+        return [...prev, { ...detail.driver, label: detail.driver.driver_name }];
+      });
       // The driver's own vendor auto-fills, from the existing master.
       if (detail.vendor) {
         setField('vendor_id', String(detail.vendor.owner_id));
         setVendorDetail((prev) => prev || detail.vendor);
+      }
+      // Auto-populate assigned vehicle if driver has one
+      // Only auto-select vehicle if the selection came from user action (not from vehicle selection)
+      if (detail.driver?.current_vehicle_id && source === 'user') {
+        const vehicleId = detail.driver.current_vehicle_id;
+        try {
+          const vres = await vehicleHireAPI.getVehicle(vehicleId);
+          const vdetail = vres.data?.data;
+          if (vdetail) {
+            // Check if vehicle is usable (not off-road, available)
+            const usable = vdetail.usable !== false;
+            const unusableReason = vdetail.unusable_reason || null;
+            if (usable) {
+              setField('vehicle_id', String(vehicleId));
+              setVehicleDetail(vdetail);
+              // Ensure the auto-selected vehicle is in the options list
+              setVehicles((prev) => {
+                const exists = prev.some((v) => v.vehicle_id === vdetail.vehicle.vehicle_id);
+                if (exists) return prev;
+                return [...prev, { ...vdetail.vehicle, documents: vdetail.documents, vendor: vdetail.vendor, driver: vdetail.driver }];
+              });
+              // Auto-populate vendor from vehicle's owner
+              if (vdetail.vendor) {
+                setField('vendor_id', String(vdetail.vendor.owner_id));
+                setVendorDetail(vdetail.vendor);
+                const vvres = await vehicleHireAPI.getVendor(vdetail.vendor.owner_id);
+                if (vvres.data?.data?.drivers) setDrivers(vvres.data.data.drivers);
+              }
+            } else {
+              // Driver has a vehicle but it's not available - show message but don't auto-select
+              showToast(`Driver's assigned vehicle (${vdetail.vehicle?.vehicle_number || vehicleId}) is not available: ${unusableReason}`, 'error');
+            }
+          }
+        } catch (err) {
+          console.error('Failed to fetch driver\'s assigned vehicle:', err);
+        }
+      } else if (!detail.driver?.current_vehicle_id && source === 'user') {
+        // Driver has no assigned vehicle - clear vehicle selection to allow manual pick
+        setField('vehicle_id', '');
+        setVehicleDetail(null);
       }
     } catch (err) {
       showToast('Could not load driver details', 'error');
@@ -695,24 +823,29 @@ const trip = context.trip;
             <SectionCard
               title="Hire Financial Summary"
               subtitle="Gross − Commission = Net Vendor Payable"
-              bodyClass="p-4"
+              icon={Percent}
+              bodyClass="p-5"
             >
-              <dl className="space-y-0">
-                <MoneyLine label="Gross Hire" value={h.gross_hire} />
-                <MoneyLine
-                  label="Commission"
-                  value={h.commission_amount}
-                  prefix="−"
-                  tone="muted"
-                  caption={
-                    h.commission_type === 'fixed'
-                      ? `Fixed ${inr(h.commission_rate)}`
-                      : `${amount(h.commission_rate)}%`
-                  }
-                />
-                <div className="my-2 border-t border-bt-navy/15" />
-                <MoneyLine label="Net Vendor Payable" value={h.net_vendor_payable} emphasis />
-              </dl>
+              <div className="rounded-xl border border-bt-border bg-gradient-to-br from-white to-bt-surface-soft p-4">
+                <dl className="space-y-1">
+                  <MoneyLine label="Gross Hire" value={h.gross_hire} />
+                  <MoneyLine
+                    label="Commission"
+                    value={h.commission_amount}
+                    prefix="−"
+                    tone="muted"
+                    caption={
+                      h.commission_type === 'fixed'
+                        ? `Fixed ${inr(h.commission_rate)}`
+                        : `${amount(h.commission_rate)}%`
+                    }
+                  />
+                  <div className="my-3 h-px w-full bg-gradient-to-r from-bt-border via-bt-border-strong to-bt-border"></div>
+                  <div className="rounded-lg bg-[rgba(245,160,0,0.08)] px-3 py-2">
+                    <MoneyLine label="Net Vendor Payable" value={h.net_vendor_payable} emphasis />
+                  </div>
+                </dl>
+              </div>
             </SectionCard>
 
             {/* ── Next operational action ─────────────────────────────────── */}
@@ -814,20 +947,33 @@ const trip = context.trip;
     <>
       {/* ── Compact header (standalone only) ─────────────────────────────── */}
       {!embedded ? (
-        <div className="mb-4 flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={goToCanonicalMaster}
-            className="inline-flex items-center gap-1.5 text-[12.5px] font-medium text-bt-ink-2 transition-colors hover:text-bt-navy"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" strokeWidth={2.2} />
-            Back to Trip
-          </Button>
-          <span className="text-bt-ink-3/50">/</span>
-          <span className="font-mono text-[13px] font-semibold text-bt-navy">{trip.trip_number}</span>
-          <span className="text-bt-ink-3/50">/</span>
-          <span className="text-[12px] font-bold uppercase tracking-wider text-bt-ink-3">Vehicle Hiring</span>
+        <div className="mb-6 flex flex-col gap-4">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={goToCanonicalMaster}
+                className="inline-flex items-center gap-1.5 text-[13px] font-medium text-bt-ink-2 transition-colors hover:text-bt-navy"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" strokeWidth={2.2} />
+                Back to Trip
+              </Button>
+              <span className="text-bt-ink-3/40">/</span>
+              <div className="flex items-center gap-3">
+                <span className="text-[13px] font-medium text-bt-ink-2 uppercase tracking-wider">Trip</span>
+                <span className="font-mono text-[15px] font-bold text-bt-navy tracking-tight">{trip.trip_number}</span>
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-[10.5px] font-bold uppercase tracking-[0.16em] text-bt-orange">Vehicle Hiring</span>
+            <div className="h-px flex-1 bg-gradient-to-r from-bt-orange/20 to-transparent"></div>
+          </div>
+          <h1 className="bt-page-title -mt-2">Vehicle Hiring</h1>
+          <p className="bt-page-desc -mt-2">
+            Assign vehicle, vendor and driver with accurate commercial terms for trip {trip.trip_number}
+          </p>
         </div>
       ) : null}
 
@@ -883,6 +1029,7 @@ const trip = context.trip;
           <SectionCard
             title="Vehicle & Driver"
             subtitle="Select the vehicle, vendor and driver for this trip."
+            icon={Truck}
             action={
               <Button
                 variant="ghost"
@@ -904,133 +1051,179 @@ const trip = context.trip;
                 {form.vehicle_id ? 'Change Vehicle' : 'Select Vehicle'}
               </Button>
             }
-            bodyClass="p-4"
+            bodyClass="p-5"
           >
-            {/* ── Compact info display when vehicle is selected ─────────── */}
+            {/* ── Selected information display ─────────── */}
             {vehicleInfo ? (
-              <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <InfoRow
-                  label="Vehicle"
-                  value={vehicleInfo.vehicle_number}
-                  icon={Truck}
-                />
-                <InfoRow
-                  label="Vehicle Type"
-                  value={vehicleInfo.vehicle_type}
-                />
-                <InfoRow
-                  label="Vehicle Size"
-                  value={vehicleInfo.body_type || (vehicleInfo.capacity_kg ? `${Number(vehicleInfo.capacity_kg).toLocaleString('en-IN')} kg` : '—')}
-                />
+              <div className="mb-6 space-y-5">
+                {/* Vehicle Information */}
+                <div className="rounded-xl border border-bt-border bg-bt-surface-soft p-4">
+                  <div className="mb-3 flex items-center gap-2">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[rgba(21,52,91,0.06)] text-bt-navy">
+                      <Truck className="h-4 w-4" strokeWidth={2.1} />
+                    </div>
+                    <h3 className="text-[14px] font-bold text-bt-navy">Vehicle Information</h3>
+                  </div>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                    <InfoRow
+                      label="Vehicle Number"
+                      value={vehicleInfo.vehicle_number}
+                    />
+                    <InfoRow
+                      label="Vehicle Type"
+                      value={vehicleInfo.vehicle_type}
+                    />
+                    <InfoRow
+                      label="Vehicle Size"
+                      value={vehicleInfo.body_type || (vehicleInfo.capacity_kg ? `${Number(vehicleInfo.capacity_kg).toLocaleString('en-IN')} kg` : '—')}
+                    />
+                    <InfoRow
+                      label="Vehicle Name"
+                      value={vehicleInfo.vehicle_name || '—'}
+                    />
+                  </div>
+                </div>
+
+                {/* Vendor Information */}
                 {vendorInfo ? (
-                  <>
-                    <InfoRow
-                      label="Vendor"
-                      value={vendorInfo.owner_name}
-                      icon={Building2}
-                    />
-                    <InfoRow
-                      label="Vendor Mobile"
-                      value={vendorInfo.mobile}
-                    />
-                    <InfoRow
-                      label="Vendor GST"
-                      value={vendorInfo.gst_number || '—'}
-                    />
-                  </>
+                  <div className="rounded-xl border border-bt-border bg-bt-surface-soft p-4">
+                    <div className="mb-3 flex items-center gap-2">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[rgba(21,52,91,0.06)] text-bt-navy">
+                        <Building2 className="h-4 w-4" strokeWidth={2.1} />
+                      </div>
+                      <h3 className="text-[14px] font-bold text-bt-navy">Vendor Information</h3>
+                    </div>
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                      <InfoRow
+                        label="Vendor Name"
+                        value={vendorInfo.owner_name}
+                      />
+                      <InfoRow
+                        label="Vendor Mobile"
+                        value={vendorInfo.mobile}
+                      />
+                      <InfoRow
+                        label="Vendor GST"
+                        value={vendorInfo.gst_number || '—'}
+                      />
+                    </div>
+                  </div>
                 ) : null}
+
+                {/* Driver Information */}
                 {driverInfo ? (
-                  <>
-                    <InfoRow
-                      label="Driver"
-                      value={driverInfo.driver_name}
-                    />
-                    <InfoRow
-                      label="Driver Mobile"
-                      value={driverInfo.mobile}
-                    />
-                    <InfoRow
-                      label="Driver License"
-                      value={driverInfo.driving_license || '—'}
-                    />
-                  </>
+                  <div className="rounded-xl border border-bt-border bg-bt-surface-soft p-4">
+                    <div className="mb-3 flex items-center gap-2">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[rgba(21,52,91,0.06)] text-bt-navy">
+                        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="12" cy="7" r="4"></circle>
+                          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                        </svg>
+                      </div>
+                      <h3 className="text-[14px] font-bold text-bt-navy">Driver Information</h3>
+                    </div>
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                      <InfoRow
+                        label="Driver Name"
+                        value={driverInfo.driver_name}
+                      />
+                      <InfoRow
+                        label="Driver Mobile"
+                        value={driverInfo.mobile}
+                      />
+                      <InfoRow
+                        label="Driver License"
+                        value={driverInfo.driving_license || '—'}
+                      />
+                    </div>
+                  </div>
                 ) : null}
               </div>
             ) : (
-              <div className="mb-4 py-3 text-center">
-                <p className="text-[12.5px] text-bt-ink-2">
-                  No vehicle selected. Search below to assign one.
+              <div className="mb-6 rounded-xl border border-dashed border-bt-border/60 bg-bt-surface-soft py-8 text-center">
+                <div className="flex justify-center">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[rgba(21,52,91,0.06)] text-bt-navy">
+                    <Truck className="h-5 w-5" strokeWidth={2.1} />
+                  </div>
+                </div>
+                <p className="mt-3 text-[14px] font-medium text-bt-navy">
+                  No vehicle selected
+                </p>
+                <p className="mt-1 text-[13px] text-bt-ink-2">
+                  Search and assign vehicle, vendor and driver below
                 </p>
               </div>
             )}
 
-            {/* ── Compact search inputs ─────────────────────────────────── */}
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <SearchableSelect
-                id="vh-vehicle"
-                label="Vehicle Number"
-                required
-                loading={lookupsLoading || detailLoading}
-                value={form.vehicle_id}
-                options={vehicles.map((v) => ({ id: v.vehicle_id, ...v }))}
-                onSearch={() => loadLookups('')}
-                onSelect={selectVehicle}
-                error={fieldErrors.vehicle_id}
-                placeholder="Search by number, type or name"
-                emptyLabel="No vehicles found"
-                formatOption={(o) => `${o.vehicle_number} · ${o.vehicle_type}${o.vehicle_name ? ` · ${o.vehicle_name}` : ''}`}
-                formatSelected={(o) => `${o.vehicle_number} · ${o.vehicle_type}`}
-                hint={vehicleDetail?.vehicle?.vehicle_type ? `Vehicle Type: ${vehicleDetail.vehicle.vehicle_type}` : undefined}
-              />
+            {/* ── Search inputs ─────────────────────────────────── */}
+            <div className="space-y-4">
+              <h4 className="text-[13px] font-bold uppercase tracking-[0.08em] text-bt-navy">Assignment</h4>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-2">
+                <SearchableSelect
+                  id="vh-vehicle"
+                  label="Vehicle Number"
+                  required
+                  loading={lookupsLoading || detailLoading}
+                  value={form.vehicle_id}
+                  options={vehicles.map((v) => ({ id: v.vehicle_id, ...v }))}
+                  onSearch={() => loadLookups('')}
+                  onSelect={selectVehicle}
+                  error={fieldErrors.vehicle_id}
+                  placeholder="Search by number, type or name"
+                  emptyLabel="No vehicles found"
+                  formatOption={(o) => `${o.vehicle_number} · ${o.vehicle_type}${o.vehicle_name ? ` · ${o.vehicle_name}` : ''}`}
+                  formatSelected={(o) => `${o.vehicle_number} · ${o.vehicle_type}`}
+                  hint={vehicleDetail?.vehicle?.vehicle_type ? `Vehicle Type: ${vehicleDetail.vehicle.vehicle_type}` : undefined}
+                />
 
-              <SearchableSelect
-                id="vh-vendor"
-                label="Vehicle Vendor"
-                required
-                loading={lookupsLoading || detailLoading}
-                value={form.vendor_id}
-                options={vendors.map((v) => ({ id: v.owner_id, ...v }))}
-                onSearch={(term) => loadLookups(term)}
-                onSelect={selectVendor}
-                error={fieldErrors.vendor_id}
-                placeholder="Search by owner name or mobile"
-                emptyLabel="No vendors found"
-                formatOption={(o) => `${o.owner_name}${o.mobile ? ` · ${o.mobile}` : ''}`}
-                formatSelected={(o) => `${o.owner_name}${o.mobile ? ` · ${o.mobile}` : ''}`}
-                hint={vendorDetail?.mobile ? `Vendor Mobile: ${vendorDetail.mobile}` : undefined}
-              />
+                <SearchableSelect
+                  id="vh-vendor"
+                  label="Vehicle Vendor"
+                  required
+                  loading={lookupsLoading || detailLoading}
+                  value={form.vendor_id}
+                  options={vendors.map((v) => ({ id: v.owner_id, ...v }))}
+                  onSearch={(term) => loadLookups(term)}
+                  onSelect={selectVendor}
+                  error={fieldErrors.vendor_id}
+                  placeholder="Search by owner name or mobile"
+                  emptyLabel="No vendors found"
+                  formatOption={(o) => `${o.owner_name}${o.mobile ? ` · ${o.mobile}` : ''}`}
+                  formatSelected={(o) => `${o.owner_name}${o.mobile ? ` · ${o.mobile}` : ''}`}
+                  hint={vendorDetail?.mobile ? `Vendor Mobile: ${vendorDetail.mobile}` : undefined}
+                />
 
-              <SearchableSelect
-                id="vh-driver"
-                label="Driver"
-                required
-                loading={lookupsLoading || detailLoading}
-                value={form.driver_id}
-                options={drivers.map((d) => ({ id: d.driver_id, ...d }))}
-                onSearch={(term) => loadLookups(term)}
-                onSelect={selectDriver}
-                error={fieldErrors.driver_id}
-                placeholder="Search by name or mobile"
-                emptyLabel="No drivers found"
-                formatOption={(o) => `${o.driver_name}${o.mobile ? ` · ${o.mobile}` : ''}`}
-                formatSelected={(o) => `${o.driver_name}${o.mobile ? ` · ${o.mobile}` : ''}`}
-                hint={driverDetail?.driver?.mobile ? `Driver Mobile: ${driverDetail.driver.mobile}` : undefined}
-              />
+                <SearchableSelect
+                  id="vh-driver"
+                  label="Driver"
+                  required
+                  loading={lookupsLoading || detailLoading}
+                  value={form.driver_id}
+                  options={drivers.map((d) => ({ id: d.driver_id, ...d }))}
+                  onSearch={(term) => loadLookups(term)}
+                  onSelect={selectDriver}
+                  error={fieldErrors.driver_id}
+                  placeholder="Search by name or mobile"
+                  emptyLabel="No drivers found"
+                  formatOption={(o) => `${o.driver_name}${o.mobile ? ` · ${o.mobile}` : ''}`}
+                  formatSelected={(o) => `${o.driver_name}${o.mobile ? ` · ${o.mobile}` : ''}`}
+                  hint={driverDetail?.driver?.mobile ? `Driver Mobile: ${driverDetail.driver.mobile}` : undefined}
+                />
 
-              {/* Vehicle size — from the vehicle master, read-only. It is a
-                  property of the truck, not something the operator chooses. */}
-              <FormField
-                label="Vehicle Size"
-                hint="From the vehicle master record"
-              >
-                <div className="bt-input bt-input-sm flex items-center bg-bt-surface-soft text-bt-ink-2">
-                  {vehicleDetail?.vehicle?.capacity_kg
-                    ? `${Number(vehicleDetail.vehicle.capacity_kg).toLocaleString('en-IN')} kg`
-                    : vehicleDetail?.vehicle?.body_type
-                      ? vehicleDetail.vehicle.body_type
-                      : '—'}
-                </div>
-              </FormField>
+                {/* Vehicle size — from the vehicle master, read-only. */}
+                <FormField
+                  label="Vehicle Size"
+                  hint="From the vehicle master record"
+                >
+                  <div className="bt-input bt-input-sm flex items-center bg-bt-surface-soft text-bt-ink-2">
+                    {vehicleDetail?.vehicle?.capacity_kg
+                      ? `${Number(vehicleDetail.vehicle.capacity_kg).toLocaleString('en-IN')} kg`
+                      : vehicleDetail?.vehicle?.body_type
+                        ? vehicleDetail.vehicle.body_type
+                        : '—'}
+                  </div>
+                </FormField>
+              </div>
             </div>
           </SectionCard>
 
@@ -1038,29 +1231,34 @@ const trip = context.trip;
           <SectionCard
             title="Vehicle Documents"
             subtitle={`Warning at ${documents?.warning_days ?? catalogue?.document_warning_days ?? 30} days`}
-            bodyClass="p-4"
+            icon={FileText}
+            bodyClass="p-5"
           >
             {documents?.documents?.length ? (
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
                 {documents.documents.map((doc) => {
                   const tone = docStatus(doc.status);
                   const Icon = tone.icon;
                   return (
                     <div
                       key={doc.key}
-                      className="flex flex-col items-center gap-1.5 rounded-lg border border-bt-border/50 bg-bt-surface-soft p-3 text-center"
+                      className="group flex flex-col items-center gap-2 rounded-xl border border-bt-border bg-white p-4 text-center transition-all duration-150 hover:border-bt-border-strong hover:shadow-sm"
                     >
-                      <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${tone.dot}`} aria-hidden="true" />
-                      <p className="text-[12px] font-bold text-bt-navy leading-tight">
-                        {doc.label}
-                      </p>
-                      <p className="text-[11px] text-bt-ink-2">
-                        {doc.expiry_date ? fmtDate(doc.expiry_date) : 'No date'}
-                      </p>
+                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-bt-surface-soft">
+                        <Icon className={`h-4 w-4 ${tone.label === 'Expired' ? 'text-red-600' : tone.label === 'Expiring Soon' ? 'text-amber-600' : tone.label === 'Valid' ? 'text-emerald-600' : 'text-slate-500'}`} strokeWidth={2.2} />
+                      </div>
+                      <div className="space-y-0.5">
+                        <p className="text-[13px] font-bold text-bt-navy leading-tight">
+                          {doc.label}
+                        </p>
+                        <p className="text-[12px] text-bt-ink-2">
+                          {doc.expiry_date ? fmtDate(doc.expiry_date) : 'No date recorded'}
+                        </p>
+                      </div>
                       <span
-                        className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[9.5px] font-bold ${tone.chip}`}
+                        className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[10px] font-bold ${tone.chip}`}
                       >
-                        <Icon className="h-2.5 w-2.5" strokeWidth={2.4} />
+                        <span className={`h-1.5 w-1.5 rounded-full ${tone.dot}`} aria-hidden="true" />
                         {tone.label}
                       </span>
                     </div>
@@ -1068,9 +1266,19 @@ const trip = context.trip;
                 })}
               </div>
             ) : (
-              <p className="py-4 text-center text-[12.5px] text-bt-ink-2">
-                Select a vehicle to see its document status.
-              </p>
+              <div className="rounded-xl border border-dashed border-bt-border/60 bg-bt-surface-soft py-8 text-center">
+                <div className="flex justify-center">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[rgba(21,52,91,0.06)] text-bt-navy">
+                    <FileText className="h-5 w-5" strokeWidth={2.1} />
+                  </div>
+                </div>
+                <p className="mt-3 text-[14px] font-medium text-bt-navy">
+                  No documents to display
+                </p>
+                <p className="mt-1 text-[13px] text-bt-ink-2">
+                  Select a vehicle to see its document status
+                </p>
+              </div>
             )}
 
             {/* An expired critical document is never silently hired. */}
@@ -1309,59 +1517,64 @@ const trip = context.trip;
           <SectionCard
             title="Hire Financial Summary"
             subtitle="Gross − Commission = Net Vendor Payable"
-            bodyClass="p-4"
-            action={previewing ? <span className="text-[11.5px] text-bt-ink-2">Calculating…</span> : null}
+            icon={Percent}
+            bodyClass="p-5"
+            action={previewing ? <span className="text-[11.5px] text-bt-ink-2 flex items-center gap-1.5"><span className="h-3 w-3 animate-spin rounded-full border-2 border-bt-ink-3 border-t-transparent"></span>Calculating</span> : null}
           >
-            <dl className="space-y-0">
-              <MoneyLine
-                label="Gross Hire"
-                value={money?.gross_hire ?? localGross ?? 0}
-                muted={!money && localGross === null}
-              />
-              <MoneyLine
-                label="Commission"
-                value={money?.commission_amount ?? 0}
-                prefix="−"
-                tone="muted"
-                muted={!money}
-                caption={
-                  form.commission_type === 'NO_COMMISSION'
-                    ? 'No commission'
-                    : form.commission_type === 'FIXED'
-                      ? `Fixed ${inr(form.commission_rate)}`
-                      : `${form.commission_rate}%`
-                }
-              />
-              <div className="my-2 border-t border-bt-navy/15" />
-              <MoneyLine
-                label="Net Vendor Payable"
-                value={money?.net_vendor_payable ?? 0}
-                emphasis
-                muted={!money}
-              />
-            </dl>
+            <div className="relative overflow-hidden rounded-xl border border-bt-border bg-gradient-to-br from-white to-bt-surface-soft p-4">
+              <dl className="space-y-1">
+                <MoneyLine
+                  label="Gross Hire"
+                  value={money?.gross_hire ?? localGross ?? 0}
+                  muted={!money && localGross === null}
+                />
+                <MoneyLine
+                  label="Commission"
+                  value={money?.commission_amount ?? 0}
+                  prefix="−"
+                  tone="muted"
+                  muted={!money}
+                  caption={
+                    form.commission_type === 'NO_COMMISSION'
+                      ? 'No commission'
+                      : form.commission_type === 'FIXED'
+                        ? `Fixed ${inr(form.commission_rate)}`
+                        : `${form.commission_rate}%`
+                  }
+                />
+                <div className="my-3 h-px w-full bg-gradient-to-r from-bt-border via-bt-border-strong to-bt-border"></div>
+                <div className="rounded-lg bg-[rgba(245,160,0,0.08)] px-3 py-2">
+                  <MoneyLine
+                    label="Net Vendor Payable"
+                    value={money?.net_vendor_payable ?? 0}
+                    emphasis
+                    muted={!money}
+                  />
+                </div>
+              </dl>
+            </div>
 
             {previewError ? (
-              <p className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11.5px] text-amber-800">
-                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={2.2} />
+              <p className="mt-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-[12px] text-amber-800">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={2.2} />
                 {previewError}
               </p>
             ) : null}
 
             {saveError ? (
-              <p className="mt-3 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11.5px] text-red-800" role="alert">
-                <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={2.2} />
+              <p className="mt-4 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-[12px] text-red-800" role="alert">
+                <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={2.2} />
                 {saveError}
               </p>
             ) : null}
 
-            <p className="mt-3 text-[11.5px] leading-relaxed text-bt-ink-2">
+            <p className="mt-4 text-[12px] leading-relaxed text-bt-ink-2">
               Hiring this vehicle creates an obligation only. No payment is recorded here — the vendor
               is paid later through the vendor payment ledger.
             </p>
 
             {/* ── ACTIONS ──────────────────────────────────────────────── */}
-            <div className="mt-3 flex flex-wrap items-center justify-end gap-2 border-t border-bt-border pt-3">
+            <div className="mt-4 flex flex-wrap items-center justify-end gap-2 border-t border-bt-border pt-4">
               {!embedded ? (
                 <Button variant="secondary" size="sm" onClick={() => navigate(`/admin/trips/${trip.trip_id}`)} disabled={saving}>
                   Cancel

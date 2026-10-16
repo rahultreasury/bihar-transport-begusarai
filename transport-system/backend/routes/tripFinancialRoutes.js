@@ -33,6 +33,7 @@ const router = express.Router();
 const { protect } = require('../middleware/auth');
 const { adminOnly } = require('../middleware/auth');
 const { prisma } = require('../config/prisma');
+const { renderPaymentDocument } = require('../services/PaymentDocumentPdf');
 const TripFinancialService = require('../services/TripFinancialService');
 const TripAdvanceService = require('../services/TripAdvanceService');
 const TripSettlementService = require('../services/TripSettlementService');
@@ -871,6 +872,52 @@ router.get('/:tripId/transactions', protect, adminOnly, async (req, res) => {
   } catch (error) {
     console.error('Get trip transactions error:', error);
     res.status(500).json({ success: false, message: error.message || 'Server error' });
+  }
+});
+
+/**
+ * GET /api/trips/:tripId/payments/:transactionId/RECEIPT.pdf
+ * GET /api/trips/:tripId/payments/:transactionId/VOUCHER.pdf
+ *
+ * Render a money receipt (money received, CREDIT) or a payment voucher (money
+ * paid out, DEBIT) from the persisted FinancialTransaction row — the SAME ledger
+ * the balances are read from. No second source of truth, and a document can
+ * never exist for a payment that was not recorded. The renderer refuses the
+ * wrong kind (a receipt for an outgoing payment → 400).
+ */
+router.get('/:tripId/payments/:transactionId/:docType', protect, adminOnly, async (req, res) => {
+  try {
+    const tripId = parseInt(req.params.tripId, 10);
+    const transactionId = parseInt(req.params.transactionId, 10);
+    const kind = String(req.params.docType || '').replace(/\.pdf$/i, '').toUpperCase();
+    if (isNaN(tripId) || isNaN(transactionId) || (kind !== 'RECEIPT' && kind !== 'VOUCHER')) {
+      return res.status(404).json({ success: false, message: 'Not found' });
+    }
+
+    const tx = await prisma.financialTransaction.findUnique({ where: { transaction_id: transactionId } });
+    if (!tx || tx.trip_id !== tripId) {
+      return res.status(404).json({ success: false, message: 'Transaction not found' });
+    }
+
+    const trip = await prisma.trip.findUnique({ where: { trip_id: tripId } });
+    const invoice = tx.invoice_id
+      ? await prisma.invoice.findUnique({ where: { invoice_id: tx.invoice_id } })
+      : null;
+
+    const pdf = await renderPaymentDocument({ transaction: tx, kind, trip, invoice });
+    const safeRef = String(tx.reference_number || `TXN-${tx.transaction_id}`).replace(/[^\w.-]+/g, '-');
+    const filename = kind === 'RECEIPT' ? `Money-Receipt-${safeRef}.pdf` : `Payment-Voucher-${safeRef}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', pdf.length);
+    return res.send(pdf);
+  } catch (error) {
+    // assertDocumentType throws a ValidationError for the wrong document kind.
+    if (error.message && /money receipt|payment voucher/i.test(error.message)) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+    console.error('Payment document error:', error);
+    return res.status(500).json({ success: false, message: error.message || 'Server error' });
   }
 });
 

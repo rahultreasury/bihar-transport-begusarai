@@ -114,6 +114,12 @@ function buildEditWorld(overrides = {}) {
         return { ...trip };
       },
     },
+    booking: {
+      update: async ({ where, data }) => {
+        writes.push({ op: 'booking.update', where: { ...where }, data: { ...data } });
+        return { booking_id: trip.booking_id, ...data };
+      },
+    },
     vehicleHire: {
       findUnique: async ({ where }) => {
         if (where.trip_id !== undefined && where.trip_id !== hire.trip_id) return null;

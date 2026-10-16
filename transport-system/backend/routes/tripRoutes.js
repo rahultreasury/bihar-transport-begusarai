@@ -626,6 +626,30 @@ router.post('/:id/dispatch', protect, adminOnly, async (req, res) => {
   }
 });
 
+/**
+ * POST /api/trips/:id/arrival
+ * Record arrival at the destination (IN_TRANSIT → AT_DELIVERY_POINT).
+ * Records the arrival timestamp and optional remarks.
+ * Idempotent for identical arrival time + remarks.
+ */
+router.post('/:id/arrival', protect, adminOnly, async (req, res) => {
+  const tripId = readTripId(req, res);
+  if (tripId === null) return;
+  try {
+    const result = await deliveryService.arriveAtDestination(tripId, req.body || {}, req.user);
+    res.json({
+      success: true,
+      message: result.idempotent
+        ? result.message || 'Arrival at destination already recorded'
+        : 'Arrival at destination recorded',
+      idempotent: result.idempotent,
+      data: result.trip,
+    });
+  } catch (error) {
+    sendOperationalError(res, error, 'Record arrival at destination error:');
+  }
+});
+
 // --- Documents ---------------------------------------------------------------
 
 /**

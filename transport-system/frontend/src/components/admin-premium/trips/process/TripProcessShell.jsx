@@ -16,7 +16,7 @@
 
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Check, Circle, Loader2, Lock } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Circle, Loader2, Lock } from 'lucide-react';
 
 import { buildRail, processMeta, STAGE_STATE } from './tripProcessModel';
 
@@ -174,15 +174,15 @@ export default function TripProcessShell({
 
 export function Panel({ title, subtitle, children, action }) {
   return (
-    <section className="rounded-xl border border-border bg-white">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
+    <section className="rounded-xl border border-slate-200 bg-white">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
         <div>
-          <h3 className="text-[14px] font-bold text-text">{title}</h3>
-          {subtitle ? <p className="text-[12px] text-muted">{subtitle}</p> : null}
+          <h3 className="text-sm font-semibold leading-tight text-slate-900">{title}</h3>
+          {subtitle && <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p>}
         </div>
         {action}
       </div>
-      <div className="p-4">{children}</div>
+      <div className="px-5 py-4">{children}</div>
     </section>
   );
 }
@@ -192,8 +192,8 @@ export function FactGrid({ items }) {
     <dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
       {items.filter(Boolean).map((f) => (
         <div key={f.label} className="min-w-0">
-          <dt className="text-[10.5px] font-semibold uppercase tracking-wider text-muted">{f.label}</dt>
-          <dd className="truncate text-[13px] font-semibold text-text">{f.value ?? '—'}</dd>
+          <dt className="text-[10.5px] font-semibold uppercase tracking-wider text-slate-500">{f.label}</dt>
+          <dd className="truncate text-[13px] font-semibold text-slate-900">{f.value ?? '—'}</dd>
         </div>
       ))}
     </dl>
@@ -207,9 +207,9 @@ export function FactGrid({ items }) {
  */
 export function NotStarted({ headline, waitingFor, prerequisites = [] }) {
   return (
-    <section className="rounded-xl border border-slate-300 bg-slate-50 p-4" aria-live="polite">
+    <section className="rounded-xl border border-slate-200 bg-slate-50 p-4" aria-live="polite">
       <p className="text-[12px] font-bold uppercase tracking-[0.16em] text-slate-600">{headline}</p>
-      <p className="mt-1.5 text-[13px] text-text">
+      <p className="mt-1.5 text-[13px] text-slate-900">
         {waitingFor
           ? `Waiting for ${waitingFor.toLowerCase()} before this step can begin.`
           : 'This step has not been recorded yet.'}
@@ -221,7 +221,7 @@ export function NotStarted({ headline, waitingFor, prerequisites = [] }) {
               <span aria-hidden="true" className={p.done ? 'text-emerald-600' : 'text-slate-400'}>
                 {p.done ? '✓' : '✗'}
               </span>
-              <span className={p.done ? 'text-text' : 'text-muted'}>{p.label}</span>
+              <span className={p.done ? 'text-slate-900' : 'text-slate-500'}>{p.label}</span>
             </li>
           ))}
         </ul>
@@ -235,7 +235,7 @@ export function CompletedRecord({ children }) {
   return (
     <section className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
       <div className="mb-3 flex items-center gap-2">
-        <Check size={15} className="text-emerald-700" aria-hidden="true" />
+        <CheckCircle2 size={15} className="text-emerald-700" aria-hidden="true" />
         <p className="text-[12px] font-bold uppercase tracking-[0.16em] text-emerald-800">
           Recorded
         </p>
@@ -248,7 +248,7 @@ export function CompletedRecord({ children }) {
 export function Action({ onClick, disabled, busy, children, tone = 'primary' }) {
   const tones = {
     primary: 'bg-amber-600 text-white hover:bg-amber-700',
-    ghost: 'border border-border bg-white text-text hover:bg-slate-50',
+    ghost: 'border border-slate-300 bg-white text-slate-900 hover:bg-slate-50',
   };
   return (
     <button

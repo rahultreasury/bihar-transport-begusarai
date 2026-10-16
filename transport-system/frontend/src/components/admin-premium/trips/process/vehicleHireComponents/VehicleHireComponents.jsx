@@ -152,7 +152,7 @@ export function SearchableSelect({
             aria-expanded={open}
             aria-controls={`${id}-listbox`}
             autoComplete="off"
-            disabled={disabled || loading}
+            disabled={disabled}
             value={open ? term : (selected ? formatSelected(selected) : '')}
             onChange={(e) => setTerm(e.target.value)}
             onFocus={() => setOpen(true)}

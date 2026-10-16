@@ -29,8 +29,8 @@ import { adminAPI, tripFinancialAPI } from '../../../../services/api';
 import { adminEnquiryAPI } from '../../../../services/enquiryAPI';
 import { vehicleHireAPI } from '../../../../services/vehicleHireAPI';
 import AdminShell from '../../layout/AdminShell';
-import ErrorBoundary from '../../../../components/ErrorBoundary';
 import { Badge, Facts, Notice, ConfirmModal, inr, fmtDate, cx } from './dispatchAtoms';
+import ErrorBoundary from '../../../../components/ErrorBoundary';
 import VehicleWorkspace from './VehicleWorkspace';
 import LoadingWorkspace from './LoadingWorkspace';
 import TransitWorkspace from './TransitWorkspace';
@@ -38,7 +38,6 @@ import DeliveryWorkspace from './DeliveryWorkspace';
 import PodWorkspace from './PodWorkspace';
 import CompletionWorkspace from './CompletionWorkspace';
 import TripFinanceWorkspace from './TripFinanceWorkspace';
-
 const TABS = [
   { id: 'overview', label: 'Overview', icon: ClipboardList },
   { id: 'vehicle', label: 'Vehicle', icon: Truck },
@@ -50,23 +49,6 @@ const TABS = [
   { id: 'history', label: 'History', icon: HistoryIcon },
 ];
 
-const LIFECYCLE_STEPS = [
-  { key: 'ENQUIRY', label: 'Enquiry' },
-  { key: 'RATE_QUOTED', label: 'Rate Quoted' },
-  { key: 'ORDER_CONFIRMED', label: 'Order Confirmed' },
-  { key: 'WAITING_FOR_VEHICLE', label: 'Waiting for Vehicle' },
-  { key: 'VEHICLE_HIRED', label: 'Vehicle Hired' },
-  { key: 'TO_LOADING_POINT', label: 'To Loading Point' },
-  { key: 'AT_LOADING_POINT', label: 'At Loading Point' },
-  { key: 'LOADED', label: 'Loaded / Waiting Dispatch' },
-  { key: 'DISPATCHED', label: 'Dispatched' },
-  { key: 'IN_TRANSIT', label: 'In Transit' },
-  { key: 'AT_DELIVERY_POINT', label: 'At Delivery Point' },
-  { key: 'DELIVERED', label: 'Delivered' },
-  { key: 'POD_PENDING', label: 'POD Pending' },
-  { key: 'POD_RECEIVED', label: 'POD Received' },
-  { key: 'COMPLETED', label: 'Completed' },
-];
 
 const ALLOWED_BACK_PATHS = new Set([
   '/admin/vehicle-hire',
@@ -95,43 +77,19 @@ function getValidBackPath(location) {
   return '/admin/vehicle-hire';
 }
 
-function lifecycleIndexFor(trip) {
-  if (!trip) return -1;
-  if (trip.status === 'CANCELLED') return -1;
-  const map = {
-    PENDING: 0,
-    ASSIGNED: 4,
-    TO_LOADING_POINT: 5,
-    AT_LOADING_POINT: 6,
-    LOADED: 7,
-    DISPATCHED: 8,
-    IN_TRANSIT: 9,
-    DELIVERED: 11,
-    COMPLETED: 14,
-  };
-  let idx = map[trip.status] ?? 0;
-  if (trip.quotation_number || trip.quoted_amount != null) idx = Math.max(idx, 1);
-  if (trip.status !== 'PENDING' || trip.confirmed_at) idx = Math.max(idx, 2);
-  if (trip.status === 'PENDING' && !trip.vehicle_hire_id) idx = Math.max(idx, 3);
-  if (trip.pod_required && trip.status === 'DELIVERED' && !trip.pod_received_at) idx = 12;
-  if (trip.pod_required && trip.pod_received_at) idx = 13;
-  if (!trip.pod_required && trip.status === 'DELIVERED') idx = 14;
-  return idx;
-}
-
 function SectionCard({ title, subtitle, action, children, className = '' }) {
   return (
-    <section className={cx('rounded-xl border border-slate-200 bg-white shadow-sm', className)}>
+    <section className={cx('rounded-xl border border-slate-200 bg-white shadow-sm transition-shadow hover:shadow-md', className)}>
       {(title || action) && (
-        <header className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-4 py-3">
+        <header className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
           <div>
-            <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
+            <h3 className="text-sm font-semibold leading-tight text-slate-900">{title}</h3>
             {subtitle && <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p>}
           </div>
           {action}
         </header>
       )}
-      <div className="p-4">{children}</div>
+      <div className="px-5 py-4">{children}</div>
     </section>
   );
 }
@@ -174,144 +132,6 @@ function LoadingState({ label = 'Loading trip workspace...' }) {
   );
 }
 
-/** Map each lifecycle step to the workspace tab that owns it. */
-const STEP_TAB = {
-  ENQUIRY: 'overview',
-  RATE_QUOTED: 'overview',
-  ORDER_CONFIRMED: 'overview',
-  WAITING_FOR_VEHICLE: 'vehicle',
-  VEHICLE_HIRED: 'vehicle',
-  TO_LOADING_POINT: 'loading',
-  AT_LOADING_POINT: 'loading',
-  LOADED: 'loading',
-  DISPATCHED: 'loading',
-  IN_TRANSIT: 'loading',
-  AT_DELIVERY_POINT: 'pod',
-  DELIVERED: 'pod',
-  POD_PENDING: 'pod',
-  POD_RECEIVED: 'pod',
-  COMPLETED: 'pod',
-};
-
-function LifecycleRail({ trip, cancellationReason, onGoTab }) {
-  const current = lifecycleIndexFor(trip);
-  const isCancelled = trip?.status === 'CANCELLED';
-  const podRequired = Boolean(trip?.pod_required);
-  const steps = useMemo(() => {
-    if (!podRequired) {
-      return LIFECYCLE_STEPS.filter((s) => s.key !== 'POD_PENDING' && s.key !== 'POD_RECEIVED');
-    }
-    return LIFECYCLE_STEPS;
-  }, [podRequired]);
-  const effectiveCurrent = !podRequired && current > 11 ? current - 2 : current;
-
-  if (isCancelled) {
-    return (
-      <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3">
-        <div className="flex items-center gap-2 text-sm font-medium text-red-700">
-          <Ban className="h-4 w-4" /> Trip Cancelled
-        </div>
-        {cancellationReason && (
-          <p className="mt-1 text-xs text-red-600">Reason: {cancellationReason}</p>
-        )}
-        {trip?.cancelled_at && (
-          <p className="mt-0.5 text-xs text-red-500">Cancelled on {fmtDate(trip.cancelled_at)}</p>
-        )}
-        <p className="mt-1 text-xs text-slate-500">
-          The cancellation reason and full audit history are preserved in the History tab.
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="overflow-x-auto">
-      <ol className="flex min-w-max items-center">
-        {steps.map((step, i) => {
-          const done = i < effectiveCurrent;
-          const active = i === effectiveCurrent;
-          const tab = STEP_TAB[step.key] || 'overview';
-          const reached = i <= effectiveCurrent;
-          return (
-            <li key={step.key} className="flex items-center">
-              <button
-                type="button"
-                onClick={() => onGoTab?.(tab)}
-                title={
-                  reached
-                    ? `${step.label} — open the ${tab} workspace`
-                    : `${step.label} — not reached yet. Open the ${tab} workspace to see what is required.`
-                }
-                className="group flex flex-col items-center gap-1"
-              >
-                <span
-                  className={cx(
-                    'flex h-7 w-7 items-center justify-center rounded-full border text-[10px] font-semibold transition-colors',
-                    done && 'border-emerald-600 bg-emerald-600 text-white',
-                    active && 'border-indigo-600 bg-indigo-600 text-white ring-4 ring-indigo-100',
-                    !done && !active && 'border-slate-300 bg-white text-slate-400 group-hover:border-indigo-300 group-hover:text-indigo-500'
-                  )}
-                >
-                  {done ? <CheckCircle2 className="h-4 w-4" /> : i + 1}
-                </span>
-                <span
-                  className={cx(
-                    'whitespace-nowrap text-[10px] font-medium',
-                    active ? 'text-indigo-700' : done ? 'text-emerald-700' : 'text-slate-400 group-hover:text-indigo-600'
-                  )}
-                >
-                  {step.label}
-                </span>
-              </button>
-              {i < steps.length - 1 && (
-                <span className={cx('mx-1 mb-4 h-0.5 w-6 rounded', i < effectiveCurrent ? 'bg-emerald-500' : 'bg-slate-200')} />
-              )}
-            </li>
-          );
-        })}
-      </ol>
-    </div>
-  );
-}
-
-function RecentEvents({ timeline, limit = 5 }) {
-  const events = useMemo(() => {
-    const list = Array.isArray(timeline?.events)
-      ? timeline.events
-      : Array.isArray(timeline)
-        ? timeline
-        : [];
-    return list.slice(0, limit);
-  }, [timeline, limit]);
-
-  if (!events.length) {
-    return <EmptyState icon={HistoryIcon} title="No events recorded yet" hint="Events appear here as the trip progresses." />;
-  }
-  return (
-    <ul className="space-y-2">
-      {events.map((ev) => {
-        const meta = parseMetadata(ev.metadata);
-        const label = EVENT_LABELS[ev.event_type] || ev.event_type?.replace(/_/g, ' ') || 'Event';
-        const location = meta.location || meta.current_location || null;
-        const recordedBy = meta.recorded_by || meta.staff || (ev.created_by ? `Staff #${ev.created_by}` : null);
-        return (
-          <li key={ev.timeline_id || ev.id} className="flex items-start gap-2 text-sm">
-            <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-indigo-500" />
-            <div className="min-w-0">
-              <p className="font-medium text-slate-800">{label}</p>
-              <p className="truncate text-xs text-slate-500">{ev.description}</p>
-              <p className="text-xs text-slate-500">
-                {ev.created_at ? fmtDate(ev.created_at) : ''}
-                {location ? ` · ${location}` : ''}
-                {recordedBy ? ` · ${recordedBy}` : ''}
-              </p>
-            </div>
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
 
 /** Safely parse a JSON metadata string stored on a timeline event. */
 function parseMetadata(metadata) {
@@ -348,6 +168,45 @@ function extractCancellationReason(timeline) {
     cancelEvent.details ||
     cancelEvent.reason ||
     'Reason not recorded'
+  );
+}
+
+function RecentEvents({ timeline, limit = 5 }) {
+  const events = useMemo(() => {
+    const list = Array.isArray(timeline?.events)
+      ? timeline.events
+      : Array.isArray(timeline)
+        ? timeline
+        : [];
+    return list.slice(0, limit);
+  }, [timeline, limit]);
+
+  if (!events.length) {
+    return <EmptyState icon={HistoryIcon} title="No events recorded yet" hint="Events appear here as the trip progresses." />;
+  }
+  return (
+    <ul className="space-y-2">
+      {events.map((ev) => {
+        const meta = parseMetadata(ev.metadata);
+        const label = (typeof EVENT_LABELS !== 'undefined' && EVENT_LABELS[ev.event_type]) || ev.event_type?.replace(/_/g, ' ') || 'Event';
+        const location = meta.location || meta.current_location || null;
+        const recordedBy = meta.recorded_by || meta.staff || (ev.created_by ? `Staff #${ev.created_by}` : null);
+        return (
+          <li key={ev.timeline_id || ev.id} className="flex items-start gap-2 text-sm">
+            <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-indigo-500" />
+            <div className="min-w-0">
+              <p className="font-medium text-slate-800">{label}</p>
+              <p className="truncate text-xs text-slate-500">{ev.description}</p>
+              <p className="text-xs text-slate-500">
+                {ev.created_at ? fmtDate(ev.created_at) : ''}
+                {location ? ` · ${location}` : ''}
+                {recordedBy ? ` · ${recordedBy}` : ''}
+              </p>
+            </div>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -460,7 +319,8 @@ export default function TripDetailWorkspace() {
       const tx = await tripFinancialAPI.getTripTransactions(tripId).catch(() => null);
       setTransactions(tx?.data?.data || tx?.data?.transactions || []);
     } catch (err) {
-      setLoadError(err?.response?.data?.message || err?.response?.data?.error || 'Trip not found.');
+      console.error('TripDetailWorkspace load error:', err);
+      setLoadError(err?.response?.data?.message || err?.response?.data?.error || err?.message || 'Trip not found.');
     } finally {
       setLoading(false);
     }
@@ -542,65 +402,150 @@ export default function TripDetailWorkspace() {
       <AdminShell activeKey="vehicle-hire" onNav={() => {}}>
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
         {/* ── Header ─────────────────────────────────────────────── */}
-        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <button
-              type="button"
-              onClick={goBack}
-              className="mb-2 inline-flex items-center gap-1.5 text-sm font-medium text-slate-600 hover:text-slate-900"
-            >
-              <ArrowLeft className="h-4 w-4" /> Back
-            </button>
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-xl font-bold text-slate-900">
-                {trip.trip_number || trip.booking_number || `Trip #${trip.id}`}
-              </h1>
-              <Badge state={trip.status} label={trip.status?.replace(/_/g, ' ')} />
-              {podRequired && <Badge tone="grey" label="POD Required" />}
+        <div className="mb-6 rounded-xl border border-slate-200 bg-gradient-to-r from-white to-[#F8FAFF] p-6 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={goBack}
+                className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
+              >
+                <ArrowLeft className="h-4 w-4" /> Back to Trips
+              </button>
             </div>
-            <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-600">
-              <span className="inline-flex items-center gap-1">
-                <User className="h-3.5 w-3.5" /> {displayName || '—'}
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <MapPin className="h-3.5 w-3.5" />
-                {trip.pickup_location || '—'} → {trip.drop_location || trip.delivery_location || '—'}
-              </span>
-            </p>
-            <p className="mt-1 flex flex-wrap items-center gap-x-4 text-xs text-slate-500">
-              {trip.trip_date && (
-                <span className="inline-flex items-center gap-1">
-                  <Calendar className="h-3.5 w-3.5" /> Trip: {fmtDate(trip.trip_date)}
-                </span>
-              )}
-              {trip.expected_delivery_date && (
-                <span className="inline-flex items-center gap-1">
-                  <Clock className="h-3.5 w-3.5" /> ETA: {fmtDate(trip.expected_delivery_date)}
-                </span>
-              )}
-            </p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={refresh}
+                disabled={refreshing}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <RefreshCw className={cx('h-4 w-4', refreshing && 'animate-spin')} />
+                {refreshing ? 'Refreshing...' : 'Refresh'}
+              </button>
+              <button
+                type="button"
+                className="inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white p-2 text-slate-600 shadow-sm hover:bg-slate-50"
+              >
+                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="1"></circle>
+                  <circle cx="19" cy="12" r="1"></circle>
+                  <circle cx="5" cy="12" r="1"></circle>
+                </svg>
+              </button>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={refresh}
-              disabled={refreshing}
-              className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            >
-              <RefreshCw className={cx('h-3.5 w-3.5', refreshing && 'animate-spin')} />
-              {refreshing ? 'Refreshing...' : 'Refresh'}
-            </button>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-6">
+            <div className="flex flex-wrap items-center gap-5">
+              <div className="flex h-14 w-14 items-center justify-center rounded-lg bg-[#FFF4E2]">
+                <Truck className="h-8 w-8 text-[#FF9900]" />
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">TRIP</p>
+                <div className="flex items-center gap-2">
+                  <h1 className="text-2xl font-bold tracking-tight text-[#18345B]">
+                    {trip.trip_number || trip.booking_number || `Trip #${trip.id}`}
+                  </h1>
+                  <span className="inline-flex items-center rounded-full bg-[#E6F0FF] px-2.5 py-0.5 text-xs font-medium text-[#2878E5]">
+                    {String(trip.status || '').replace(/_/g, ' ')}
+                  </span>
+                </div>
+              </div>
+              <div className="hidden sm:block h-12 w-px bg-slate-200"></div>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <MapPin className="h-5 w-5 text-green-600" />
+                  <div>
+                    <p className="text-xs text-slate-500">From</p>
+                    <p className="text-sm font-medium text-slate-900">{trip.pickup_location || '—'}</p>
+                  </div>
+                </div>
+                <span className="mx-2 text-slate-400">→</span>
+                <div className="flex items-center gap-2">
+                  <MapPin className="h-5 w-5 text-red-600" />
+                  <div>
+                    <p className="text-xs text-slate-500">To</p>
+                    <p className="text-sm font-medium text-slate-900">{trip.drop_location || trip.delivery_location || '—'}</p>
+                  </div>
+                </div>
+              </div>
+              <div className="hidden md:block h-12 w-px bg-slate-200"></div>
+              {trip.driver_id || trip.driver?.driver_id || trip.driver_name ? (
+                <Link
+                  to={`/admin/drivers/${trip.driver_id || trip.driver?.driver_id}`}
+                  className="flex items-center gap-3 hover:bg-slate-50 p-1 rounded-lg transition-colors"
+                >
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100">
+                    <svg className="h-5 w-5 text-slate-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                      <circle cx="12" cy="7" r="4"></circle>
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500">Driver</p>
+                    <p className="text-sm font-medium text-slate-900 hover:text-indigo-600">{displayName || trip.driver_name || trip.driver?.driver_name || '—'}</p>
+                    {trip.driver_phone || trip.driver?.phone ? (
+                      <p className="text-xs text-slate-500">{trip.driver_phone || trip.driver?.phone}</p>
+                    ) : null}
+                  </div>
+                </Link>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100">
+                    <svg className="h-5 w-5 text-slate-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                      <circle cx="12" cy="7" r="4"></circle>
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500">Driver</p>
+                    <p className="text-sm font-medium text-slate-500">Not assigned</p>
+                  </div>
+                </div>
+              )}
+              <div className="hidden md:block h-12 w-px bg-slate-200"></div>
+              {trip.vehicle_id || trip.vehicle?.vehicle_id || trip.vehicle_number ? (
+                <Link
+                  to={`/admin/vehicles/${trip.vehicle_id || trip.vehicle?.vehicle_id}`}
+                  className="flex items-center gap-3 hover:bg-slate-50 p-1 rounded-lg transition-colors"
+                >
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100">
+                    <Truck className="h-5 w-5 text-slate-600" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500">Vehicle</p>
+                    <p className="text-sm font-medium text-slate-900 hover:text-indigo-600">{trip.vehicle_number || trip.vehicle?.vehicle_number || trip.vehicle?.registration_number || '—'}</p>
+                    {trip.vehicle_type || trip.vehicle?.vehicle_type ? (
+                      <p className="text-xs text-slate-500">{trip.vehicle_type || trip.vehicle?.vehicle_type}</p>
+                    ) : null}
+                  </div>
+                </Link>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100">
+                    <Truck className="h-5 w-5 text-slate-600" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500">Vehicle</p>
+                    <p className="text-sm font-medium text-slate-500">Not assigned</p>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="hidden lg:block">
+              <svg width="200" height="80" viewBox="0 0 200 80" className="text-slate-300">
+                <path d="M10 40 Q60 10 120 40 Q160 70 190 30" stroke="#93c5fd" strokeWidth="2" fill="none" strokeDasharray="4 2" />
+                <circle cx="10" cy="40" r="5" fill="#16a34a" />
+                <circle cx="190" cy="30" r="5" fill="#dc2626" />
+                <g transform="translate(100,40)">
+                  <rect x="-8" y="-6" width="16" height="12" rx="2" fill="#f59e0b" />
+                  <circle cx="4" cy="6" r="1" fill="#92400e" />
+                  <circle cx="-4" cy="6" r="1" fill="#92400e" />
+                </g>
+              </svg>
+            </div>
           </div>
         </div>
-
-        {/* ── Lifecycle rail ─────────────────────────────────────── */}
-        <SectionCard
-          title="Shipment Lifecycle"
-          subtitle="Current operational status — separate from the historical timeline"
-          className="mb-4"
-        >
-          <LifecycleRail trip={trip} cancellationReason={cancellationReason} onGoTab={goTab} />
-        </SectionCard>
 
         {actionError && (
           <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -609,11 +554,12 @@ export default function TripDetailWorkspace() {
         )}
 
         {/* ── Tab bar ────────────────────────────────────────────── */}
-        <div className="mb-4 border-b border-slate-200">
-          <nav className="flex gap-1 overflow-x-auto" aria-label="Trip workspace tabs">
+        <div className="mb-6">
+          <nav className="flex gap-0 overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm" aria-label="Trip workspace tabs">
             {TABS.map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
+              const isPod = tab.id === 'pod';
               return (
                 <button
                   key={tab.id}
@@ -621,13 +567,16 @@ export default function TripDetailWorkspace() {
                   onClick={() => goTab(tab.id)}
                   aria-current={isActive ? 'page' : undefined}
                   className={cx(
-                    'inline-flex items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium transition-colors',
-                    isActive
-                      ? 'border-indigo-600 text-indigo-700'
-                      : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700'
+                    'relative inline-flex items-center gap-2 whitespace-nowrap px-4 py-3 text-sm font-medium transition-all duration-150',
+                    isActive && isPod
+                      ? 'bg-[#FFF4E2] text-[#FF9900]'
+                      : isActive
+                        ? 'bg-[#E6F0FF] text-[#2878E5]'
+                        : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900',
+                    isActive && 'after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-[#FF9900]'
                   )}
                 >
-                  <Icon className="h-4 w-4" />
+                  <Icon className={cx('h-4 w-4', isActive && isPod ? 'text-[#FF9900]' : isActive ? 'text-[#2878E5]' : 'text-slate-400')} />
                   {tab.label}
                 </button>
               );
@@ -1333,6 +1282,29 @@ function PaymentsTab({ tripId, trip, financials, transactions, onRefresh }) {
     }
   };
 
+  const handleReceipt = async (tx) => {
+    const txId = tx.transaction_id || tx.id;
+    setBusy(true);
+    setError(null);
+    try {
+      // The money receipt is rendered from the persisted FinancialTransaction
+      // row — the same ledger the balances above are read from.
+      const res = await tripFinancialAPI.getPaymentReceipt(tripId, txId);
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Money-Receipt-${txId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setError('Money receipt could not be generated for this transaction');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleReverse = async (tx) => {
     setBusy(true);
     setError(null);
@@ -1425,6 +1397,16 @@ function PaymentsTab({ tripId, trip, financials, transactions, onRefresh }) {
                   )}>
                     {tx.direction === 'CREDIT' ? '+' : '−'}{inr(tx.amount)}
                   </p>
+                  {(tx.transaction_type === 'CUSTOMER_PAYMENT' || tx.transaction_type === 'CLIENT_PAYMENT') && tx.direction === 'CREDIT' ? (
+                    <button
+                      type="button"
+                      onClick={() => handleReceipt(tx)}
+                      disabled={busy}
+                      className="rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      Receipt
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     onClick={() => setReverseId(tx.transaction_id || tx.id)}
@@ -1541,45 +1523,36 @@ function PaymentsTab({ tripId, trip, financials, transactions, onRefresh }) {
 function PodTab({ tripId, trip, stages, delivery, pod, completion, documents, timeline, ops, busy, onRun }) {
   return (
     <div className="space-y-6">
-      <div>
-        <h3 className="mb-2 text-sm font-semibold text-slate-900">Delivery</h3>
-        <DeliveryWorkspace
-          tripId={tripId}
-          trip={trip}
-          stages={stages}
-          ops={ops}
-          delivery={delivery}
-          busy={busy}
-          onRun={onRun}
-        />
-      </div>
-      <div>
-        <h3 className="mb-2 text-sm font-semibold text-slate-900">Proof of Delivery</h3>
-        <PodWorkspace
-          tripId={tripId}
-          trip={trip}
-          stages={stages}
-          ops={ops}
-          pod={pod}
-          documents={documents}
-          busy={busy}
-          onRun={onRun}
-        />
-      </div>
-      <div>
-        <h3 className="mb-2 text-sm font-semibold text-slate-900">Completion</h3>
-        <CompletionWorkspace
-          tripId={tripId}
-          trip={trip}
-          stages={stages}
-          ops={ops}
-          completion={completion}
-          documents={documents}
-          timeline={timeline}
-          busy={busy}
-          onRun={onRun}
-        />
-      </div>
+      <PodWorkspace
+        tripId={tripId}
+        trip={trip}
+        stages={stages}
+        ops={ops}
+        pod={pod}
+        documents={documents}
+        busy={busy}
+        onRun={onRun}
+      />
+      <DeliveryWorkspace
+        tripId={tripId}
+        trip={trip}
+        stages={stages}
+        ops={ops}
+        delivery={delivery}
+        busy={busy}
+        onRun={onRun}
+      />
+      <CompletionWorkspace
+        tripId={tripId}
+        trip={trip}
+        stages={stages}
+        ops={ops}
+        completion={completion}
+        documents={documents}
+        timeline={timeline}
+        busy={busy}
+        onRun={onRun}
+      />
     </div>
   );
 }

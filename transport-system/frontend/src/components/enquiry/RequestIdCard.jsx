@@ -10,7 +10,8 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { Copy, Check } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Copy, Check, ArrowRight } from 'lucide-react';
 
 export default function RequestIdCard({ enquiryNumber, className = '' }) {
   const [copied, setCopied] = useState(false);
@@ -74,16 +75,21 @@ export default function RequestIdCard({ enquiryNumber, className = '' }) {
         </div>
 
         <div className="mt-2 flex items-center gap-3">
-          <p
-            className="min-w-0 flex-1 select-all break-all font-mono text-xl font-bold tracking-wider text-white sm:text-[26px] sm:leading-tight"
+          <Link
+            to={`/track/${encodeURIComponent(enquiryNumber)}`}
+            className="min-w-0 flex-1 select-all break-all font-mono text-xl font-bold tracking-wider text-white hover:text-amber-300 transition-colors sm:text-[26px] sm:leading-tight"
             title={enquiryNumber || undefined}
           >
             {enquiryNumber || '—'}
-          </p>
+          </Link>
 
           <button
             type="button"
-            onClick={copy}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              copy();
+            }}
             disabled={!enquiryNumber}
             aria-label={copied ? 'Request ID copied' : 'Copy request ID'}
             className="inline-flex min-h-[40px] shrink-0 items-center gap-1.5 rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-xs font-semibold text-white transition hover:bg-white/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60 disabled:cursor-not-allowed disabled:opacity-50"
@@ -102,9 +108,18 @@ export default function RequestIdCard({ enquiryNumber, className = '' }) {
           </button>
         </div>
 
-        <p className="mt-2 text-[11px] leading-relaxed text-white/55">
-          Quote this ID when contacting Bihar Transport Support.
-        </p>
+        <div className="mt-2 flex items-center justify-between gap-3">
+          <p className="text-[11px] leading-relaxed text-white/55">
+            Quote this ID when contacting Bihar Transport Support.
+          </p>
+          <Link
+            to={`/track/${encodeURIComponent(enquiryNumber)}`}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-white/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+          >
+            Track Request
+            <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+          </Link>
+        </div>
 
         {/* Announced to screen readers when the copy succeeds. */}
         <span role="status" aria-live="polite" className="sr-only">

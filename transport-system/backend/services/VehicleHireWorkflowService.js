@@ -761,6 +761,15 @@ class VehicleHireWorkflowService {
           is_available: true,
           owner_id: true,
           owner: { select: { owner_id: true, owner_name: true, mobile: true } },
+          driver: {
+            select: {
+              driver_id: true,
+              driver_name: true,
+              mobile: true,
+              status: true,
+              is_available: true,
+            },
+          },
         },
       }),
       this.prisma.vehicleOwner.findMany({
@@ -803,6 +812,7 @@ class VehicleHireWorkflowService {
       vendor: v.owner
         ? { owner_id: v.owner.owner_id, owner_name: v.owner.owner_name, mobile: v.owner.mobile }
         : null,
+      assigned_driver: v.driver || null,
     }));
     const driverRows = drivers.map((d) => ({ ...d, label: d.driver_name }));
 
@@ -914,6 +924,20 @@ class VehicleHireWorkflowService {
         owner: {
           select: { owner_id: true, owner_name: true, owner_type: true, mobile: true, city: true, status: true },
         },
+        driver: {
+          select: {
+            driver_id: true,
+            driver_name: true,
+            mobile: true,
+            alternate_mobile: true,
+            status: true,
+            is_available: true,
+            license_number: true,
+            license_expiry: true,
+            license_class: true,
+            current_vehicle_id: true,
+          },
+        },
       },
     });
 
@@ -937,13 +961,27 @@ class VehicleHireWorkflowService {
       },
       vendor: vehicle.owner
         ? {
-          owner_id: vehicle.owner.owner_id,
-          owner_name: vehicle.owner.owner_name,
-          owner_type: vehicle.owner.owner_type,
-          mobile: vehicle.owner.mobile,
-          city: vehicle.owner.city,
-          status: vehicle.owner.status,
-        }
+            owner_id: vehicle.owner.owner_id,
+            owner_name: vehicle.owner.owner_name,
+            owner_type: vehicle.owner.owner_type,
+            mobile: vehicle.owner.mobile,
+            city: vehicle.owner.city,
+            status: vehicle.owner.status,
+          }
+        : null,
+      driver: vehicle.driver
+        ? {
+            driver_id: vehicle.driver.driver_id,
+            driver_name: vehicle.driver.driver_name,
+            mobile: vehicle.driver.mobile,
+            alternate_mobile: vehicle.driver.alternate_mobile,
+            status: vehicle.driver.status,
+            is_available: vehicle.driver.is_available,
+            license_number: vehicle.driver.license_number,
+            license_expiry: vehicle.driver.license_expiry,
+            license_class: vehicle.driver.license_class,
+            current_vehicle_id: vehicle.driver.current_vehicle_id,
+          }
         : null,
       documents: this.evaluateDocuments(vehicle),
       usable: usability.usable,
@@ -1220,7 +1258,7 @@ class VehicleHireWorkflowService {
               vehicle_type_required: true,
             },
           },
-          client: { select: { company_name: true, contact_person: true } },
+          client: { select: { client_id: true, company_name: true, contact_person: true } },
           user: { select: { first_name: true, last_name: true } },
           vehicle: {
             select: {
@@ -1393,6 +1431,7 @@ class VehicleHireWorkflowService {
 
       customer,
       customer_type: t.client ? 'CLIENT' : 'ONLINE',
+      client: t.client,
 
       route: {
         pickup: [t.pickup_location, t.pickup_city].filter(Boolean).join(', '),
@@ -1452,25 +1491,25 @@ class VehicleHireWorkflowService {
       // Customer freight — deliberately NOT the vehicle-side gross.
       customer_freight: n(t.freight_amount),
 
-      hire: hire
+      vehicleHire: hire
         ? {
-          hire_id: hire.hire_id,
-          challan_number: hire.challan_number,
-          billing_to: hire.billing_to,
-          business_model: hire.business_model,
-          rate_basis: hire.rate_basis,
-          rate_value: n(hire.rate_value),
-          rate_quantity: n(hire.rate_quantity),
-          commission_type: hire.commission_type,
-          commission_rate: n(hire.commission_rate),
-          // THREE SEPARATE FIGURES, read straight from their own columns.
-          gross_hire: n(hire.gross_hire),
-          commission_amount: n(hire.commission_amount),
-          net_vendor_payable: n(hire.net_vendor_payable),
-          status: hire.status,
-          hired_at: hire.created_at,
-          hired_by: hire.created_by,
-        }
+            hire_id: hire.hire_id,
+            challan_number: hire.challan_number,
+            billing_to: hire.billing_to,
+            business_model: hire.business_model,
+            rate_basis: hire.rate_basis,
+            rate_value: n(hire.rate_value),
+            rate_quantity: n(hire.rate_quantity),
+            commission_type: hire.commission_type,
+            commission_rate: n(hire.commission_rate),
+            // THREE SEPARATE FIGURES, read straight from their own columns.
+            gross_hire: n(hire.gross_hire),
+            commission_amount: n(hire.commission_amount),
+            net_vendor_payable: n(hire.net_vendor_payable),
+            status: hire.status,
+            hired_at: hire.created_at,
+            hired_by: hire.created_by,
+          }
         : null,
     };
   }
@@ -1669,6 +1708,36 @@ class VehicleHireWorkflowService {
         }),
         reason: resolved.remarks || null,
       }, tx);
+
+      // 5. MIRRORS — keep booking mirrors in step so the Order Master agrees immediately.
+      //    Same pattern as TripVehicleAssignmentService.assign: update booking/enquiry mirrors
+      //    in the SAME transaction so the Order Master and Enquiry screens agree with operations.
+      if (trip.booking_id) {
+        const bookingPatch = {
+          vehicle_id: resolved.vehicle_id,
+          driver_id: resolved.driver_id,
+          vehicle_owner_id: resolved.vendor_id,
+        };
+        await tx.booking.update({
+          where: { booking_id: trip.booking_id },
+          data: bookingPatch,
+        });
+      }
+
+      // Also update enquiry mirrors if this trip was created from an enquiry
+      if (trip.enquiry_id) {
+        const enquiryPatch = {
+          assigned_vehicle_id: resolved.vehicle_id,
+          assigned_driver_id: resolved.driver_id,
+          assigned_owner_id: resolved.vendor_id,
+          vehicle_assigned_at: new Date(),
+          driver_assigned_at: new Date(),
+        };
+        await tx.enquiry.update({
+          where: { enquiry_id: trip.enquiry_id },
+          data: enquiryPatch,
+        });
+      }
 
       return { hire, trip: updatedTrip };
     });

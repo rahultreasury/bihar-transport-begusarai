@@ -276,7 +276,14 @@ function buildTripFinancialServiceStubs(bookingRow) {
     },
   };
 
-  const financialTxRepo = { create: async (data) => { calls.financialTx_create.push(data); return {}; } };
+  const financialTxRepo = {
+    create: async (data) => { calls.financialTx_create.push(data); return {}; },
+    // calculateTripFinancial reads the ledger by booking id (line 87). This
+    // suite seeds no transactions, so the repo returns an empty ledger — the
+    // same result the real FinancialTransactionRepository.findByBookingId gives
+    // for a booking with no rows.
+    findByBookingId: async () => [],
+  };
   const auditRepo = { create: async () => ({}) };
 
   prismaModule.prisma.booking = {

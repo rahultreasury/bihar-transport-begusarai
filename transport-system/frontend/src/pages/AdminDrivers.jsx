@@ -342,13 +342,17 @@ const searchInputRef = useRef(null);
 
   const kpis = useMemo(() => {
     if (!stats) return [];
+    const isTotalActive = !activeQuickFilter && !statusFilter;
+    const isAvailableActive = activeQuickFilter === 'available' || statusFilter === 'available';
+    const isOnTripActive = activeQuickFilter === 'on_trip' || statusFilter === 'on_trip';
+    const isNoVehicleActive = activeQuickFilter === 'unassigned';
     return [
-      { key: 'total', title: 'Total Drivers', value: stats.total ?? 0, sub: 'Registered', accent: 'amber', loading: false },
-      { key: 'available', title: 'Available', value: stats.available ?? 0, sub: 'Ready for dispatch', accent: 'green', loading: false },
-      { key: 'onTrip', title: 'On Trip', value: stats.onTrip ?? 0, sub: 'Currently active', accent: 'sky', loading: false },
-      { key: 'noVehicle', title: 'No Vehicle', value: noVehicleCount, sub: 'Needs assignment', accent: 'slate', loading: false },
+      { key: 'total', title: 'Total Drivers', value: stats.total ?? 0, sub: 'Registered', accent: 'amber', loading: false, active: isTotalActive },
+      { key: 'available', title: 'Available', value: stats.available ?? 0, sub: 'Ready for dispatch', accent: 'green', loading: false, active: isAvailableActive },
+      { key: 'onTrip', title: 'On Trip', value: stats.onTrip ?? 0, sub: 'Currently active', accent: 'sky', loading: false, active: isOnTripActive },
+      { key: 'noVehicle', title: 'No Vehicle', value: noVehicleCount, sub: 'Needs assignment', accent: 'slate', loading: false, active: isNoVehicleActive },
     ];
-  }, [stats, noVehicleCount]);
+  }, [stats, noVehicleCount, activeQuickFilter, statusFilter]);
 
   // Table columns
   const columns = useMemo(() => [
@@ -675,9 +679,37 @@ const searchInputRef = useRef(null);
         {/* KPI Cards */}
         {stats && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-            {kpis.map(k => (
-              <KpiCard key={k.key} title={k.title} value={k.value} sub={k.sub} accent={k.accent} loading={false} />
-            ))}
+            {kpis.map(k => {
+              const handleClick = () => {
+                if (k.key === 'total') {
+                  setActiveQuickFilter(null);
+                  setStatusFilter('');
+                } else if (k.key === 'available') {
+                  setActiveQuickFilter(activeQuickFilter === 'available' ? null : 'available');
+                  setStatusFilter('');
+                } else if (k.key === 'onTrip') {
+                  setActiveQuickFilter(activeQuickFilter === 'on_trip' ? null : 'on_trip');
+                  setStatusFilter('');
+                } else if (k.key === 'noVehicle') {
+                  setActiveQuickFilter(activeQuickFilter === 'unassigned' ? null : 'unassigned');
+                  setStatusFilter('');
+                }
+                setPagination(prev => ({ ...prev, page: 1 }));
+              };
+              return (
+                <KpiCard
+                  key={k.key}
+                  title={k.title}
+                  value={k.value}
+                  sub={k.sub}
+                  accent={k.accent}
+                  loading={false}
+                  onClick={handleClick}
+                  active={k.active}
+                  ariaLabel={`${k.title}: ${k.value} ${k.sub}`}
+                />
+              );
+            })}
           </div>
         )}
 
@@ -720,7 +752,7 @@ const searchInputRef = useRef(null);
             )}
           </div>
 
-          {/* Quick Filter Buttons */}
+          {/* Quick Filter Buttons + Advanced Filters */}
           <div className="flex flex-wrap items-center gap-2">
             {QUICK_FILTERS.map((qf) => {
               const isActive = activeQuickFilter === qf.key;
@@ -745,6 +777,34 @@ const searchInputRef = useRef(null);
                 </button>
               );
             })}
+
+            {/* Advanced Filters Toggle - next to No Vehicle chip */}
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border/60 bg-card/40 text-xs font-semibold text-muted hover:text-text hover:bg-hover/60 transition-all"
+              aria-label="Toggle advanced filters"
+              aria-expanded={showFilters}
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+              </svg>
+              <span>Advanced</span>
+              {activeFilterCount > 0 && (
+                <span className="flex items-center justify-center h-4 min-w-[16px] px-1 rounded-full bg-amber-500 text-white text-[9px] font-bold">
+                  {activeFilterCount}
+                </span>
+              )}
+            </button>
+
+            {activeFilterCount > 0 && (
+              <button
+                onClick={resetFilters}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold text-red-500 hover:bg-red-500/10 transition-all"
+                aria-label="Reset all filters"
+              >
+                Clear Filters
+              </button>
+            )}
           </div>
         </div>
 

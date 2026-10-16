@@ -48,6 +48,7 @@ function buildFakePrisma(seed = {}) {
     vehicles: seed.vehicle ? { [seed.vehicle.vehicle_id]: { ...seed.vehicle } } : {},
     owners: seed.owner ? { [seed.owner.owner_id]: { ...seed.owner } } : {},
     drivers: seed.driver ? { [seed.driver.driver_id]: { ...seed.driver } } : {},
+    bookings: seed.booking ? { [seed.booking.booking_id]: { ...seed.booking } } : {},
     hires: [],
     timelineEvents: [],
     auditEntries: [],
@@ -105,6 +106,21 @@ function buildFakePrisma(seed = {}) {
     driver: {
       findUnique: async ({ where }) => state.drivers[where.driver_id] || null,
       findMany: async () => Object.values(state.drivers),
+    },
+
+    booking: {
+      findUnique: async ({ where }) => state.bookings[where.booking_id] || null,
+      findFirst: async ({ where }) => Object.values(state.bookings).find(b => 
+        (where.booking_id && b.booking_id === where.booking_id) ||
+        (where.trip_id && b.trip_id === where.trip_id)
+      ) || null,
+      update: async ({ where, data }) => {
+        const booking = state.bookings[where.booking_id];
+        if (!booking) return null;
+        record('booking.update', where.booking_id);
+        state.bookings[where.booking_id] = { ...booking, ...data };
+        return state.bookings[where.booking_id];
+      },
     },
 
     vehicleHire: {
@@ -255,6 +271,22 @@ function seedTrip(overrides = {}) {
       current_vehicle_id: 10,
       ...overrides.driver,
     },
+    booking: {
+      booking_id: 88,
+      booking_number: 'BTB-2026-00088',
+      user_id: 1,
+      vehicle_id: 10,
+      driver_id: 30,
+      pickup_location: 'Ram Nagar',
+      pickup_city: 'Muzaffarpur',
+      drop_location: 'Dankuni',
+      drop_city: 'Kolkata',
+      status: 'confirmed',
+      quote_status: 'ACCEPTED',
+      final_price: 58000,
+      vehicle_owner_id: 20,
+      ...overrides.booking,
+    },
   };
 }
 
@@ -333,14 +365,15 @@ test('FLOW: everything commits inside ONE transaction', async () => {
 
   await service.hireVehicle(125, validHire, ADMIN);
 
-  // The hire, the status change, the timeline event and the audit entry are four
-  // writes; they must be balanced by a matching single transaction.
+  // The hire, the status change, the timeline event, the audit entry and the booking
+  // mirror are five writes; they must be balanced by a matching single transaction.
   const writes = state.writes.map((w) => w.op);
   assert.deepEqual(writes, [
     'vehicleHire.create',
     'trip.update',
     'tripTimeline.create',
     'auditLog.create',
+    'booking.update',
   ]);
   assert.equal(state.transactionDepth, 0, 'the transaction must be closed');
 });
