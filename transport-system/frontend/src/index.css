@@ -320,6 +320,99 @@ html.admin-dark body {
   }
   .bt-btn-accent:hover:not(:disabled) { background: var(--bt-orange-dark); color: #fff; }
 
+  /* Header Quick Actions — Premium styling */
+  .bt-btn-header-vehicle-hire {
+    background: var(--bt-orange);
+    color: var(--bt-navy-dark);
+    border: 1px solid rgba(245, 160, 0, 0.6);
+    box-shadow: 0 2px 4px rgba(245, 160, 0, 0.25), 0 0 0 1px rgba(245, 160, 0, 0.15);
+    transition: all 200ms ease;
+    position: relative;
+  }
+  .bt-btn-header-vehicle-hire:hover:not(:disabled) {
+    background: var(--bt-orange-dark);
+    color: #fff;
+    box-shadow: 0 4px 8px rgba(245, 160, 0, 0.35), 0 0 12px rgba(245, 160, 0, 0.25), 0 0 0 1px rgba(245, 160, 0, 0.3);
+    transform: translateY(-1px);
+  }
+  .bt-btn-header-vehicle-hire:active:not(:disabled) {
+    transform: translateY(0);
+    box-shadow: 0 2px 4px rgba(245, 160, 0, 0.25), 0 0 8px rgba(245, 160, 0, 0.2);
+  }
+  .bt-btn-header-vehicle-hire:focus-visible:not(:disabled) {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(245, 160, 0, 0.4), 0 4px 8px rgba(245, 160, 0, 0.35), 0 0 12px rgba(245, 160, 0, 0.25);
+  }
+
+  .bt-btn-header-bookings {
+    background: var(--bt-surface);
+    color: var(--bt-text-primary);
+    border: 1px solid var(--bt-border-strong);
+    box-shadow: 0 1px 2px rgba(16, 43, 76, 0.08);
+    transition: all 200ms ease;
+  }
+  .bt-btn-header-bookings:hover:not(:disabled) {
+    background: var(--bt-surface-soft);
+    border-color: rgba(21, 52, 91, 0.5);
+    box-shadow: 0 4px 8px rgba(21, 52, 91, 0.12), 0 0 8px rgba(21, 52, 91, 0.08), 0 0 0 1px rgba(21, 52, 91, 0.1);
+    transform: translateY(-1px);
+  }
+  .bt-btn-header-bookings:active:not(:disabled) {
+    transform: translateY(0);
+    box-shadow: 0 2px 4px rgba(16, 43, 76, 0.08), 0 0 6px rgba(21, 52, 91, 0.06);
+  }
+  .bt-btn-header-bookings:focus-visible:not(:disabled) {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(21, 52, 91, 0.25), 0 4px 8px rgba(21, 52, 91, 0.12), 0 0 8px rgba(21, 52, 91, 0.08);
+  }
+
+  .bt-btn-header-financials {
+    background: #2563EB;
+    color: #fff;
+    border: 1px solid rgba(37, 99, 235, 0.6);
+    box-shadow: 0 2px 4px rgba(37, 99, 235, 0.25), 0 0 0 1px rgba(37, 99, 235, 0.15), 0 0 12px rgba(37, 99, 235, 0.3);
+    transition: all 200ms ease;
+    position: relative;
+  }
+  .bt-btn-header-financials:hover:not(:disabled) {
+    background: #1D4ED8;
+    color: #fff;
+    box-shadow: 0 4px 8px rgba(37, 99, 235, 0.35), 0 0 16px rgba(37, 99, 235, 0.4), 0 0 0 1px rgba(37, 99, 235, 0.4);
+    transform: translateY(-1px);
+  }
+  .bt-btn-header-financials:active:not(:disabled) {
+    transform: translateY(0);
+    box-shadow: 0 2px 4px rgba(37, 99, 235, 0.25), 0 0 10px rgba(37, 99, 235, 0.3), 0 0 0 1px rgba(37, 99, 235, 0.35);
+  }
+  .bt-btn-header-financials:focus-visible:not(:disabled) {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.5), 0 4px 8px rgba(37, 99, 235, 0.35), 0 0 16px rgba(37, 99, 235, 0.4);
+  }
+
+  .bt-btn-header-financials.active {
+    background: #1E40AF;
+    box-shadow: 0 2px 4px rgba(30, 64, 175, 0.35), 0 0 16px rgba(37, 99, 235, 0.5), 0 0 0 1px rgba(30, 64, 175, 0.6);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .bt-btn-header-vehicle-hire,
+    .bt-btn-header-bookings,
+    .bt-btn-header-financials {
+      transition: none;
+      transform: none !important;
+    }
+    .bt-btn-header-vehicle-hire:hover:not(:disabled),
+    .bt-btn-header-bookings:hover:not(:disabled),
+    .bt-btn-header-financials:hover:not(:disabled) {
+      transform: none;
+    }
+    .bt-btn-header-vehicle-hire:active:not(:disabled),
+    .bt-btn-header-bookings:active:not(:disabled),
+    .bt-btn-header-financials:active:not(:disabled) {
+      transform: none;
+    }
+  }
+
   /* Secondary — white with a hairline border */
   .bt-btn-secondary {
     background: var(--bt-surface);

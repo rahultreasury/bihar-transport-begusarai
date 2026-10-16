@@ -22,11 +22,12 @@
  */
 
 import { useContext, useMemo } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Menu, Bell, LifeBuoy } from 'lucide-react';
 
 import { AuthContext } from '../../../contexts/AuthContext';
 import { DEFAULT_NAV_ITEMS, resolveModuleLabel } from './adminNavigation';
+import { Button } from '../ui/AdminUI';
 
 export default function AdminTopHeader({
   onMenuClick,
@@ -36,6 +37,7 @@ export default function AdminTopHeader({
 }) {
   const { user } = useContext(AuthContext) || {};
   const location = useLocation();
+  const navigate = useNavigate();
 
   const adminName = user?.full_name || user?.first_name || 'System Administrator';
   const adminInitials =
@@ -51,6 +53,7 @@ export default function AdminTopHeader({
     () => resolveModuleLabel(location.pathname, items),
     [location.pathname, items]
   );
+  const isDashboard = moduleName === 'DASHBOARD';
 
   const hasPending = Number.isFinite(pendingEnquiries) && pendingEnquiries > 0;
 
@@ -104,6 +107,32 @@ export default function AdminTopHeader({
           {moduleName}
         </h1>
 
+        {(isDashboard || location.pathname.startsWith('/admin/vehicle-hire') || location.pathname.startsWith('/admin/bookings') || location.pathname.startsWith('/admin/financials') || location.pathname.startsWith('/admin/drivers') || location.pathname.startsWith('/admin/vehicles') || location.pathname.startsWith('/admin/trips') || location.pathname.startsWith('/admin/owners') || location.pathname.startsWith('/admin/clients') || location.pathname.startsWith('/admin/partners') || location.pathname.startsWith('/admin/enquiries') || location.pathname.startsWith('/admin/enquiry') || location.pathname.startsWith('/admin/analytics') || location.pathname.startsWith('/admin/reports')) && (
+          <div className="hidden shrink-0 flex-wrap items-center gap-2 sm:flex">
+            <Button
+              size="sm"
+              onClick={() => navigate('/admin/vehicle-hire')}
+              className={`bt-btn-header-vehicle-hire ${location.pathname.startsWith('/admin/vehicle-hire') ? 'active' : ''}`}
+            >
+              Vehicle Hire
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => navigate('/admin/bookings')}
+              className={`bt-btn-header-bookings ${location.pathname.startsWith('/admin/bookings') ? 'active' : ''}`}
+            >
+              Bookings
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => navigate('/admin/financials')}
+              className={`bt-btn-header-financials ${location.pathname.startsWith('/admin/financials') ? 'active' : ''}`}
+            >
+              Financials
+            </Button>
+          </div>
+        )}
+
         {/* ── Right: notifications · support · admin ── */}
         <div className="flex shrink-0 items-center gap-2 sm:gap-2.5">
           <button
@@ -135,20 +164,6 @@ export default function AdminTopHeader({
             <LifeBuoy className="h-[17px] w-[17px]" strokeWidth={2} aria-hidden="true" />
             <span className="hidden lg:inline">Support</span>
           </a>
-
-          {/* Signed-in administrator */}
-          <div className="flex items-center gap-2.5">
-            <span className="hidden max-w-[10rem] truncate text-[13px] font-medium text-bt-ink-2 xl:block" title={adminName}>
-              {adminName}
-            </span>
-            <span
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-bt-navy text-[13px] font-bold text-white"
-              title={adminName}
-              aria-label={`Logged in as ${adminName}`}
-            >
-              {adminInitials}
-            </span>
-          </div>
         </div>
       </div>
     </header>
