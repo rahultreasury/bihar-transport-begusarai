@@ -138,9 +138,17 @@ function computeCommission({ base, rate, type } = {}) {
 function deriveCommission(params = {}) {
   // Lazy-require to avoid a require cycle (commissionPolicy requires
   // CommissionCalculator at module load).
-  const commissionPolicy = require('../config/commissionPolicy');
-  const policyRate = commissionPolicy.DEFAULT_COMMISSION_PERCENTAGE;
-  const policyType = commissionPolicy.DEFAULT_COMMISSION_TYPE;
+  let policyRate = 5;
+  let policyType = 'percentage';
+  try {
+    const commissionPolicy = require('../config/commissionPolicy');
+    if (commissionPolicy) {
+      policyRate = commissionPolicy.DEFAULT_COMMISSION_PERCENTAGE || policyRate;
+      policyType = commissionPolicy.DEFAULT_COMMISSION_TYPE || policyType;
+    }
+  } catch (e) {
+    // Ignore circular require issues
+  }
 
   let base, rate, type;
 

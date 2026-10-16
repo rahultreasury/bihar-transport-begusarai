@@ -163,20 +163,39 @@ class TransportResourceRepository {
           // Use owner created in this transaction
           driverOwnerId = resolvedOwnerId;
         } else {
-          const err = new Error('Transport Owner is required. Every driver must belong to exactly one Transport Owner.');
-          err.code = 'OWNER_REQUIRED';
-          throw err;
+          // Check if driver already exists and has an owner
+          const existingDriverForOwner = await tx.driver.findFirst({ where: { mobile: driver.mobile } });
+          if (existingDriverForOwner && existingDriverForOwner.transport_owner_id) {
+            driverOwnerId = existingDriverForOwner.transport_owner_id;
+          } else {
+            const err = new Error('Transport Owner is required. Every driver must belong to exactly one Transport Owner.');
+            err.code = 'OWNER_REQUIRED';
+            throw err;
+          }
         }
 
         // Check driver mobile uniqueness
         const existingDriver = await tx.driver.findFirst({ where: { mobile: driver.mobile } });
-        if (existingDriver) {
-          const err = new Error('Driver already exists');
-          err.code = 'DRIVER_ALREADY_EXISTS';
-          err.data = { driver_id: existingDriver.driver_id, driver_name: existingDriver.driver_name, driver_code: existingDriver.driver_code, mobile: existingDriver.mobile };
-          throw err;
+        if (existingDriver && !driverOwnerId && existingDriver.transport_owner_id) {
+          driverOwnerId = existingDriver.transport_owner_id;
         }
-
+        if (existingDriver) {
+          if (driverOwnerId && existingDriver.transport_owner_id && existingDriver.transport_owner_id !== driverOwnerId) {
+            const err = new Error(`Driver ${existingDriver.driver_name} (${existingDriver.mobile}) already belongs to transport owner #${existingDriver.transport_owner_id}. Cannot reuse this driver under a different owner. Please use the existing driver as-is or register a new driver.`);
+            err.code = 'DRIVER_OWNER_MISMATCH';
+            err.data = { driver_id: existingDriver.driver_id, driver_name: existingDriver.driver_name, driver_code: existingDriver.driver_code, mobile: existingDriver.mobile, current_owner_id: existingDriver.transport_owner_id, requested_owner_id: driverOwnerId };
+            throw err;
+          }
+          if (!existingDriver.transport_owner_id && driverOwnerId) {
+            await tx.driver.update({
+              where: { driver_id: existingDriver.driver_id },
+              data: { transport_owner_id: driverOwnerId },
+            });
+          }
+          resolvedDriverId = existingDriver.driver_id;
+          result.driver_id = existingDriver.driver_id;
+          result.driver_code = existingDriver.driver_code;
+        } else {
         // Create User if not exists
         let user = await tx.user.findUnique({ where: { phone: driver.mobile } });
         if (!user) {
@@ -230,6 +249,7 @@ class TransportResourceRepository {
         resolvedDriverId = createdDriver.driver_id;
         result.driver_id = createdDriver.driver_id;
         result.driver_code = createdDriver.driver_code;
+        }
       } else if (driver_context_id) {
         // Use pre-selected driver
         const existing = await tx.driver.findUnique({
@@ -291,10 +311,18 @@ class TransportResourceRepository {
         // Check vehicle_number uniqueness
         const existingVeh = await tx.transportVehicle.findFirst({ where: { vehicle_number: vehicle.vehicle_number } });
         if (existingVeh) {
-          const err = new Error('A vehicle with this number already exists');
-          err.code = 'VEHICLE_ALREADY_EXISTS';
-          err.data = { vehicle_id: existingVeh.vehicle_id };
-          throw err;
+          if (vehicleOwnerId && existingVeh.owner_id && existingVeh.owner_id !== vehicleOwnerId) {
+            const err = new Error('Vehicle belongs to a different owner');
+            err.code = 'VEHICLE_OWNER_MISMATCH';
+            err.data = { vehicle_id: existingVeh.vehicle_id };
+            throw err;
+          }
+          if (vehicleDriverId && existingVeh.driver_id && existingVeh.driver_id !== vehicleDriverId) {
+            const err = new Error('Vehicle is already assigned to a different driver');
+            err.code = 'VEHICLE_DRIVER_CONFLICT';
+            err.data = { vehicle_id: existingVeh.vehicle_id };
+            throw err;
+          }
         }
 
         // Build vehicle data
@@ -327,12 +355,26 @@ class TransportResourceRepository {
         };
 
         // Create vehicle and assign driver atomically
-        const createdVehicle = await tx.transportVehicle.create({ data: vehicleData });
+        let vehicleToUse;
+        if (existingVeh) {
+          vehicleToUse = await tx.transportVehicle.update({
+            where: { vehicle_id: existingVeh.vehicle_id },
+            data: {
+              vehicle_name: vehicle.vehicle_name || existingVeh.vehicle_name,
+              owner_id: vehicleOwnerId || existingVeh.owner_id,
+              driver_id: vehicleDriverId !== undefined ? vehicleDriverId : existingVeh.driver_id,
+              current_status: vehicle.current_status || existingVeh.current_status,
+              is_available: vehicle.current_status === 'available',
+            },
+          });
+        } else {
+          vehicleToUse = await tx.transportVehicle.create({ data: vehicleData });
+        }
 
         // If driver assigned, update driver.current_vehicle_id and vehicle.driver_id
         if (vehicleDriverId) {
           // Clear any existing vehicle assignment for this driver
-          const existingVehicle = await tx.transportVehicle.findFirst({ where: { driver_id: vehicleDriverId } });
+          const existingVehicle = await tx.transportVehicle.findFirst({ where: { driver_id: vehicleDriverId, vehicle_id: { not: vehicleToUse.vehicle_id } } });
           if (existingVehicle) {
             await tx.transportVehicle.update({
               where: { vehicle_id: existingVehicle.vehicle_id },
@@ -341,16 +383,18 @@ class TransportResourceRepository {
           }
           await tx.driver.update({
             where: { driver_id: vehicleDriverId },
-            data: { current_vehicle_id: createdVehicle.vehicle_id },
+            data: { current_vehicle_id: vehicleToUse.vehicle_id },
           });
-          await tx.transportVehicle.update({
-            where: { vehicle_id: createdVehicle.vehicle_id },
-            data: { driver_id: vehicleDriverId },
-          });
+          if (!existingVeh || existingVeh.driver_id !== vehicleDriverId) {
+            await tx.transportVehicle.update({
+              where: { vehicle_id: vehicleToUse.vehicle_id },
+              data: { driver_id: vehicleDriverId },
+            });
+          }
         }
 
-        result.vehicle_id = createdVehicle.vehicle_id;
-        result.vehicle_number = createdVehicle.vehicle_number;
+        result.vehicle_id = vehicleToUse.vehicle_id;
+        result.vehicle_number = vehicleToUse.vehicle_number;
       }
 
       return result;
