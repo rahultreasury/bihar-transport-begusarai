@@ -1641,11 +1641,21 @@ const bookingResult = await prisma.$transaction(async (tx) => {
     if (!booking) throw new NotFoundError('Booking not found');
 
     // Reuse the existing linkage rather than guessing.
-    const existingTrip = await prisma.trip.findFirst({
+    let existingTrip = await prisma.trip.findFirst({
       where: { booking_id: bookingId },
       orderBy: { trip_id: 'asc' },
       select: { trip_id: true, trip_number: true, status: true, trip_date: true },
     });
+
+    // Fallback: if no trip found by booking_id, try to find by booking_number
+    // This handles cases where linkage might be different in production
+    if (!existingTrip && booking.booking_number) {
+      existingTrip = await prisma.trip.findFirst({
+        where: { booking_number: booking.booking_number },
+        orderBy: { trip_id: 'asc' },
+        select: { trip_id: true, trip_number: true, status: true, trip_date: true },
+      });
+    }
 
     // The enquiry this order was created from. Enquiry.booking_id is UNIQUE, so
     // this is the same link EnquiryService.customerAccept wrote — it is read

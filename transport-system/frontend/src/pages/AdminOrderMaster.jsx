@@ -140,7 +140,10 @@ export default function AdminOrderMaster() {
         // Load full trip data with relations (vehicle, driver, owner, etc.) when a trip exists
         // This provides the canonical vehicle/driver/owner data for the Vehicle & Driver section
         const fullTrip = tripRow?.trip_id ? await safeGet(adminAPI.getTrip(tripRow.trip_id)) : null;
-        if (fullTrip) setTrip(fullTrip);
+        if (fullTrip) {
+          // Preserve trip_id if it's missing from fullTrip to avoid breaking clickability
+          setTrip({ trip_id: tripRow.trip_id, ...fullTrip });
+        }
 
         // The operational stage comes from the trip's OWN workflow endpoint, so
         // the rail, the next action and the cards can never disagree with it.
@@ -168,7 +171,7 @@ export default function AdminOrderMaster() {
   // Pure NAVIGATION. Nothing here writes: a stage click opens the workspace for
   // that stage, and a status only ever moves through the operational endpoint the
   // backend named in `workflow.stage.next_action`.
-  const tripId = trip?.trip_id ?? null;
+  const tripId = trip?.trip_id ?? order?.trip_id ?? order?.trip?.trip_id ?? null;
 
   /**
    * The canonical order number and the flattened booking row.
