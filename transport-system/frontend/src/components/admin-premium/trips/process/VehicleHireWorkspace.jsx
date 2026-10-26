@@ -68,6 +68,7 @@ import {
   fmtDate,
   humanize,
 } from './vehicleHireComponents/VehicleHireComponents';
+import QuotationEditor from '../../enquiries/QuotationEditor';
 
 /* ═══════════════════════════════════════════════════════════════════════════
    THE WORKSPACE
@@ -158,6 +159,33 @@ export default function VehicleHireWorkspace({
     }
     setLoading(true);
     setLoadError(null);
+
+    // Reset form and detail state immediately when tripId changes,
+    // so the fetchPreselectedDetails effect sees clean state and doesn't
+    // display stale data from the previous trip while the API response loads.
+    setForm({
+      vehicle_id: '',
+      vendor_id: '',
+      driver_id: '',
+      billing_to: '',
+      rate_basis: 'FIXED',
+      rate_value: '',
+      rate_quantity: '',
+      commission_type: 'PERCENTAGE',
+      commission_rate: '5',
+      remarks: '',
+      documents_expired_ack: false,
+    });
+    setVehicleDetail(null);
+    setDriverDetail(null);
+    setVendorDetail(null);
+    fetchedDetailsRef.current = { vehicle: null, driver: null, vendor: null };
+    setSuccess(null);
+    setSaveError(null);
+    setFieldErrors({});
+    setPreviewError(null);
+    setMoney(null);
+
     try {
       const response = await vehicleHireAPI.getContext(tripId);
       if (!response.data?.success) throw new Error(response.data?.message || 'Failed to load trip');
@@ -212,6 +240,15 @@ export default function VehicleHireWorkspace({
         commission_type: data.catalogue?.default_commission_type || 'PERCENTAGE',
         commission_rate: String(data.catalogue?.default_commission_percentage ?? 5),
       }));
+
+      // Clear stale vehicle/driver/vendor details when the trip has no assignment
+      const hasAssignment = data.assignment.vehicle_id || data.assignment.driver_id || data.assignment.vendor_id;
+      if (!hasAssignment) {
+        setVehicleDetail(null);
+        setDriverDetail(null);
+        setVendorDetail(null);
+        fetchedDetailsRef.current = { vehicle: null, driver: null, vendor: null };
+      }
 
       if (data.existing_hire) setSuccess({ hire: data.existing_hire, trip: data.trip });
     } catch (err) {
@@ -664,15 +701,13 @@ export default function VehicleHireWorkspace({
     }
   }, [challanBusy, tripId, success, context, showToast]);
 
-  /** Navigate to the canonical Order/Trip Master when booking info exists, else trip workspace. */
+  /** Navigate to the canonical Trip Master. */
   const goToCanonicalMaster = useCallback(() => {
     const t = context?.trip;
-    if (t?.booking_id) {
-      navigate(`/admin/bookings/${t.booking_id}`);
-    } else if (t?.trip_id) {
+    if (t?.trip_id) {
       navigate(`/admin/trips/${t.trip_id}`);
     }
-  }, [navigate, context?.trip?.booking_id, context?.trip?.trip_id]);
+  }, [navigate, context?.trip?.trip_id]);
 
   /* ── RENDER ─────────────────────────────────────────────────────────────── */
 
@@ -1338,6 +1373,23 @@ const trip = context.trip;
               </div>
             ) : null}
           </SectionCard>
+
+          {/* ── CUSTOMER QUOTATION ────────────────────────────────────────── */}
+          {context?.customer?.enquiry_id && (
+            <SectionCard
+              title="Customer Quotation"
+              subtitle="Prepare and send the customer quotation for this enquiry"
+              icon={FileText}
+              bodyClass="p-4"
+            >
+              <QuotationEditor
+                enquiryId={context.customer.enquiry_id}
+                onChanged={() => {
+                  // Optionally refresh context if needed
+                }}
+              />
+            </SectionCard>
+          )}
 
           {/* ── COMMERCIAL TERMS ────────────────────────────────────────── */}
           <SectionCard

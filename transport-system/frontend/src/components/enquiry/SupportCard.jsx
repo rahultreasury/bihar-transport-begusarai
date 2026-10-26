@@ -97,19 +97,38 @@ function Representative({ photo, name, alt, size = 'lg' }) {
      hero is a narrow portrait panel; the inline variant stays a small tile
      because it sits in a single-line row. Both are pure Tailwind sizes, so
      they scale with the breakpoint and never overflow their container. */
-  const dims = size === 'lg' ? 'h-[116px] w-[88px] sm:h-[140px] sm:w-24' : 'h-14 w-14';
-  const textSize = size === 'lg' ? 'text-xl sm:text-2xl' : 'text-sm';
+  const dims = size === 'lg' ? 'h-[90px] w-[90px] sm:h-[86px] sm:w-[86px]' : 'h-12 w-12';
+  const textSize = size === 'lg' ? 'text-lg sm:text-xl' : 'text-sm';
 
-  /* One navy surface for BOTH states, so if the photograph ever fails the
-     fallback sits in exactly the tile the photograph would have occupied —
-     no layout shift, no second stacked box. */
   const panel =
-    'relative shrink-0 overflow-hidden rounded-2xl ring-1 ring-[#15345B]/15 ' +
-    'bg-gradient-to-b from-[#2A4A78] via-[#15345B] to-[#0B1E36] ' +
-    'shadow-[0_12px_28px_-12px_rgba(16,43,76,0.55)]';
+    'relative shrink-0 flex items-center justify-center';
 
   const photoSrc = photo && photo !== brokenPhoto ? photo : null;
   const photoAlt = alt || CUSTOMER_CARE_PHOTO_ALT;
+
+  const avatarStyle = size === 'lg'
+    ? {
+        width: '86px',
+        height: '86px',
+        borderRadius: '50%',
+        objectFit: 'cover',
+        objectPosition: 'center 25%',
+        border: '3px solid #ffffff',
+        boxShadow:
+          '0 0 0 2px #79f5d5, 0 0 14px 4px rgba(45, 220, 175, 0.25), 0 0 30px 10px rgba(45, 220, 175, 0.12)',
+        flexShrink: 0,
+      }
+    : {
+        width: '48px',
+        height: '48px',
+        borderRadius: '50%',
+        objectFit: 'cover',
+        objectPosition: 'center 25%',
+        border: '2px solid #ffffff',
+        boxShadow:
+          '0 0 0 2px #79f5d5, 0 0 10px 3px rgba(45, 220, 175, 0.22), 0 0 22px 6px rgba(45, 220, 175, 0.1)',
+        flexShrink: 0,
+      };
 
   return (
     <div className={`${panel} ${dims}`}>
@@ -117,24 +136,22 @@ function Representative({ photo, name, alt, size = 'lg' }) {
         <img
           src={photoSrc}
           alt={photoAlt}
-          className="block h-full w-full object-contain object-bottom drop-shadow-[0_8px_12px_rgba(0,0,0,0.38)]"
-          /* The hero card is the trust signal on the confirmation page — it is
-             above the fold, so it must not wait on the lazy-loading queue. */
+          style={avatarStyle}
+          className="block"
           loading={size === 'lg' ? 'eager' : 'lazy'}
           decoding="async"
-          /* width/height give the browser an intrinsic ratio up front, so the
-             panel is reserved before the bytes land and the card never reflows. */
-          width={375}
-          height={400}
+          width={size === 'lg' ? 120 : 56}
+          height={size === 'lg' ? 120 : 56}
           onError={() => setBrokenPhoto(photoSrc)}
         />
       ) : (
         <div
-          className="flex h-full w-full items-center justify-center"
+          className="flex items-center justify-center"
+          style={avatarStyle}
           role="img"
           aria-label={photoAlt}
         >
-          <span className={`${textSize} font-bold tracking-wide text-white`}>
+          <span className={`${textSize} font-bold tracking-wide text-[#172B4D]`}>
             {initialsOf(name)}
           </span>
         </div>
@@ -209,30 +226,30 @@ export default function SupportCard({ enquiryNumber, className = '' }) {
         className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-[#172B4D]/[0.05] to-transparent"
       />
 
-      <div className="relative p-5 sm:p-6">
+      <div className="relative p-4 sm:p-5">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#172B4D]">
-              <Headset className="h-3.5 w-3.5 text-white" aria-hidden="true" />
+            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-[#172B4D]">
+              <Headset className="h-3 w-3 text-white" aria-hidden="true" />
             </span>
             <p
               id="support-card-heading"
-              className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#172B4D]"
+              className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#172B4D]"
             >
               Bihar Transport Support
             </p>
           </div>
 
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-bold text-emerald-700">
-            <span className="relative flex h-1.5 w-1.5">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+            <span className="relative flex h-1 w-1">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-75" />
-              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              <span className="relative inline-flex h-1 w-1 rounded-full bg-emerald-500" />
             </span>
             Available now
           </span>
         </div>
 
-        <div className="mt-4 flex items-center gap-4">
+        <div className="mt-3 flex items-center gap-3">
           <Representative
             photo={profile.photo}
             name={profile.name}
@@ -240,12 +257,12 @@ export default function SupportCard({ enquiryNumber, className = '' }) {
           />
 
           <div className="min-w-0 flex-1">
-            <p className="text-[17px] font-bold leading-tight text-[#172B4D] sm:text-lg">
+            <p className="text-[15px] font-bold leading-tight text-[#172B4D]">
               {profile.name || 'Bihar Transport Customer Care'}
             </p>
-            <p className="mt-0.5 text-[13px] font-semibold text-[#F5A623]">{designation}</p>
-            <p className="mt-1.5 flex items-start gap-1.5 text-[11.5px] leading-snug text-slate-500">
-              <Clock className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            <p className="mt-0.5 text-[11px] font-semibold text-[#F5A623]">{designation}</p>
+            <p className="mt-0.5 flex items-start gap-1.5 text-[10px] leading-snug text-slate-500">
+              <Clock className="mt-px h-3 w-3 shrink-0" aria-hidden="true" />
               <span>Available {hours}</span>
             </p>
           </div>

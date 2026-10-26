@@ -33,6 +33,7 @@ import { BRAND } from './orderUi';
 /**
  * Icon + colour per state. `available` is deliberately styled as an action so
  * the rail shows where the consignment is going, not only where it has been.
+ * `skipped` indicates a stage that was bypassed via legacy admin shortcut.
  */
 const NODE_ICON = {
   done: Check,
@@ -41,6 +42,7 @@ const NODE_ICON = {
   upcoming: Circle,
   available: ArrowRight,
   locked: Circle,
+  skipped: X, // Cross indicates skipped/bypassed
   // The order has no operational trip yet — nothing to show as reached.
   unavailable: Circle,
 };
@@ -52,6 +54,7 @@ const NODE_COLOR = {
   upcoming: 'text-slate-300',
   available: 'text-[#F5A000]',
   locked: 'text-slate-300',
+  skipped: 'text-amber-600', // Amber for skipped (bypassed)
   unavailable: 'text-slate-200',
 };
 
@@ -62,6 +65,7 @@ const RING = {
   upcoming: 'bg-slate-50 ring-slate-300/40',
   available: 'bg-amber-50 ring-[#F5A000]/40',
   locked: 'bg-slate-50 ring-slate-300/30',
+  skipped: 'bg-amber-50 ring-amber-600/20', // Amber ring for skipped
   unavailable: 'bg-slate-50 ring-slate-200/30',
 };
 
@@ -72,6 +76,7 @@ const LABEL = {
   upcoming: 'text-slate-400',
   available: 'text-[#15345B]',
   locked: 'text-slate-400',
+  skipped: 'text-amber-700', // Amber label for skipped
   unavailable: 'text-slate-300',
 };
 
@@ -118,6 +123,8 @@ export default function OrderLifecycle({ resolved, workflow, onSelect, className
         requirement: s.requirement,
       }))
     : (resolved?.stages || []).map((s) => ({ ...s, goto: gotoFor(s.key), requirement: null }));
+
+  console.log('[OrderLifecycle] Rendering stages:', stages.map(s => ({ key: s.key, state: s.state, goto: s.goto })));
 
   const stageLabel = workflow?.current_stage_label || resolved?.stageLabel || '';
   const state = resolved?.state || 'current';
@@ -170,54 +177,60 @@ export default function OrderLifecycle({ resolved, workflow, onSelect, className
         )}
       </div>
 
-      {/* Horizontally scrollable on small screens. */}
-      <div className="overflow-x-auto px-5 py-5">
-        <ol className="flex min-w-max items-start gap-0">
-          {stages.map((stage, i) => {
-            const Icon = NODE_ICON[stage.state] || Circle;
-            const last = i === stages.length - 1;
-            // The connector is lit only when the NEXT node has been reached too.
-            const connectorDone = !last && ['done', 'current', 'blocked'].includes(stages[i + 1].state);
-            return (
-              <li key={stage.key} className="flex items-start">
-                <button
-                  type="button"
-                  onClick={() => onSelect?.(stage)}
-                  aria-current={stage.state === 'current' ? 'step' : undefined}
-                  title={hintFor(stage)}
-                  className={`group flex w-[104px] shrink-0 cursor-pointer flex-col items-center gap-2 rounded-lg px-1 py-1 text-center transition-colors hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#F5A000]/50 ${
-                    stage.state === 'available' ? 'bg-amber-50/60 hover:bg-amber-100' : ''
-                  }`}
-                >
-                  <span
-                    className={`flex h-8 w-8 items-center justify-center rounded-full ring-1 ring-inset ${RING[stage.state] || RING.upcoming}`}
+      {/* Responsive horizontal timeline - works on all screen sizes */}
+      <div className="px-5 py-5">
+        <div className="relative">
+          {/* Timeline line - always visible */}
+          <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-slate-200 transform -translate-y-1/2 z-0" />
+          
+          <ol className="flex items-center justify-between relative z-10 min-w-max">
+            {stages.map((stage, i) => {
+              const Icon = NODE_ICON[stage.state] || Circle;
+              const isCurrent = stage.state === 'current';
+              const isDone = stage.state === 'done';
+              const isAvailable = stage.state === 'available';
+              const isBlocked = stage.state === 'blocked';
+              const isUpcoming = stage.state === 'upcoming';
+              const isLocked = stage.state === 'locked';
+              const isUnavailable = stage.state === 'unavailable';
+              const isSkipped = stage.state === 'skipped';
+              
+              return (
+                <li key={stage.key} className="flex flex-col items-center relative flex-shrink-0 px-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      console.log('[OrderLifecycle] stage clicked:', stage.key, stage.state);
+                      onSelect?.(stage);
+                    }}
+                    aria-current={isCurrent ? 'step' : undefined}
+                    title={hintFor(stage)}
+                    className={`flex flex-col items-center gap-2 p-2 rounded-lg transition-all duration-200 ${isCurrent ? 'bg-amber-50/60' : 'hover:bg-slate-100'} ${isCurrent ? 'z-20' : ''}`}
                   >
-                    <Icon
-                      className={`h-4 w-4 ${NODE_COLOR[stage.state] || NODE_COLOR.upcoming} ${
-                        stage.state === 'current' ? 'animate-pulse' : ''
-                      }`}
-                      aria-hidden="true"
-                    />
-                  </span>
-                  <span
-                    className={`text-[11px] font-semibold leading-tight ${LABEL[stage.state] || LABEL.upcoming}`}
-                  >
-                    {stage.short}
-                  </span>
-                </button>
-
-                {!last && (
-                  <span
-                    aria-hidden="true"
-                    className={`mt-4 h-0.5 w-6 shrink-0 rounded ${
-                      connectorDone ? 'bg-emerald-500' : 'bg-slate-200'
-                    }`}
-                  />
-                )}
-              </li>
-            );
-          })}
-        </ol>
+                    <span
+                      className={`flex h-10 w-10 items-center justify-center rounded-full ring-1 ring-inset transition-all duration-200 ${isCurrent ? 'bg-amber-50 ring-[#F5A000]/30 scale-110' : isDone ? 'bg-emerald-50 ring-emerald-600/20' : isAvailable ? 'bg-amber-50 ring-[#F5A000]/20' : isBlocked ? 'bg-red-50 ring-red-600/20' : isSkipped ? 'bg-amber-50 ring-amber-600/20' : isUpcoming || isLocked ? 'bg-slate-50 ring-slate-300/40' : isUnavailable ? 'bg-slate-50 ring-slate-200/30' : 'bg-slate-50 ring-slate-300/40'}`}
+                    >
+                      <Icon
+                        className={`h-5 w-5 ${isCurrent ? 'text-[#15345B]' : isDone ? 'text-emerald-600' : isAvailable ? 'text-[#F5A000]' : isBlocked ? 'text-red-600' : isSkipped ? 'text-amber-600' : isUpcoming || isLocked ? 'text-slate-400' : isUnavailable ? 'text-slate-300' : 'text-slate-400'} ${isCurrent ? 'animate-pulse' : ''}`}
+                        aria-hidden="true"
+                      />
+                    </span>
+                    <span
+                      className={`text-[11px] font-semibold leading-tight whitespace-nowrap ${isCurrent ? 'text-[#15345B]' : isDone ? 'text-slate-700' : isAvailable ? 'text-[#F5A000]' : isBlocked ? 'text-red-700' : isSkipped ? 'text-amber-700' : isUpcoming || isLocked ? 'text-slate-400' : isUnavailable ? 'text-slate-300' : 'text-slate-400'}`}
+                    >
+                      {stage.short}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+        
+        {/* Horizontal scroll indicator for mobile */}
+        <div className="hidden sm:block mt-2 text-center">
+          <p className="text-xs text-slate-400">← Swipe or scroll horizontally to see all stages →</p>
+        </div>
       </div>
     </div>
   );

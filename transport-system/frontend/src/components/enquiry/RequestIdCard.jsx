@@ -55,7 +55,7 @@ export default function RequestIdCard({ enquiryNumber, className = '' }) {
   return (
     <div
       id="request-id"
-      className={`relative overflow-hidden rounded-2xl border border-[#172B4D]/10 bg-[#172B4D] p-4 shadow-[0_16px_40px_-22px_rgba(11,27,51,0.8)] sm:p-5 ${className}`}
+      className={`relative overflow-hidden rounded-3xl border border-[#172B4D]/10 bg-[#172B4D] p-5 shadow-[0_20px_50px_-25px_rgba(11,27,51,0.9)] sm:p-6 ${className}`}
     >
       {/* A single restrained wash so the block reads as a premium card rather
           than a flat rectangle of navy. */}
@@ -66,18 +66,18 @@ export default function RequestIdCard({ enquiryNumber, className = '' }) {
 
       <div className="relative">
         <div className="flex items-center justify-between gap-3">
-          <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/55">
-            Request ID
+          <p className="text-xs font-bold uppercase tracking-[0.25em] text-white/60">
+            REQUEST ID
           </p>
-          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#F5A623]">
-            Quote this to support
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#F5A623]">
+            QUOTE THIS ID TO SUPPORT
           </p>
         </div>
 
         <div className="mt-2 flex items-center gap-3">
           <Link
             to={`/track/${encodeURIComponent(enquiryNumber)}`}
-            className="min-w-0 flex-1 select-all break-all font-mono text-xl font-bold tracking-wider text-white hover:text-amber-300 transition-colors sm:text-[26px] sm:leading-tight"
+            className="min-w-0 flex-1 select-all break-all font-mono text-2xl font-bold tracking-wider text-white hover:text-amber-300 transition-colors sm:text-3xl sm:leading-tight lg:text-4xl"
             title={enquiryNumber || undefined}
           >
             {enquiryNumber || '—'}

@@ -43,6 +43,7 @@ import AdminShell from '../components/admin-premium/layout/AdminShell';
 import { LoadingSkeleton } from '../components/admin-premium/ui/LoadingSkeleton';
 import PremiumTable from '../components/admin-premium/ui/PremiumTable';
 import KpiCard from '../components/admin-premium/ui/KpiCard';
+import ClientLedgerModal from '../components/admin-premium/financials/ClientLedgerModal';
 
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: '▦', path: '/admin' },
@@ -206,8 +207,9 @@ function AdminFinancials() {
   const [commission, setCommission] = useState(null);
 
   // Ledger drill-down: which party, and its statement.
-  const [ledger, setLedger] = useState(null);
-  const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [ledgerModalOpen, setLedgerModalOpen] = useState(false);
+  const [ledgerClientId, setLedgerClientId] = useState(null);
+  const [ledgerPartyType, setLedgerPartyType] = useState('CLIENT');
 
   // Filter state lives in the URL, so a filtered view can be shared and the
   // back button steps through filters the way an operator expects.
@@ -281,37 +283,23 @@ function AdminFinancials() {
   }, [load]);
 
   // ── Ledger drill-down ────────────────────────────────────────────────────
-  const openClientLedger = useCallback(async (row) => {
+  const openClientLedger = useCallback((row) => {
     if (!row.clientId) return; // an un-attributed party has no master record
-    setLedgerLoading(true);
-    setLedger(null);
-    try {
-      const res = await financialAPI.getClientLedger(row.clientId);
-      setLedger(res?.data || null);
-    } catch {
-      setError('Unable to open that customer ledger.');
-    } finally {
-      setLedgerLoading(false);
-    }
+    setLedgerClientId(row.clientId);
+    setLedgerPartyType('CLIENT');
+    setLedgerModalOpen(true);
   }, []);
 
-  const openVendorLedger = useCallback(async (ownerId) => {
+  const openVendorLedger = useCallback((ownerId) => {
     if (!ownerId) return;
-    setLedgerLoading(true);
-    setLedger(null);
-    try {
-      const res = await financialAPI.getVendorLedger(ownerId);
-      setLedger(res?.data || null);
-    } catch {
-      setError('Unable to open that vendor ledger.');
-    } finally {
-      setLedgerLoading(false);
-    }
+    setLedgerClientId(ownerId);
+    setLedgerPartyType('VEHICLE_OWNER');
+    setLedgerModalOpen(true);
   }, []);
 
   const closeLedger = useCallback(() => {
-    setLedger(null);
-    setLedgerLoading(false);
+    setLedgerModalOpen(false);
+    setLedgerClientId(null);
   }, []);
 
   /* ── Header ────────────────────────────────────────────────────────────── */
@@ -464,7 +452,7 @@ function AdminFinancials() {
           ),
         },
       ]}
-      data={rows}
+      rows={rows}
       onRowClick={(row) => openClientLedger(row)}
     />
   );
@@ -941,7 +929,12 @@ function AdminFinancials() {
               </div>
             ) : null}
             {renderSection()}
-            <LedgerPanel />
+            <ClientLedgerModal
+              isOpen={ledgerModalOpen}
+              onClose={closeLedger}
+              clientId={ledgerClientId}
+              partyType={ledgerPartyType}
+            />
           </>
         )}
       </div>

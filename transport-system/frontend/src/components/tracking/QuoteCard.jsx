@@ -188,7 +188,7 @@ const QuoteCard = React.memo(function QuoteCard({
           <ul className="space-y-1.5">
             {[
               'Driver details',
-              'Driver contact number',
+              'Bihar Transport support contact',
               'Vehicle number',
               'Pickup confirmation',
             ].map((item) => (

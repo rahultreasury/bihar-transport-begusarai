@@ -94,6 +94,7 @@ export const bookingAPI = {
   getBooking: (id) => api.get(`/bookings/${id}`),
   cancelBooking: (id) => api.put(`/bookings/${id}/cancel`),
   trackBooking: (reference) => api.get(`/bookings/track/${reference}`),
+  trackBookingByReference: (reference) => api.get(`/tracking/bookings/${reference}`),
   // Quote-based booking workflow — customer responses
   acceptQuote: (id) => api.post(`/bookings/${id}/quote/accept`),
   rejectQuote: (id) => api.post(`/bookings/${id}/quote/reject`),
@@ -135,6 +136,8 @@ export const adminAPI = {
   getVehicle: (id) => api.get(`/admin/vehicles/${id}`),
   getVehicleStats: () => api.get('/admin/vehicles/stats'),
   getBookings: (params) => api.get('/admin/bookings', { params }),
+  getLifecycleCounts: (params) => api.get('/admin/bookings/lifecycle-counts', { params }),
+  getLifecycleSummary: (params) => api.get('/admin/bookings/lifecycle-summary', { params }),
   getBooking: (id) => api.get(`/admin/bookings/${id}`),
   // Read a booking by its CANONICAL booking_number (BTB-YYYY-NNNNN) or legacy
   // reference. Used by the read-only detail page and dedicated assign pages,
@@ -549,29 +552,31 @@ export const appointmentAPI = {
 // accept `page` / `limit` for pagination; omitting them returns the full set,
 // which is what the summary-only callers expect.
 export const financialAPI = {
-  getSummary: () => api.get('/financials/summary'),
+  getSummary: () => api.get('/admin/financials/overview'),
   // ?status=ALL|DUE|UNPAID|PARTIALLY_PAID|OVERDUE|DUE_SOON
   // ?search= &sort=OUTSTANDING_DESC|OUTSTANDING_ASC|OLDEST_DUE|NEWEST
-  getReceivables: (params) => api.get('/financials/receivables', { params }),
-  getPayables: () => api.get('/financials/payables'),
-  getTransactions: (params) => api.get('/financials/transactions', { params }),
-  getLedger: (params) => api.get('/financials/transactions/ledger', { params }),
-  getAdvances: (params) => api.get('/financials/advances', { params }),
-  getSettlements: (params) => api.get('/financials/settlements', { params }),
+  getReceivables: (params) => api.get('/admin/financials/client-receivables', { params }),
+  getClientDue: (params) => api.get('/admin/financials/client-due', { params }),
+  getPayables: () => api.get('/admin/financials/provider-payables'),
+  getPaymentsReceived: (params) => api.get('/admin/financials/payments-received', { params }),
+  getTransactions: (params) => api.get('/admin/financials/transactions', { params }),
+  getLedger: (params) => api.get('/admin/financials/transactions/ledger', { params }),
+  getAdvances: (params) => api.get('/admin/financials/advances', { params }),
+  getSettlements: (params) => api.get('/admin/financials/settlements', { params }),
 
   /** Commission earned, per trip — gross / commission / net kept distinct. */
-  getCommission: (params) => api.get('/financials/commission', { params }),
+  getCommission: (params) => api.get('/admin/financials/commission-earned', { params }),
 
   /**
    * THE DRILL-DOWNS: "who exactly", behind a total.
    * Both come from the same aggregation as the list they were opened from.
    */
   getClientLedger: (clientId, params) =>
-    api.get(`/financials/client-ledger/${encodeURIComponent(clientId)}`, { params }),
+    api.get(`/admin/financials/client-ledger/${encodeURIComponent(clientId)}`, { params }),
   getVendorLedger: (ownerId, params) =>
-    api.get(`/financials/vendor-ledger/${encodeURIComponent(ownerId)}`, { params }),
+    api.get(`/admin/financials/vendor-ledger/${encodeURIComponent(ownerId)}`, { params }),
   getDriverLedger: (driverId, params) =>
-    api.get(`/financials/driver-ledger/${encodeURIComponent(driverId)}`, { params }),
+    api.get(`/admin/financials/driver-ledger/${encodeURIComponent(driverId)}`, { params }),
 };
 
 // Client APIs (with financial summary)

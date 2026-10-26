@@ -9,6 +9,7 @@ export default function useBookingFilters() {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [status, setStatus] = useState('');
+  const [stage, setStage] = useState(''); // Lifecycle stage filter
   const [driverId, setDriverId] = useState('');
   const [vehicleId, setVehicleId] = useState('');
   const [goodsType, setGoodsType] = useState('');
@@ -32,6 +33,7 @@ export default function useBookingFilters() {
     setSearch('');
     setDebouncedSearch('');
     setStatus('');
+    setStage('');
     setDriverId('');
     setVehicleId('');
     setGoodsType('');
@@ -47,6 +49,7 @@ export default function useBookingFilters() {
     return !!(
       debouncedSearch ||
       status ||
+      stage ||
       driverId ||
       vehicleId ||
       goodsType ||
@@ -57,12 +60,13 @@ export default function useBookingFilters() {
       priceMin ||
       priceMax
     );
-  }, [debouncedSearch, status, driverId, vehicleId, goodsType, pickupCity, dropCity, dateFrom, dateTo, priceMin, priceMax]);
+  }, [debouncedSearch, status, stage, driverId, vehicleId, goodsType, pickupCity, dropCity, dateFrom, dateTo, priceMin, priceMax]);
 
   const activeFilterCount = useMemo(() => {
     let count = 0;
     if (debouncedSearch) count++;
     if (status) count++;
+    if (stage) count++;
     if (driverId) count++;
     if (vehicleId) count++;
     if (goodsType) count++;
@@ -71,13 +75,14 @@ export default function useBookingFilters() {
     if (dateFrom || dateTo) count++;
     if (priceMin || priceMax) count++;
     return count;
-  }, [debouncedSearch, status, driverId, vehicleId, goodsType, pickupCity, dropCity, dateFrom, dateTo, priceMin, priceMax]);
+  }, [debouncedSearch, status, stage, driverId, vehicleId, goodsType, pickupCity, dropCity, dateFrom, dateTo, priceMin, priceMax]);
 
   // Build query params for API
   const queryParams = useMemo(() => {
     const params = {};
     if (debouncedSearch) params.search = debouncedSearch;
     if (status) params.status = status;
+    if (stage) params.stage = stage;
     if (driverId) params.driver_id = driverId;
     if (vehicleId) params.vehicle_id = vehicleId;
     if (goodsType) params.goods_type = goodsType;
@@ -88,7 +93,7 @@ export default function useBookingFilters() {
     if (priceMin) params.price_min = priceMin;
     if (priceMax) params.price_max = priceMax;
     return params;
-  }, [debouncedSearch, status, driverId, vehicleId, goodsType, pickupCity, dropCity, dateFrom, dateTo, priceMin, priceMax]);
+  }, [debouncedSearch, status, stage, driverId, vehicleId, goodsType, pickupCity, dropCity, dateFrom, dateTo, priceMin, priceMax]);
 
   const statusOptions = useMemo(() => getAllStatuses(), []);
 
@@ -97,6 +102,7 @@ export default function useBookingFilters() {
     search, setSearch,
     debouncedSearch,
     status, setStatus,
+    stage, setStage,
     driverId, setDriverId,
     vehicleId, setVehicleId,
     goodsType, setGoodsType,

@@ -23,24 +23,25 @@ import React, { useMemo, useCallback, useRef } from 'react';
 import EmptyState from './EmptyState';
 
 const SORT_ARROW_UP = '↑';
-const SORT_ARROW_DOWN = '↓';
+  const SORT_ARROW_DOWN = '↓';
 
-function PremiumTable({
-  columns = [],
-  rows,
-  loading = false,
-  sortField,
-  sortDirection,
-  onSort,
-  selectedIds,
-  onSelect,
-  onSelectAll,
-  isAllSelected,
-  isIndeterminate,
-  onKeyDown,
-  focusedIndex,
-  onRowClick,
-}) {
+  function PremiumTable({
+    columns = [],
+    rows,
+    loading = false,
+    sortField,
+    sortDirection,
+    onSort,
+    selectedIds,
+    onSelect,
+    onSelectAll,
+    isAllSelected,
+    isIndeterminate,
+    onKeyDown,
+    focusedIndex,
+    onRowClick,
+    dense = false,
+  }) {
   const resolvedColumns = useMemo(() => columns || [], [columns]);
   const resolvedRows = Array.isArray(rows) ? rows : [];
   const tableRef = useRef(null);
@@ -66,7 +67,7 @@ function PremiumTable({
   return (
     <div
       ref={tableRef}
-      className="bt-table-wrap relative w-full max-w-full"
+      className={`bt-table-wrap relative w-full max-w-full ${dense ? 'bt-table-density-compact' : ''}`}
       tabIndex={0}
       onKeyDown={onKeyDown}
       role="grid"
@@ -75,7 +76,7 @@ function PremiumTable({
       aria-busy={loading || undefined}
     >
       <div className="w-full max-w-full overflow-x-auto">
-        <table className="bt-table" style={{ tableLayout: 'auto' }}>
+        <table className={`bt-table ${dense ? 'bt-table-density-compact' : ''}`} style={{ tableLayout: 'auto' }}>
           <thead>
             <tr>
               {hasSelection && (

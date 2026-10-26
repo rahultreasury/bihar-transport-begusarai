@@ -38,6 +38,7 @@ import DeliveryWorkspace from './DeliveryWorkspace';
 import PodWorkspace from './PodWorkspace';
 import CompletionWorkspace from './CompletionWorkspace';
 import TripFinanceWorkspace from './TripFinanceWorkspace';
+import OrderLifecycle from '../../orders/OrderLifecycle';
 const TABS = [
   { id: 'overview', label: 'Overview', icon: ClipboardList },
   { id: 'vehicle', label: 'Vehicle', icon: Truck },
@@ -239,7 +240,10 @@ export default function TripDetailWorkspace() {
   const [actionError, setActionError] = useState(null);
   const [busy, setBusy] = useState(null);
 
-  const stages = useMemo(() => workflow?.stages || [], [workflow]);
+  // Normalize workflow: backend returns full state object with stage nested inside;
+  // OrderLifecycle expects workflow.stages at top level (like AdminOrderMaster does).
+  const wf = useMemo(() => workflow?.stages ? workflow : workflow?.stage, [workflow]);
+  const stages = useMemo(() => wf?.stages || [], [wf]);
   const cancellationReason = useMemo(
     () => extractCancellationReason(timeline),
     [timeline]
@@ -369,6 +373,43 @@ export default function TripDetailWorkspace() {
     [navigate, tripId, location.state]
   );
   const goBack = useCallback(() => navigate(backPath), [navigate, backPath]);
+
+  /** Map lifecycle stage clicks to the correct tab in this workspace. */
+  const handleStageSelect = useCallback(
+    (stage) => {
+      if (!stage?.goto) return;
+      const kind = stage.goto.kind;
+      const tab = stage.goto.tab;
+      switch (kind) {
+        case 'vehicle_hire':
+          goTab('vehicle');
+          break;
+        case 'trip_tab':
+          // Map backend workflow tabs to TripDetailWorkspace tabs
+          const tabMap = {
+            loading: 'loading',
+            dispatch: 'loading',
+            tracking: 'loading',
+            delivery: 'pod',
+            pod: 'pod',
+            summary: 'pod',
+          };
+          const mappedTab = tabMap[tab] || tab;
+          if (mappedTab) goTab(mappedTab);
+          break;
+        case 'overview':
+          goTab('overview');
+          break;
+        case 'enquiry':
+          // Enquiry navigation would go to a different route; for trips we just go to overview
+          goTab('overview');
+          break;
+        default:
+          break;
+      }
+    },
+    [goTab]
+  );
 
   if (loading) {
     return (
@@ -532,18 +573,6 @@ export default function TripDetailWorkspace() {
                 </div>
               )}
             </div>
-            <div className="hidden lg:block">
-              <svg width="200" height="80" viewBox="0 0 200 80" className="text-slate-300">
-                <path d="M10 40 Q60 10 120 40 Q160 70 190 30" stroke="#93c5fd" strokeWidth="2" fill="none" strokeDasharray="4 2" />
-                <circle cx="10" cy="40" r="5" fill="#16a34a" />
-                <circle cx="190" cy="30" r="5" fill="#dc2626" />
-                <g transform="translate(100,40)">
-                  <rect x="-8" y="-6" width="16" height="12" rx="2" fill="#f59e0b" />
-                  <circle cx="4" cy="6" r="1" fill="#92400e" />
-                  <circle cx="-4" cy="6" r="1" fill="#92400e" />
-                </g>
-              </svg>
-            </div>
           </div>
         </div>
 
@@ -552,6 +581,13 @@ export default function TripDetailWorkspace() {
             {actionError}
           </div>
         )}
+
+        {/* ── Lifecycle Rail ───────────────────────────────────────── */}
+        <OrderLifecycle
+          workflow={wf}
+          onSelect={handleStageSelect}
+          className="mb-6"
+        />
 
         {/* ── Tab bar ────────────────────────────────────────────── */}
         <div className="mb-6">

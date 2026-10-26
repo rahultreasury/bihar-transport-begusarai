@@ -115,7 +115,7 @@ export default function AdminShell({ navItems, activeKey, onNav, children, fullB
                 The padding lives here rather than on each page, so all ~30 modules
                 share one gutter: 16px on mobile, 24px on tablet, 32px on desktop.
               */}
-              <div className="mx-auto w-full max-w-[1680px] min-w-0 px-4 pb-10 pt-6 sm:px-6 lg:px-8 lg:pb-12 lg:pt-8">
+              <div className="mx-auto w-full max-w-[1680px] min-w-0 px-4 pb-8 pt-4 sm:px-6 lg:px-8 lg:pb-10 lg:pt-5">
                 {children}
               </div>
             </>

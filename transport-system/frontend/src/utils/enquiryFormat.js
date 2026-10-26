@@ -178,46 +178,40 @@ export const TERMINAL_STATUSES = [
 export const TIMELINE_STEPS = [
   {
     key: 'submitted',
-    title: 'Request Submitted',
-    description: 'We have received your transport request.',
+    title: 'Request Received',
+    description: 'Your request is with us.',
     match: [ENQUIRY_STATUS.ENQUIRY_SUBMITTED],
   },
   {
-    key: 'review',
-    title: 'Transport Team Reviewing',
-    description: 'Our team is checking vehicle availability and pricing.',
-    match: [ENQUIRY_STATUS.ADMIN_REVIEW, ENQUIRY_STATUS.ASSIGNMENT_PENDING],
-  },
-  {
-    key: 'assignment',
-    title: 'Vehicle & Driver Assignment',
-    description: 'We are arranging the right vehicle and crew for your load.',
-    match: [ENQUIRY_STATUS.VEHICLE_ASSIGNED, ENQUIRY_STATUS.DRIVER_ASSIGNED],
-    // A driver on the job means the assignment is finished — tick it.
-    completeOn: [ENQUIRY_STATUS.DRIVER_ASSIGNED],
-  },
-  {
-    key: 'quote',
-    // QUOTE_READY is the "quote prepared" state: an admin has entered a final
-    // price, but has NOT sent it yet — the customer still sees no number.
-    title: 'Quote Prepared',
-    description: 'Your confirmed transport price is being prepared.',
-    match: [ENQUIRY_STATUS.QUOTE_READY],
-  },
-  {
-    key: 'acceptance',
-    // AWAITING_CUSTOMER_ACCEPTANCE is the "quote sent" state: the price is now
-    // published and the decision belongs to the customer.
-    title: 'Customer Acceptance',
-    description: 'Your quote has been sent. Review the price and approve it to confirm your trip.',
-    match: [ENQUIRY_STATUS.AWAITING_CUSTOMER_ACCEPTANCE],
+    key: 'finding',
+    title: 'Finding Your Transport',
+    description: "We're finding the right vehicle for your route.",
+    match: [
+      ENQUIRY_STATUS.ADMIN_REVIEW,
+      ENQUIRY_STATUS.ASSIGNMENT_PENDING,
+      ENQUIRY_STATUS.VEHICLE_ASSIGNED,
+      ENQUIRY_STATUS.DRIVER_ASSIGNED,
+      ENQUIRY_STATUS.QUOTE_READY,
+      ENQUIRY_STATUS.AWAITING_CUSTOMER_ACCEPTANCE,
+      ENQUIRY_STATUS.CUSTOMER_ACCEPTED,
+    ],
+    completeOn: [
+      ENQUIRY_STATUS.CUSTOMER_ACCEPTED,
+      ENQUIRY_STATUS.CONFIRMED,
+      ENQUIRY_STATUS.IN_PROGRESS,
+      ENQUIRY_STATUS.COMPLETED,
+    ],
   },
   {
     key: 'confirmed',
-    title: 'Trip Confirmed',
-    description: 'Your trip is confirmed and scheduled.',
+    title: 'Transport Confirmed',
+    description: 'Your transport is confirmed. View your booking details.',
     match: [
-      ENQUIRY_STATUS.CUSTOMER_ACCEPTED,
+      ENQUIRY_STATUS.CONFIRMED,
+      ENQUIRY_STATUS.IN_PROGRESS,
+      ENQUIRY_STATUS.COMPLETED,
+    ],
+    completeOn: [
       ENQUIRY_STATUS.CONFIRMED,
       ENQUIRY_STATUS.IN_PROGRESS,
       ENQUIRY_STATUS.COMPLETED,

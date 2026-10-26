@@ -57,7 +57,7 @@ export default function EnquiryStatusSteps({ status, connected = false, classNam
           six on a desktop. The connector line only appears in the single-row
           layout, where a line between two dots always means "then" — wrapped
           onto two rows it would be ambiguous, so it is dropped there. */}
-      <ol className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 lg:grid-cols-6">
+      <ol className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-3 lg:grid-cols-3">
         {steps.map((step, i) => {
           const isLast = i === steps.length - 1;
 

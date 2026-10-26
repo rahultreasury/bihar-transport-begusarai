@@ -76,7 +76,6 @@ import EnquiryStatusBadge from '../components/admin-premium/enquiries/EnquirySta
 import JourneyTimeline, { STAGE_SECTIONS, focusStageSection } from '../components/admin-premium/enquiries/JourneyTimeline';
 import ActivityTimeline from '../components/admin-premium/enquiries/ActivityTimeline';
 import CustomerQuotePreview from '../components/admin-premium/enquiries/CustomerQuotePreview';
-import QuotationEditor from '../components/admin-premium/enquiries/QuotationEditor';
 import RequestDetails from '../components/admin-premium/enquiries/RequestDetails';
 import RouteSummary from '../components/admin-premium/enquiries/RouteSummary';
 import {
@@ -642,21 +641,99 @@ export default function AdminEnquiryDetail() {
 
           {/* RIGHT — what we do about it */}
           <div className="space-y-3.5">
-            {/* STAGE 3 — the canonical quotation screen (client document §2).
-                PHASE B: this used to render QuoteWorkspace, which is bound to
-                the BOOKING quote endpoints and returns early when there is no
-                booking_id — i.e. it was dead on exactly the pre-order enquiry
-                the client describes. The client workflow puts quoting BEFORE
-                order creation, so the screen now runs off the ENQUIRY's own
-                quotation. QuoteWorkspace itself is untouched and still serves
-                the booking screens that legitimately use it. */}
+            {/* STAGE 3 — QUOTE PREPARED (client document §2).
+                The final customer quotation is prepared in the Vehicle Hire workspace.
+                This page shows the quote status and links to Vehicle Hire for editing. */}
             <div {...sectionProps(STAGE_SECTIONS[STAGE.QUOTE_PREPARED])}>
-              <QuotationEditor
-                enquiryId={enquiry?.enquiry_id}
-                // Re-read the enquiry after any persisted change so the rail,
-                // status and audit trail all reflect the database.
-                onChanged={handleRefresh}
-              />
+              <Panel
+                title="Quotation"
+                icon={FileText}
+                subtitle="Prepare and send the final customer quotation in Vehicle Hire"
+              >
+                {enquiry?.quote?.price_status === 'QUOTED' || enquiry?.quote?.price_status === 'SENT' ? (
+                  <div className="space-y-3">
+                    <div className="rounded-xl border border-border bg-slate-50/70 px-4 py-3">
+                      <p className="text-[10.5px] font-bold uppercase tracking-wider text-muted">
+                        Current Quote Status
+                      </p>
+                      <p className="mt-1 text-[14px] font-semibold text-text">
+                        {String(enquiry.quote.price_status || 'NOT_QUOTED').replace(/_/g, ' ')}
+                      </p>
+                    </div>
+                    {enquiry.quote?.final_quoted_price ? (
+                      <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 px-4 py-3">
+                        <p className="text-[10.5px] font-bold uppercase tracking-wider text-emerald-800">
+                          Final Quoted Price
+                        </p>
+                        <p className="mt-1 text-[22px] font-bold tracking-tight text-emerald-900">
+                          {inr(enquiry.quote.final_quoted_price)}
+                        </p>
+                        {enquiry.quote?.quoted_at ? (
+                          <p className="mt-1 text-[11.5px] text-emerald-800/70">
+                            Quoted {fmtDateTime(enquiry.quote.quoted_at)}
+                            {enquiry.quote.quoted_by?.name ? ` by ${enquiry.quote.quoted_by.name}` : ''}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-amber-200 bg-amber-50/40 px-4 py-3">
+                        <p className="text-[10.5px] font-bold uppercase tracking-wider text-amber-800">
+                          No Final Quote Yet
+                        </p>
+                        <p className="mt-1 text-[13px] text-amber-900">
+                          The quotation will be finalised when vehicle and driver are assigned in Vehicle Hire.
+                        </p>
+                      </div>
+                    )}
+                    <div className="flex flex-wrap items-center gap-2">
+                      {enquiry?.enquiry_id && (
+                        <PrimaryButton
+                          onClick={() => navigate(`/admin/trips/${enquiry.enquiry_id}/vehicle-hire`)}
+                          className="w-full sm:w-auto"
+                        >
+                          <Truck className="mr-1.5 inline h-4 w-4" />
+                          Prepare Quotation in Vehicle Hire
+                        </PrimaryButton>
+                      )}
+                      {enquiry?.enquiry_id && (
+                        <GhostButton
+                          onClick={() => navigate(`/admin/vehicle-hire?enquiry=${enquiry.enquiry_id}`)}
+                          className="w-full sm:w-auto"
+                        >
+                          Open Vehicle Hire List
+                        </GhostButton>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-border bg-slate-50/70 p-4">
+                    <p className="text-[10.5px] font-bold uppercase tracking-wider text-muted">
+                      Awaiting Review
+                    </p>
+                    <p className="mt-1 text-[13px] leading-relaxed text-text">
+                      Start the review to assign vehicle and driver, then prepare the quotation in Vehicle Hire.
+                    </p>
+                    <PrimaryButton
+                      onClick={startReview}
+                      disabled={Boolean(busyAction)}
+                      className={`mt-3 w-full ${busyAction === 'startReview' ? 'cursor-wait' : ''}`}
+                    >
+                      {busyAction === 'startReview' ? (
+                        <>
+                          <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                          Moving to Under Review…
+                        </>
+                      ) : (
+                        <>
+                          <PlayCircle className="h-4 w-4" strokeWidth={2.5} aria-hidden="true" />
+                          Start Review
+                        </>
+                      )}
+                    </PrimaryButton>
+                    {noticeFor('startReview')}
+                  </div>
+                )}
+              </Panel>
             </div>
 
             {/* STAGE 4 */}

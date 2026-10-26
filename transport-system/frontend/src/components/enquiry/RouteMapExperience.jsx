@@ -30,9 +30,9 @@
  *   completes. `prefers-reduced-motion` collapses all of it to a static state.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, forwardRef, useImperativeHandle } from 'react';
 import { createPortal } from 'react-dom';
-import { GoogleMap, MarkerF, PolylineF } from '@react-google-maps/api';
+import { GoogleMap, MarkerF, PolylineF, Circle } from '@react-google-maps/api';
 import { useGoogleMapsApi } from '../../services/googleMapsLoader';
 import { Check, MapPin, Radio, Route as RouteIcon, Truck, XCircle } from 'lucide-react';
 import { formatKm } from '../../utils/enquiryFormat';
@@ -77,7 +77,7 @@ function pinDataUri({ fill, glyph }) {
 }
 
 const PICKUP_PIN = pinDataUri({
-  fill: ORANGE,
+  fill: '#10B981',
   glyph:
     '<circle cx="17" cy="17" r="8" fill="#fff"/>' +
     '<circle cx="17" cy="17" r="3.4" fill="#172B4D"/>',
@@ -104,6 +104,38 @@ function cumulativeDistances(path) {
     cum[i] = cum[i - 1] + Math.hypot(dx, dy);
   }
   return cum;
+}
+
+// Generate truck marker icon
+const TRUCK_PIN = pinDataUri({
+  fill: ORANGE,
+  glyph:
+    '<path d="M12 10h8l2 3v4h-2a2 2 0 0 1-4 0H10a2 2 0 0 1-4 0H4v-3l2-3h2m2 4h4M8 7h8v3H8z" fill="#fff" stroke="#172B4D" stroke-width="0.8"/>',
+});
+
+// Generate search paths around pickup (circular loops for smoother animation)
+function generateSearchPaths(pickup, count = 3, radiusKm = 1.5) {
+  const paths = [];
+  // Convert km to degrees (approximation)
+  const radiusDeg = radiusKm / 111; // rough approximation
+  for (let i = 0; i < count; i++) {
+    const baseAngle = (i * 120 + Math.random() * 60) * Math.PI / 180;
+    const path = [];
+    const points = 30;
+    const offsetRadius = radiusDeg * (0.9 + Math.random() * 0.2);
+    const speedFactor = 1.5 + Math.random() * 0.5; // different speeds
+    for (let j = 0; j <= points; j++) {
+      const t = j / points;
+      const ang = baseAngle + t * Math.PI * 2 * speedFactor;
+      const r = offsetRadius * (0.95 + Math.sin(t * Math.PI * 4) * 0.05); // subtle variation
+      path.push({
+        lat: pickup.lat + r * Math.cos(ang),
+        lng: pickup.lng + r * Math.sin(ang) * 0.85, // slight compression
+      });
+    }
+    paths.push(path);
+  }
+  return paths;
 }
 
 /**
@@ -386,20 +418,25 @@ function RouteFallbackCard({ route, distanceLabel }) {
 }
 
 /* ── Component ─────────────────────────────────────────────────────────── */
-export default function RouteMapExperience({
+const RouteMapExperience = forwardRef(function RouteMapExperience({
   route,
   stage,
   searching = true,
   connected = false,
   assignedLabel,
   className = '',
-}) {
+  onViewFullRoute,
+  mode = 'PICKUP_SEARCH', // 'PICKUP_SEARCH' | 'CONFIRMED_ROUTE'
+}, ref) {
   const { isLoaded, loadError, hasApiKey } = useGoogleMapsApi();
 
   const [directionsRoute, setDirectionsRoute] = useState(null);
   const [drawProgress, setDrawProgress] = useState(0);
   const [map, setMap] = useState(null);
   const fittedRef = useRef(false);
+  const [truckPositions, setTruckPositions] = useState([]);
+  const [searchPaths, setSearchPaths] = useState([]);
+  const animationRef = useRef(null);
 
   /* ── Coordinates, straight from the enquiry payload ── */
   const pickup = useMemo(() => {
@@ -414,7 +451,7 @@ export default function RouteMapExperience({
     return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
   }, [route?.drop_latitude, route?.drop_longitude]);
 
-  const hasCoordinates = Boolean(pickup && drop);
+  const hasCoordinates = Boolean(pickup && (mode === 'PICKUP_SEARCH' || drop));
   const pickupKey = pickup ? `${pickup.lat},${pickup.lng}` : '';
   const dropKey = drop ? `${drop.lat},${drop.lng}` : '';
 
@@ -503,31 +540,98 @@ export default function RouteMapExperience({
   }, [route?.distance_km, directionsRoute]);
 
   /* ── Fit the viewport to the route exactly once ── */
+  const fitMapBounds = useCallback(() => {
+    if (!map || !window.google?.maps) return;
+    const bounds = new window.google.maps.LatLngBounds();
+    if (pickup) bounds.extend(pickup);
+    if (mode === 'CONFIRMED_ROUTE' && drop) {
+      bounds.extend(drop);
+    }
+    if (mode === 'CONFIRMED_ROUTE' && overviewPath && overviewPath.length) {
+      overviewPath.forEach((p) => bounds.extend(p));
+    }
+    // For PICKUP_SEARCH mode, focus tightly on pickup area
+    map.fitBounds(bounds, { top: 70, right: 70, bottom: 190, left: 70 });
+    // If only pickup (PICKUP_SEARCH mode), zoom in closer
+    if (mode === 'PICKUP_SEARCH' && pickup && !drop) {
+      setTimeout(() => {
+        const zoom = map.getZoom();
+        if (zoom > 15) map.setZoom(15);
+        else if (zoom < 13) map.setZoom(13);
+      }, 100);
+    }
+  }, [map, pickup, drop, overviewPath, mode]);
+
+  useImperativeHandle(ref, () => ({
+    fitMapBounds,
+  }), [fitMapBounds]);
+
   const onLoad = useCallback(
     (mapInstance) => {
       setMap(mapInstance);
-      const bounds = new window.google.maps.LatLngBounds();
-      if (pickup) bounds.extend(pickup);
-      if (drop) bounds.extend(drop);
-      if (overviewPath && overviewPath.length) {
-        overviewPath.forEach((p) => bounds.extend(p));
-      }
-      // Padding leaves room for the floating status card at the bottom.
-      mapInstance.fitBounds(bounds, { top: 70, right: 70, bottom: 190, left: 70 });
+      fitMapBounds();
     },
-    [pickup, drop, overviewPath]
+    [fitMapBounds]
   );
+
+  // Animate truck search simulation
+  useEffect(() => {
+    if (mode !== 'PICKUP_SEARCH' || !searching || !pickup || window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) {
+      if (animationRef.current) {
+        clearInterval(animationRef.current);
+        animationRef.current = null;
+      }
+      if (mode !== 'PICKUP_SEARCH' || !searching) {
+        setTruckPositions([]);
+        setSearchPaths([]);
+      }
+      return undefined;
+    }
+
+    const paths = generateSearchPaths(pickup);
+    setSearchPaths(paths);
+    const truckCount = paths.length;
+    const progress = Array(truckCount).fill(0).map(() => Math.random());
+    const speeds = Array(truckCount).fill(0).map(() => 0.0005 + Math.random() * 0.0008);
+
+    if (animationRef.current) clearInterval(animationRef.current);
+    animationRef.current = setInterval(() => {
+      setTruckPositions(prev => {
+        return paths.map((path, idx) => {
+          let p = progress[idx] + speeds[idx];
+          if (p >= 1) p = 0;
+          progress[idx] = p;
+          const cum = cumulativeDistances(path);
+          const total = cum[cum.length - 1] || 1;
+          const target = total * p;
+          let i = 1;
+          while (i < cum.length && cum[i] < target) i += 1;
+          if (i >= cum.length) return path[path.length - 1];
+          const seg = cum[i] - cum[i - 1] || 1;
+          const f = Math.max(0, Math.min(1, (target - cum[i - 1]) / seg));
+          const a = path[i - 1];
+          const b = path[i];
+          return { lat: a.lat + (b.lat - a.lat) * f, lng: a.lng + (b.lng - a.lng) * f };
+        });
+      });
+    }, 100);
+
+    return () => {
+      if (animationRef.current) {
+        clearInterval(animationRef.current);
+        animationRef.current = null;
+      }
+    };
+  }, [searching, pickup, mode]);
 
   // Refit when the route arrives a moment after the map (the common case).
   useEffect(() => {
-    if (!map || fittedRef.current || !overviewPath || !window.google?.maps) return;
-    fittedRef.current = true;
-    const bounds = new window.google.maps.LatLngBounds();
-    if (pickup) bounds.extend(pickup);
-    if (drop) bounds.extend(drop);
-    overviewPath.forEach((p) => bounds.extend(p));
-    map.fitBounds(bounds, { top: 70, right: 70, bottom: 190, left: 70 });
-  }, [map, overviewPath, pickup, drop]);
+    if (!map || !window.google?.maps) return;
+    if (mode === 'CONFIRMED_ROUTE' && fittedRef.current) return;
+    if (mode === 'PICKUP_SEARCH') fittedRef.current = true;
+    else if (mode === 'CONFIRMED_ROUTE' && overviewPath) fittedRef.current = true;
+    fitMapBounds();
+  }, [map, overviewPath, pickup, drop, fitMapBounds, mode]);
 
   const center = useMemo(() => midpointOf(overviewPath) || pickup || drop, [overviewPath, pickup, drop]);
 
@@ -550,10 +654,10 @@ export default function RouteMapExperience({
 
   return (
     <section
-      className={`relative overflow-hidden rounded-3xl bg-white shadow-[0_24px_60px_-30px_rgba(11,27,51,0.45),0_2px_6px_rgba(11,27,51,0.06)] ring-1 ring-[#172B4D]/8 ${className}`}
+      className={`relative overflow-hidden rounded-2xl bg-white shadow-[0_2px_6px_rgba(23,43,77,0.04),0_16px_40px_-24px_rgba(11,27,51,0.35)] ring-1 ring-[#172B4D]/8 ${className}`}
       aria-label="Live route map"
     >
-      <div className="relative h-[400px] w-full sm:h-[460px] lg:h-[520px]">
+      <div className="relative h-[340px] w-full sm:h-[380px] lg:h-[420px]">
         {showMap ? (
           <GoogleMap
             mapContainerClassName="h-full w-full"
@@ -580,7 +684,7 @@ export default function RouteMapExperience({
             }}
           >
             {/* The planned route: a quiet navy guide line. */}
-            {overviewPath && (
+            {mode === 'CONFIRMED_ROUTE' && overviewPath && (
               <PolylineF
                 path={overviewPath}
                 options={{
@@ -594,7 +698,7 @@ export default function RouteMapExperience({
             )}
 
             {/* The drawn portion: brand orange, revealed left → right. */}
-            {drawnPath && drawnPath.length > 1 && (
+            {mode === 'CONFIRMED_ROUTE' && drawnPath && drawnPath.length > 1 && (
               <PolylineF
                 path={drawnPath}
                 options={{
@@ -608,20 +712,57 @@ export default function RouteMapExperience({
             )}
 
             {pickup && (
-              <MarkerF
-                position={pickup}
-                icon={{ url: PICKUP_PIN, anchor: pinAnchor, scaledSize: { width: 34, height: 46 } }}
-                label={
-                  labelOffset
-                    ? { text: 'Pickup', className: 'btb-map-label', position: labelOffset }
-                    : undefined
-                }
-                zIndex={30}
-                title={route?.pickup_location || 'Pickup'}
-              />
+              <>
+                {mode === 'PICKUP_SEARCH' && (
+                  <>
+                    <Circle
+                      center={pickup}
+                      radius={1500} // 1.5km
+                      options={{
+                        strokeColor: '#F5A623',
+                        strokeOpacity: 0.8,
+                        strokeWeight: 2,
+                        fillColor: '#F5A623',
+                        fillOpacity: 0.15,
+                        clickable: false,
+                        zIndex: 5,
+                      }}
+                    />
+                    <MarkerF
+                      position={{ lat: pickup.lat + 0.01, lng: pickup.lng }}
+                      icon={{
+                        path: 'M 0,0',
+                        fillOpacity: 0,
+                        strokeOpacity: 0,
+                      }}
+                      label={
+                        isLoaded && window.google?.maps
+                          ? {
+                              text: 'Searching nearby vehicles',
+                              className: 'btb-map-label',
+                              position: new window.google.maps.Point(0, 0),
+                            }
+                          : undefined
+                      }
+                      zIndex={10}
+                    />
+                  </>
+                )}
+                <MarkerF
+                  position={pickup}
+                  icon={{ url: PICKUP_PIN, anchor: pinAnchor, scaledSize: { width: 34, height: 46 } }}
+                  label={
+                    labelOffset
+                      ? { text: 'Pickup', className: 'btb-map-label', position: labelOffset }
+                      : undefined
+                  }
+                  zIndex={30}
+                  title={route?.pickup_location || 'Pickup'}
+                />
+              </>
             )}
 
-            {drop && (
+            {mode === 'CONFIRMED_ROUTE' && drop && (
               <MarkerF
                 position={drop}
                 icon={{ url: DROP_PIN, anchor: pinAnchor, scaledSize: { width: 34, height: 46 } }}
@@ -634,6 +775,34 @@ export default function RouteMapExperience({
                 title={route?.drop_location || 'Drop'}
               />
             )}
+
+            {/* Search simulation: Animated trucks with trails */}
+            {mode === 'PICKUP_SEARCH' && searching && searchPaths.length > 0 && truckPositions.length > 0 && truckPositions.map((pos, idx) => (
+              <div key={idx}>
+                <PolylineF
+                  path={searchPaths[idx]}
+                  options={{
+                    strokeColor: ORANGE,
+                    strokeOpacity: 0.5,
+                    strokeWeight: 2,
+                    strokeDashArray: [6, 6],
+                    clickable: false,
+                    zIndex: 5,
+                  }}
+                />
+                <MarkerF
+                  position={pos}
+                  icon={{ url: TRUCK_PIN, anchor: { x: 17, y: 23 }, scaledSize: { width: 34, height: 34 } }}
+                  label={
+                    isLoaded && window.google?.maps
+                      ? { text: 'Searching nearby', className: 'btb-map-label', position: new window.google.maps.LatLng(0, 22) }
+                      : undefined
+                  }
+                  zIndex={25}
+                  title="Vehicle search simulation"
+                />
+              </div>
+            ))}
 
             {/* Radar + truck, anchored to the pickup area — where a vehicle for
                 this route would actually be found. Never a GPS position. */}
@@ -686,13 +855,11 @@ export default function RouteMapExperience({
           </div>
         )}
 
-        <MapStatusCard
-          stage={stage}
-          searching={searching}
-          connected={connected}
-          distanceLabel={distanceLabel}
-        />
+
       </div>
     </section>
   );
-}
+});
+
+RouteMapExperience.displayName = 'RouteMapExperience';
+export default RouteMapExperience;

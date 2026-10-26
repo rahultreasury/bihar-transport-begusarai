@@ -49,7 +49,7 @@
  *   is on screen afterwards is the persisted truth, never a local guess.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   AlertCircle,
@@ -61,7 +61,6 @@ import {
   Loader2,
   Package,
   RefreshCw,
-  Save,
   Send,
   Shield,
   Truck,
@@ -89,10 +88,7 @@ import EnquiryLifecycleRail from '../components/admin-premium/enquiries/EnquiryL
 import EnquiryRouteStrip from '../components/admin-premium/enquiries/EnquiryRouteStrip';
 import EnquiryActivityFeed from '../components/admin-premium/enquiries/EnquiryActivityFeed';
 import VehicleHireStatusCard from '../components/admin-premium/enquiries/VehicleHireStatusCard';
-import {
-  canFinalizeQuote,
-  describeHireAssignment,
-} from '../components/admin-premium/enquiries/hireHandoff';
+import { describeHireAssignment } from '../components/admin-premium/enquiries/hireHandoff';
 import { vehicleHireAPI } from '../services/vehicleHireAPI';
 
 /* ── Status sets, mirroring backend/utils/EnquiryStateMachine.js ─────────── */
@@ -100,14 +96,6 @@ import { vehicleHireAPI } from '../services/vehicleHireAPI';
 const TERMINAL = [
   ENQUIRY_STATUS.CANCELLED,
   ENQUIRY_STATUS.CUSTOMER_REJECTED,
-  ENQUIRY_STATUS.COMPLETED,
-];
-
-/** Statuses where the customer has committed (isCustomerCommitted). */
-const CUSTOMER_COMMITTED = [
-  ENQUIRY_STATUS.CUSTOMER_ACCEPTED,
-  ENQUIRY_STATUS.CONFIRMED,
-  ENQUIRY_STATUS.IN_PROGRESS,
   ENQUIRY_STATUS.COMPLETED,
 ];
 
@@ -218,40 +206,21 @@ export default function AdminEnquiryWorkspace() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
 
-  const [quote, setQuote] = useState({ final_price: '', remarks: '' });
-
   // THE CANONICAL VEHICLE/DRIVER RESERVATION, read once for the whole page.
   //
-  // Both the handoff card and the quote gate need it, so it is fetched HERE and
-  // handed down rather than fetched twice. It resolves through
-  // TripVehicleAssignmentService — the single assignment writer — to the same
-  // Trip row the Vehicle Hire page reads, so this page can never show a
-  // different vehicle from the one actually reserved.
+  // The handoff card needs it, so it is fetched HERE and handed down rather than
+  // fetched twice. It resolves through TripVehicleAssignmentService — the single
+  // assignment writer — to the same Trip row the Vehicle Hire page reads, so
+  // this page can never show a different vehicle from the one actually reserved.
   const [assignment, setAssignment] = useState(null);
 
   const [busy, setBusy] = useState(null); // which action is in flight
   const [message, setMessage] = useState(null);
   const [actionError, setActionError] = useState(null);
 
-  /**
-   * Which enquiry the quote form was last seeded from. The form is a STAGING
-   * AREA for the operator's next action, so a background refresh (the realtime
-   * hook refetches on socket activity) must not overwrite a half-typed price.
-   *
-   * There is deliberately no equivalent seeding for vehicle/driver/owner/partner
-   * any more: those selectors are gone from this page. Assignment is written by
-   * the Vehicle Hire workspace and read back here as a status card.
-   */
-  const seededIdRef = useRef(null);
-
   const load = useCallback(async () => {
     if (!id) return;
     try {
-      // The assignable-options catalogue (vehicles / drivers / owners / partners)
-      // is no longer requested: nothing on this page renders a resource picker.
-      // The endpoint itself is untouched — the Vehicle Hire page reads its own
-      // catalogue from /api/vehicle-hire/lookups.
-      //
       // The reservation is read alongside the enquiry so the page can show the
       // vehicle and driver with the quote and gate sending on them. A failure
       // there must not fail the enquiry read, so it is settled separately.
@@ -264,16 +233,6 @@ export default function AdminEnquiryWorkspace() {
       const e = data?.data || null;
       setEnquiry(e);
       setAssignment(assignmentRes?.data?.data || null);
-
-      // Seed the quote form from the PERSISTED state, and only when this enquiry
-      // is first opened. Never from anything the browser happened to be holding.
-      if (seededIdRef.current !== String(id)) {
-        setQuote({
-          final_price: e?.quote?.final_quoted_price ?? '',
-          remarks: e?.quote?.quote_remarks ?? '',
-        });
-        seededIdRef.current = String(id);
-      }
       setError(null);
     } catch (err) {
       setError(err?.response?.data?.message || 'Failed to load this enquiry');
@@ -321,7 +280,7 @@ export default function AdminEnquiryWorkspace() {
     load();
   }, [load]);
 
-  /* ── Derived state ────────────────────────────────────────────────────── */
+/* ── Derived state ────────────────────────────────────────────────────── */
 
   const status = enquiry?.status;
   const isClosed = TERMINAL.includes(status);
@@ -332,14 +291,7 @@ export default function AdminEnquiryWorkspace() {
    * Read-only gates — each one is the backend's own condition, not a guess.
    * See the TRUST BOUNDARY note at the top of this file.
    */
-  const quoteLocked =
-    isClosed || (CUSTOMER_COMMITTED.includes(status) && status !== ENQUIRY_STATUS.CUSTOMER_ACCEPTED);
   const canStartReview = status === ENQUIRY_STATUS.ENQUIRY_SUBMITTED;
-  // QUOTE_READY is the single status from which AWAITING_CUSTOMER_ACCEPTANCE is
-  // reachable, so this check IS the "quote is prepared and publishable"
-  // condition. It is derived from the server status, never from local state.
-  const canSendQuote = status === ENQUIRY_STATUS.QUOTE_READY;
-  const isQuoteSent = status === ENQUIRY_STATUS.AWAITING_CUSTOMER_ACCEPTANCE;
   const isAccepted = [
     ENQUIRY_STATUS.CUSTOMER_ACCEPTED,
     ENQUIRY_STATUS.CONFIRMED,
@@ -353,40 +305,6 @@ export default function AdminEnquiryWorkspace() {
    * single canonical assignment. Null until a vehicle and driver are engaged.
    */
   const reservation = useMemo(() => describeHireAssignment(assignment), [assignment]);
-
-  /**
-   * MAY THE QUOTE BE SENT?
-   *
-   * The whole point of the new workflow: the customer receives the price, the
-   * vehicle and the driver TOGETHER. Sending a price while resources are still
-   * unassigned is exactly the "accept, then wait while we find a truck"
-   * experience this replaces, so the button stays disabled until both exist.
-   *
-   * This is a UX gate, not a security control — the backend still enforces its
-   * own rules. It exists so the operator is never offered a step the workflow
-   * says cannot be taken yet.
-   */
-  const quoteGate = useMemo(() => {
-    const base = canFinalizeQuote({ assignment, finalPrice: quote.final_price });
-    if (!base.allowed) return base;
-
-    // THE OFFER MUST BE COMPLETE. A quote that cannot describe the job is not
-    // one worth sending: the customer is being asked to accept a specific price
-    // for a specific truck on a specific route, so the route and the date have
-    // to exist before "Finalize & Send" is offered at all.
-    const pickup = enquiry?.route?.pickup_location || enquiry?.schedule?.pickup_location || null;
-    const drop = enquiry?.route?.drop_location || enquiry?.schedule?.drop_location || null;
-    if (!pickup || !drop) {
-      return { allowed: false, reason: 'This enquiry is missing a pickup or drop location.' };
-    }
-    if (!enquiry?.schedule?.pickup_date) {
-      return { allowed: false, reason: 'This enquiry has no pickup date.' };
-    }
-    return base;
-  }, [assignment, quote.final_price, enquiry]);
-  // `quoted_at` is stamped by the send endpoint, so it is the authoritative
-  // "sent at" time — not anything the browser remembers.
-  const quoteSentAt = enquiry?.quote?.quoted_at || null;
 
   const estimatedRange = useMemo(
     () => formatFareRange(enquiry?.quote?.estimated_price_min, enquiry?.quote?.estimated_price_max),
@@ -744,14 +662,9 @@ export default function AdminEnquiryWorkspace() {
                 </div>
               </Panel>
 
-              {/* 13. Quote workflow — only what this status actually allows */}
-              <Panel title="Next Action" icon={Send}>
+              {/* Enquiry status display — read-only, no quote controls */}
+              <Panel title="Status" icon={Send}>
                 {isAccepted ? (
-                  /* The customer accepted. The existing business logic advances
-                     the enquiry to CONFIRMED and creates the canonical Booking
-                     in the same atomic step, so there is no second "confirm"
-                     click to perform here — the next action is dispatching the
-                     trip that now exists. */
                   <div className="space-y-2.5">
                     <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-3.5">
                       <p className="flex items-center gap-1.5 text-[13px] font-bold text-emerald-800">
@@ -771,33 +684,12 @@ export default function AdminEnquiryWorkspace() {
                           ? `Trip confirmed. Booking ${enquiry.booking.booking_number} was created automatically — the next step is Vehicle Hire.`
                           : 'Trip confirmed. The next step is Vehicle Hire.'}
                       </p>
-                      {/* THE HANDOFF. The customer agreeing to a transport price is
-                          NOT a vehicle hire — these are different financial
-                          concepts. The agreed Final Quote above is the customer
-                          price; what the vendor is owed is entered in the Vehicle
-                          Hire workspace, from its own financial workflow. */}
                       <p className="mt-1.5 text-[12.5px] leading-relaxed text-emerald-900/80">
                         Select the vehicle, driver, owner/vendor and hire terms in the Vehicle Hire
                         workspace. The Vehicle Hire card above shows the current state and links
                         straight to it.
                       </p>
                     </div>
-                    {/* /admin/bookings/:bookingNumber takes the CANONICAL
-                        booking_number, not the numeric booking_id.
-
-                        It was given `booking_id` here, so the label read
-                        "Open booking BTB-2026-00203" while the link pointed at
-                        /admin/bookings/203. The detail page then requested
-                        GET /api/admin/bookings/by-number/203, and the canonical
-                        lookup (BookingRepository.findByIdentifier) matches only
-                        booking_number / booking_reference — so it 404'd and the
-                        page rendered "Order unavailable".
-
-                        The correct value was already on screen: this link's own
-                        label, and the two other booking links in this file, all
-                        read booking.booking_number. Passing the ID was the
-                        outlier. No API, mapping or lookup was changed — this
-                        caller now matches the route's documented contract. */}
                     {hasBooking ? (
                       <Link
                         to={`/admin/bookings/${enquiry.booking.booking_number}`}
@@ -823,163 +715,53 @@ export default function AdminEnquiryWorkspace() {
                     </Link>
                   </div>
                 ) : (
-                  <div className="space-y-3.5">
-                    {/* Draft the price. Mirrors the backend's own edit window. */}
-                    {!quoteLocked ? (
-                      <div className="space-y-2.5">
-                        <div>
-                          <label
-                            htmlFor="final-price"
-                            className="mb-1.5 block text-[10.5px] font-bold uppercase tracking-wider text-text"
-                          >
-                            Final quote (₹)
-                          </label>
-                          <input
-                            id="final-price"
-                            type="number"
-                            min="1"
-                            step="1"
-                            inputMode="numeric"
-                            value={quote.final_price}
-                            onChange={(e) => setQuote((q) => ({ ...q, final_price: e.target.value }))}
-                            placeholder={estimatedRange ? 'e.g. 61000' : 'Enter the final price'}
-                            className="w-full rounded-lg border border-border bg-white px-3 py-2 text-[13px] font-semibold text-text outline-none transition placeholder:font-normal placeholder:text-slate-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
-                          />
-                        </div>
-
-                        <div>
-                          <label
-                            htmlFor="quote-remarks"
-                            className="mb-1.5 block text-[10.5px] font-bold uppercase tracking-wider text-text"
-                          >
-                            Remarks for customer (optional)
-                          </label>
-                          <textarea
-                            id="quote-remarks"
-                            rows={2}
-                            value={quote.remarks}
-                            onChange={(e) => setQuote((q) => ({ ...q, remarks: e.target.value }))}
-                            placeholder="e.g. Includes loading and unloading"
-                            className="w-full resize-none rounded-lg border border-border bg-white px-3 py-2 text-[13px] text-text outline-none transition placeholder:text-slate-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
-                          />
-                        </div>
-                      </div>
-                    ) : (
+                  <div className="space-y-2.5">
+                    {canStartReview ? (
+                      <ActionButton
+                        tone="navy"
+                        icon={Shield}
+                        disabled={busy === 'review'}
+                        onClick={() =>
+                          run(
+                            'review',
+                            () => adminEnquiryAPI.update(id, { status: 'ADMIN_REVIEW' }),
+                            'Review started'
+                          )
+                        }
+                      >
+                        Start Reviewing
+                      </ActionButton>
+                    ) : null}
+                    {status === ENQUIRY_STATUS.ADMIN_REVIEW ? (
+                      <Notice tone="neutral">
+                        <span className="font-semibold">Under Review.</span> Prepare the quotation in the Vehicle Hire
+                        workspace, then finalize and send it to the customer from there.
+                      </Notice>
+                    ) : status === ENQUIRY_STATUS.QUOTE_READY ? (
                       <Notice tone="success">
-                        Accepted at {finalQuote || 'the agreed price'} on{' '}
-                        {formatTimestamp(enquiry.timeline?.accepted_at)}. The agreed price is now the
-                        contract and can no longer be edited here.
+                        <span className="font-semibold">Quote prepared.</span> The quotation is ready. Send it to
+                        the customer from the Vehicle Hire workspace.
+                      </Notice>
+                    ) : status === ENQUIRY_STATUS.AWAITING_CUSTOMER_ACCEPTANCE ? (
+                      <Notice tone="success">
+                        <span className="font-semibold">Quote sent to customer.</span> Waiting for customer response.
+                        No action is needed from dispatch until they accept or decline.
+                      </Notice>
+                    ) : (
+                      <Notice tone="neutral">
+                        <span className="font-semibold">Awaiting action.</span> The next step will appear here when
+                        the enquiry progresses.
                       </Notice>
                     )}
-
-                    <div className="flex flex-wrap gap-2 border-t border-border pt-3.5">
-                      {canStartReview ? (
-                        <ActionButton
-                          tone="navy"
-                          icon={Shield}
-                          disabled={busy === 'review'}
-                          onClick={() =>
-                            run(
-                              'review',
-                              () => adminEnquiryAPI.update(id, { status: 'ADMIN_REVIEW' }),
-                              'Review started'
-                            )
-                          }
-                        >
-                          Start Reviewing
-                        </ActionButton>
-                      ) : null}
-
-                      {!quoteLocked ? (
-                        <ActionButton
-                          tone="navy"
-                          icon={Save}
-                          disabled={busy === 'quote' || !String(quote.final_price).trim()}
-                          onClick={() =>
-                            run(
-                              'quote',
-                              () =>
-                                adminEnquiryAPI.saveQuote(id, {
-                                  final_price: Number(quote.final_price),
-                                  remarks: quote.remarks || undefined,
-                                }),
-                              'Quote saved — not yet sent to the customer'
-                            )
-                          }
-                        >
-                          {busy === 'quote' ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                          ) : null}
-                          Prepare Quote
-                        </ActionButton>
-                      ) : null}
-
-                      {/* ── FINALIZE & SEND — the workflow in one button ───────────
-                          Only reachable once a vehicle AND a driver are reserved,
-                          so the customer always receives the price together with
-                          the vehicle and the driver. The reason is shown rather
-                          than the button simply being dead, so the operator always
-                          knows which step is missing. */}
-                      {canSendQuote ? (
-                        <>
-                          <ActionButton
-                            tone="amber"
-                            icon={Send}
-                            disabled={busy === 'send' || !quoteGate.allowed}
-                            onClick={() =>
-                              run(
-                                'send',
-                                () => adminEnquiryAPI.sendQuote(id),
-                                'Quote sent to the customer with the reserved vehicle and driver'
-                              )
-                            }
-                          >
-                            {busy === 'send' ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                            ) : null}
-                            Finalize Quote & Send to Customer
-                          </ActionButton>
-                          {!quoteGate.allowed ? (
-                            <p className="w-full text-[12px] font-semibold text-amber-700">
-                              {quoteGate.reason}
-                            </p>
-                          ) : null}
-                        </>
-                      ) : null}
-
-                      {/* ── QUOTE SENT — read-only, the action is done ──
-                          Replaces the Send button the moment the server says
-                          the quote is with the customer. `quoted_at` is the
-                          server-stamped send time. */}
-                      {isQuoteSent ? (
-                        <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-3.5">
-                          <p className="flex items-center gap-1.5 text-[13px] font-bold text-emerald-800">
-                            <CheckCircle2 className="h-4 w-4" strokeWidth={2.5} aria-hidden="true" />
-                            Quote sent to customer
-                          </p>
-                          {quoteSentAt ? (
-                            <p className="mt-1 text-[12px] text-emerald-900/70">
-                              Sent at: {formatTimestamp(quoteSentAt)}
-                              {enquiry.quote?.quoted_by?.name ? ` by ${enquiry.quote.quoted_by.name}` : ''}
-                            </p>
-                          ) : null}
-                          <p className="mt-1.5 text-[12.5px] leading-relaxed text-emerald-900/80">
-                            Waiting for customer response. No action is needed from dispatch until
-                            they accept or decline.
-                          </p>
-                        </div>
-                      ) : null}
-
-                      {hasBooking ? (
-                        <Link
-                          to={`/admin/bookings/${booking.booking_number}`}
-                          className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#1e3a5f] px-3.5 py-2 text-[12.5px] font-semibold text-white transition hover:bg-[#16294a] focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/40 focus:ring-offset-1"
-                        >
-                          View Booking
-                          <ChevronRight className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden="true" />
-                        </Link>
-                      ) : null}
-                    </div>
+                    {hasBooking ? (
+                      <Link
+                        to={`/admin/bookings/${booking.booking_number}`}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#1e3a5f] px-3.5 py-2 text-[12.5px] font-semibold text-white transition hover:bg-[#16294a] focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/40 focus:ring-offset-1"
+                      >
+                        View Booking
+                        <ChevronRight className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden="true" />
+                      </Link>
+                    ) : null}
                   </div>
                 )}
               </Panel>

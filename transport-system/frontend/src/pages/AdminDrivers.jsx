@@ -433,16 +433,63 @@ const searchInputRef = useRef(null);
       key: 'vehicle',
       header: 'Vehicle',
       render: (r) => {
-        const vehicle = r.transportVehicles?.[0] || r.currentVehicle;
+        // Priority: profile vehicle > active trip vehicle > vehicle-hire vehicle
+        const profileVehicle = r.transportVehicles?.[0] || r.currentVehicle;
+        const activeTrip = r.trips?.[0];
+        const tripVehicle = activeTrip?.vehicle;
+        const tripVehicleHire = activeTrip?.vehicleHire;
+        
+        const vehicle = profileVehicle || tripVehicle;
+        const hasTripVehicleHire = !!tripVehicleHire;
+        const isTripVehicle = !profileVehicle && (tripVehicle || hasTripVehicleHire);
+        const tripStatus = activeTrip?.status;
+        const isCriticalTrip = ['DISPATCHED', 'IN_TRANSIT', 'DELIVERED'].includes(tripStatus);
+        const hasNoVehicle = !vehicle && !hasTripVehicleHire;
+        
         if (vehicle) {
           return (
             <button
               onClick={() => navigate(`/admin/vehicles/${vehicle.vehicle_id}`)}
               className="text-left text-sm hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
             >
-              <div className="font-mono font-semibold text-text">{vehicle.vehicle_number}</div>
+              <div className="flex items-center gap-1.5 font-mono font-semibold text-text">
+                {vehicle.vehicle_number}
+                {isTripVehicle && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300">
+                    Trip
+                  </span>
+                )}
+              </div>
               <div className="text-[10px] text-muted">{vehicle.vehicle_name || vehicle.vehicle_type || ''}</div>
+              {isTripVehicle && isCriticalTrip && hasNoVehicle && (
+                <div className="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                  Trip in {tripStatus} — Vehicle from trip
+                </div>
+              )}
             </button>
+          );
+        }
+        if (hasTripVehicleHire) {
+          return (
+            <div className="text-left text-sm">
+              <div className="flex items-center gap-1.5 font-mono font-semibold text-text">
+                VehicleHire #{activeTrip.vehicleHire.hire_id}
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300">
+                  Hire
+                </span>
+              </div>
+              {isCriticalTrip && (
+                <div className="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                  Trip in {tripStatus} — Vehicle from hire
+                </div>
+              )}
+            </div>
           );
         }
         return (
@@ -583,7 +630,14 @@ const searchInputRef = useRef(null);
 
   // Mobile card view
   const renderMobileCard = useCallback((driver) => {
-    const vehicle = driver.transportVehicles?.[0];
+    const profileVehicle = driver.transportVehicles?.[0] || driver.currentVehicle;
+    const activeTrip = driver.trips?.[0];
+    const tripVehicle = activeTrip?.vehicle;
+    const tripVehicleHire = activeTrip?.vehicleHire;
+    const vehicle = profileVehicle || tripVehicle;
+    const hasTripVehicleHire = !!tripVehicleHire;
+    const isTripVehicle = !profileVehicle && (tripVehicle || hasTripVehicleHire);
+    
     const owner = driver.transportOwner;
     return (
       <div
@@ -612,7 +666,19 @@ const searchInputRef = useRef(null);
             <span className="text-muted text-xs">Vehicle</span>
             <div className="font-medium">
               {vehicle ? (
-                <span>{vehicle.vehicle_number} {vehicle.vehicle_type ? <span className="text-muted">({vehicle.vehicle_type})</span> : ''}</span>
+                <span className="flex items-center gap-1.5">
+                  {vehicle.vehicle_number}
+                  {isTripVehicle && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300">
+                      Trip
+                    </span>
+                  )}
+                  {hasTripVehicleHire && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300">
+                      Hire
+                    </span>
+                  )}
+                </span>
               ) : (
                 <span className="text-muted">Not assigned</span>
               )}
@@ -660,7 +726,9 @@ const searchInputRef = useRef(null);
           <div>
             <h1 className="bt-page-title">Driver Management</h1>
             <p className="text-sm text-muted mt-1">
-              {pagination.total > 0
+              {stats && stats.total > 0
+                ? `${stats.total} driver${stats.total !== 1 ? 's' : ''} registered`
+                : pagination.total > 0
                 ? `${pagination.total} driver${pagination.total !== 1 ? 's' : ''} registered`
                 : 'Manage all drivers and their operations'}
             </p>

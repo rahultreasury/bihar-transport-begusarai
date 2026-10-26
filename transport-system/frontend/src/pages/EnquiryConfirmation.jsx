@@ -48,7 +48,7 @@
  *   • Contact details come from the backend customer-care config only.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -70,6 +70,11 @@ import {
   Radio,
   Phone,
   MessageCircle,
+  Copy,
+  Headset,
+  Truck,
+  CheckCircle2,
+  Clock,
 } from 'lucide-react';
 
 import { enquiryAPI } from '../services/enquiryAPI';
@@ -357,6 +362,9 @@ export default function EnquiryConfirmation() {
   const [actionError, setActionError] = useState(null);
   const [showDeclineReason, setShowDeclineReason] = useState(false);
   const [declineReason, setDeclineReason] = useState('');
+  const [copied, setCopied] = useState(false);
+  const copyTimerRef = useRef(null);
+  const mapRef = useRef(null);
 
   /* ── Retention / conditional-charge disclosure visibility ─────────────────
      PRESENTATION ONLY, DEFAULTING TO COLLAPSED.
@@ -513,6 +521,33 @@ export default function EnquiryConfirmation() {
     );
     queryClient.invalidateQueries({ queryKey: [ENQUIRY_QUERY_KEY, enquiryNumber, 'quote'] });
   }, [enquiryNumber, queryClient]);
+
+  const copyRequestId = async () => {
+    if (!enquiry?.enquiry_number) return;
+    const text = String(enquiry.enquiry_number);
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+    } catch {
+      return;
+    }
+    setCopied(true);
+    clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = setTimeout(() => setCopied(false), 1800);
+  };
+
+  useEffect(() => () => clearTimeout(copyTimerRef.current), []);
 
   useEffect(() => {
     if (!enquiryQuery.isSuccess) return;
@@ -751,7 +786,7 @@ export default function EnquiryConfirmation() {
 
   return (
     <div className="bg-[#F7F8FA] pb-24 md:pb-12">
-      <main className="mx-auto max-w-6xl px-4 py-5 sm:px-6 sm:py-7">
+      <main className="mx-auto max-w-6xl px-4 py-4 sm:px-6 sm:py-5">
         {/* ══ HERO ══════════════════════════════════════════════════════
             READING ORDER (both breakpoints, same sequence):
               received → Request ID → FINAL QUOTE → Vehicle & Driver
@@ -768,74 +803,101 @@ export default function EnquiryConfirmation() {
             Both orders are expressed with `order-*` on the flex flow plus
             explicit `lg:col-start/row-start` for the desktop grid, because
             DOM order alone cannot express both. */}
-        <div className="flex flex-col gap-5 lg:grid lg:grid-cols-[1.45fr_1fr] lg:items-start lg:gap-x-6 lg:gap-y-5">
-          {/* ── 0. The one-line promise ── */}
+        <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[1.6fr_1fr] lg:items-start lg:gap-x-5 lg:gap-y-4">
+          {/* ── Navy Hero Banner ── */}
           <header className="order-0 lg:col-span-2">
-            <span
-              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em] ${
-                isClosed && !isCompleted
-                  ? 'bg-red-50 text-red-700'
-                  : isCommitted || isCompleted
-                  ? 'bg-emerald-50 text-emerald-700'
-                  : 'bg-[#F5A623]/12 text-[#B26A00]'
-              }`}
-            >
-              {isCancelled ? (
-                <>
-                  <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
-                  Request cancelled
-                </>
-              ) : isRejected ? (
-                <>
-                  <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
-                  Quote declined
-                </>
-              ) : isCompleted ? (
-                <>
-                  <Check className="h-3.5 w-3.5" aria-hidden="true" />
-                  Trip completed
-                </>
-              ) : isCommitted ? (
-                <>
-                  <Check className="h-3.5 w-3.5" aria-hidden="true" />
-                  Trip confirmed
-                </>
-              ) : (
-                <>
-                  <Check className="h-3.5 w-3.5" aria-hidden="true" />
-                  Request received
-                </>
-              )}
-            </span>
+            <div className="relative overflow-hidden rounded-2xl bg-[#172B4D] p-4 shadow-lg sm:p-5 lg:p-6">
+              {/* Subtle gradient overlay */}
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#172B4D] via-[#172B4D]/95 to-[#172B4D]/70"
+              />
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_100%_at_0%_0%,rgba(245,166,35,0.16),transparent_55%)]"
+              />
+              {/* Truck image on right with subtle road/sunset background effect */}
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute right-0 top-0 hidden h-full w-1/2 bg-cover bg-right opacity-90 md:block"
+                style={{
+                  backgroundImage: "url('/bihar-transport-hero.jpg')",
+                  filter: 'brightness(0.9) contrast(1.05)',
+                }}
+              />
+              {/* Navy gradient overlay on truck image for readability */}
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute right-0 top-0 hidden h-full w-1/2 bg-gradient-to-l from-[#172B4D] via-[#172B4D]/70 to-transparent md:block"
+              />
+              <div className="relative flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex-1">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-[#F5A623]/20 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-[#F5A623]">
+                    REQUEST RECEIVED
+                  </span>
 
-            <h1 className="mt-2.5 text-2xl font-bold leading-tight text-[#172B4D] sm:text-[30px]">
-              {isCancelled
-                ? 'Your request has been cancelled'
-                : isRejected
-                ? 'We have recorded your decision'
-                : isCommitted || isCompleted
-                ? 'Your trip is confirmed'
-                : 'Your transport request is being processed'}
-            </h1>
+                  <h1 className="mt-2 text-xl font-bold leading-tight text-white sm:text-2xl lg:text-2xl xl:text-3xl">
+                    {isCancelled
+                      ? 'Your request has been cancelled'
+                      : isRejected
+                      ? 'We have recorded your decision'
+                      : isCommitted || isCompleted
+                      ? 'Your trip is confirmed'
+                      : 'Your transport request is being processed'}
+                  </h1>
 
-            <p className="mt-1.5 max-w-2xl text-[15px] leading-relaxed text-slate-600">
-              {isCancelled
-                ? 'This request is now closed. Contact Bihar Transport customer care if you need to place a new one.'
-                : isRejected
-                ? 'Our team will get in touch to understand what you need.'
-                : isCommitted || isCompleted
-                ? 'Your vehicle and driver are being arranged. Details are below.'
-                : "We've received your shipment details. Bihar Transport is now finding the right vehicle for your route."}
-            </p>
+                  <p className="mt-1 max-w-lg text-sm leading-relaxed text-white/85">
+                    {isCancelled
+                      ? 'This request is now closed. Contact Bihar Transport customer care if you need to place a new one.'
+                      : isRejected
+                      ? 'Our team will get in touch to understand what you need.'
+                      : isCommitted || isCompleted
+                      ? 'Your vehicle and driver are being arranged. Details are below.'
+                      : "We've received your shipment details. Bihar Transport is now finding the right vehicle for your route."}
+                  </p>
 
-            {enquiry.booking?.booking_number && (
-              <p className="mt-1.5 text-xs text-slate-500">
-                Booking reference:{' '}
-                <span className="font-mono font-semibold text-[#172B4D]">
-                  {enquiry.booking.booking_number}
-                </span>
-              </p>
-            )}
+                  <div className="mt-3 flex flex-col gap-2">
+                    <div className="flex items-center gap-2">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/60">
+                        REQUEST ID
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="min-w-0 select-all break-all font-mono text-lg font-bold tracking-wider text-white sm:text-xl">
+                        {enquiry.enquiry_number}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={copyRequestId}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-white/10 px-2.5 py-1.5 text-xs font-semibold text-white transition hover:bg-white/15"
+                      >
+                        {copied ? (
+                          <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+                        )}
+                        {copied ? 'Copied' : 'Copy'}
+                      </button>
+                      <Link
+                        to={`/track/${encodeURIComponent(enquiry.enquiry_number)}`}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-[#F5A623] px-2.5 py-1.5 text-xs font-semibold text-[#172B4D] transition hover:bg-[#F5A623]/90"
+                      >
+                        Track Request
+                        <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                      </Link>
+                    </div>
+                    {enquiry.booking?.booking_number && (
+                      <p className="text-xs text-white/70">
+                        Booking reference:{' '}
+                        <span className="font-mono font-semibold text-white">
+                          {enquiry.booking.booking_number}
+                        </span>
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
           </header>
 
           {/* ── 1. THE COMMERCIAL COLUMN ──
@@ -853,8 +915,7 @@ export default function EnquiryConfirmation() {
               object; the quote card MOVED up from below the map with its styling
               untouched; the Accept/Decline buttons are the same elements, still
               wired to enquiryAPI.accept / enquiryAPI.reject. */}
-          <div className="order-1 space-y-3.5 lg:col-start-1 lg:row-start-2">
-            <RequestIdCard enquiryNumber={enquiry.enquiry_number} />
+          <div className="order-1 space-y-3 lg:col-start-1 lg:row-start-2">
 
             {/* ── Quote ACCEPTED — read-only confirmation, replaces the quote
                 card and the buttons the moment the backend reports the
@@ -1368,42 +1429,203 @@ export default function EnquiryConfirmation() {
               </div>
             )}
 
-            {/* Section label — kept to a single line so it costs no vertical
-                space but names what the customer is looking at. */}
-            <div className="flex items-center justify-between gap-3 pt-1">
-              <h2 className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.18em] text-[#172B4D]">
-                {searching ? (
-                  <Radio className="btb-accent-pulse h-3.5 w-3.5 rounded-full text-[#F5A623]" aria-hidden="true" />
-                ) : (
-                  <Check className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" />
-                )}
-                {searching ? 'Finding your truck' : stage.headline}
-              </h2>
-              <p className="truncate text-[11.5px] font-medium text-slate-500">{stage.detail}</p>
-            </div>
-
             <RouteMapExperience
+              ref={mapRef}
               route={enquiry.route}
               stage={stage}
               searching={searching}
               connected={connected}
               assignedLabel={assignedLabel}
+              mode={isQuoteAccepted ? 'CONFIRMED_ROUTE' : 'PICKUP_SEARCH'}
             />
+
+            {/* Vehicle Search Status Card */}
+            <div className="mt-3 overflow-hidden rounded-2xl border border-[#F5A623]/20 bg-[#F5A623]/[0.06] p-4 shadow-sm">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#F5A623]/20">
+                  <Radio className="h-5 w-5 text-[#F5A623]" aria-hidden="true" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <h3 className="text-base font-bold text-[#172B4D]">
+                        Finding the right truck for you
+                      </h3>
+                      <p className="mt-0.5 text-sm leading-relaxed text-slate-600">
+                        We're checking suitable transport options near your pickup location.
+                      </p>
+                    </div>
+                    {enquiry.route?.distance_km != null && (
+                      <span className="text-xs font-medium text-[#172B4D]/70 whitespace-nowrap">
+                        {formatKm(enquiry.route.distance_km)}
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (mapRef.current) {
+                        mapRef.current.fitMapBounds();
+                      }
+                    }}
+                    className="mt-2 text-xs font-medium text-[#F5A623] hover:text-[#F5A623]/80"
+                  >
+                    View Full Route
+                  </button>
+                </div>
+              </div>
+              <div className="mt-3 h-1 w-full overflow-hidden rounded-full bg-[#F5A623]/10">
+                <div className="h-full w-full animate-pulse rounded-full bg-[#F5A623]" style={{
+                  animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite'
+                }} />
+              </div>
+            </div>
           </div>
 
-          {/* ── 2. THE SUPPORT CARD + LIVE STATUS ──
-              Mobile: after the commercial column. Desktop: this is the whole
-              right-hand column, so the page reads as two balanced halves
-              instead of a very tall left column beside a short, empty one.
+          {/* ── 2. RIGHT COLUMN ── */}
+          <div className="order-2 space-y-3 lg:col-start-2 lg:row-start-2 lg:row-span-2 lg:self-start">
+            {/* Bihar Transport Customer Care Card */}
+            <section className="overflow-hidden rounded-2xl border border-[#172B4D]/10 bg-white p-4 shadow-sm sm:p-5">
+              <div className="flex items-center gap-2">
+                <Headset className="h-4 w-4 text-[#172B4D]" aria-hidden="true" />
+                <h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-[#172B4D]">
+                  BIHAR TRANSPORT SUPPORT
+                </h3>
+              </div>
+              <div className="mt-3 flex items-center gap-2">
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  Available now
+                </span>
+              </div>
+              <div className="mt-3 flex items-center gap-3">
+                <div className="relative">
+                  <div className="h-14 w-14 rounded-full bg-gradient-to-br from-emerald-100 to-emerald-50 p-0.5">
+                    <img
+                      src="/assets/customer-care.png"
+                      alt="Bihar Transport Customer Care"
+                      className="h-full w-full rounded-full object-cover object-center"
+                    />
+                  </div>
+                  <div className="absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full bg-emerald-500 ring-2 ring-white" />
+                </div>
+                <div className="min-w-0">
+                  <h4 className="text-base font-semibold text-[#172B4D]">
+                    Bihar Transport Customer Care
+                  </h4>
+                  <p className="text-sm text-[#F5A623]">Customer Care Executive</p>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    Mon – Sat, 8:00 AM – 8:00 PM
+                  </p>
+                </div>
+              </div>
+              <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                <a
+                  href="https://wa.me/918210931799"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#25D366] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#1EBE5A]"
+                >
+                  <MessageCircle className="h-4 w-4" aria-hidden="true" />
+                  WhatsApp
+                </a>
+                <a
+                  href="tel:+918210931799"
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#172B4D]/20 bg-white px-4 py-2.5 text-sm font-semibold text-[#172B4D] transition hover:bg-[#172B4D]/5"
+                >
+                  <Phone className="h-4 w-4" aria-hidden="true" />
+                  Call Customer Care
+                </a>
+              </div>
+            </section>
 
-              The vehicle/driver card that used to sit here has MOVED up into the
-              left column, directly beneath the final quote. It was not copied —
-              there is exactly one assignment card on the page, rendering from the
-              same `enquiry.assignment` object. */}
-          <div className="order-2 space-y-5 lg:col-start-2 lg:row-start-2 lg:row-span-2 lg:self-start">
-            <SupportCard enquiryNumber={enquiry.enquiry_number} />
+            {/* Request Progress Card */}
+            <section className="overflow-hidden rounded-2xl border border-[#172B4D]/10 bg-white p-4 shadow-sm sm:p-5">
+              <h3 className="text-sm font-semibold text-[#172B4D]">Request Progress</h3>
+              <div className="mt-4 flex flex-col gap-3">
+                {/* Step 1 */}
+                <div className="flex items-start gap-3">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-100">
+                    <Check className="h-4 w-4 text-emerald-600" aria-hidden="true" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-[#172B4D]">Request Received</p>
+                    <p className="text-xs text-slate-500">Your enquiry has been submitted</p>
+                  </div>
+                </div>
+                <div className="ml-4 h-6 border-l-2 border-dashed border-slate-200" />
+                {/* Step 2 */}
+                <div className="flex items-start gap-3">
+                  <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
+                    [ENQUIRY_STATUS.CONFIRMED, ENQUIRY_STATUS.CUSTOMER_ACCEPTED, ENQUIRY_STATUS.IN_PROGRESS, ENQUIRY_STATUS.COMPLETED].includes(status)
+                      ? 'bg-emerald-100'
+                      : 'bg-[#F5A623]/20'
+                  }`}>
+                    {[ENQUIRY_STATUS.CONFIRMED, ENQUIRY_STATUS.CUSTOMER_ACCEPTED, ENQUIRY_STATUS.IN_PROGRESS, ENQUIRY_STATUS.COMPLETED].includes(status) ? (
+                      <Check className="h-4 w-4 text-emerald-600" aria-hidden="true" />
+                    ) : (
+                      <Clock className="h-4 w-4 text-[#F5A623]" aria-hidden="true" />
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-[#172B4D]">Finding Your Transport</p>
+                    <p className="text-xs text-slate-500">Searching for suitable vehicle</p>
+                  </div>
+                </div>
+                <div className="ml-4 h-6 border-l-2 border-dashed border-slate-200" />
+                {/* Step 3 */}
+                <div className="flex items-start gap-3">
+                  <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
+                    [ENQUIRY_STATUS.CONFIRMED, ENQUIRY_STATUS.COMPLETED].includes(status)
+                      ? 'bg-emerald-100'
+                      : 'bg-slate-100'
+                  }`}>
+                    {[ENQUIRY_STATUS.CONFIRMED, ENQUIRY_STATUS.COMPLETED].includes(status) ? (
+                      <Check className="h-4 w-4 text-emerald-600" aria-hidden="true" />
+                    ) : (
+                      <CheckCircle2 className="h-4 w-4 text-slate-400" aria-hidden="true" />
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-[#172B4D]">Transport Confirmed</p>
+                    <p className="text-xs text-slate-500">
+                      {[ENQUIRY_STATUS.CONFIRMED, ENQUIRY_STATUS.COMPLETED].includes(status)
+                        ? 'Vehicle and driver assigned'
+                        : 'Awaiting confirmation'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </section>
 
-            <EnquiryStatusSteps status={status} connected={connected} />
+            {/* Live Updates Card */}
+            {enquiry.events?.length > 0 && (
+              <section className="overflow-hidden rounded-2xl border border-[#172B4D]/10 bg-white p-4 shadow-sm sm:p-5">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-[#172B4D]">Live Updates</h3>
+                  {enquiry.events.length > 4 && (
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/track/${encodeURIComponent(enquiry.enquiry_number)}`)}
+                      className="text-xs font-medium text-[#F5A623] hover:text-[#F5A623]/80"
+                    >
+                      View All
+                    </button>
+                  )}
+                </div>
+                <ul className="mt-3 space-y-3">
+                  {enquiry.events.slice(0, 4).map((ev) => (
+                    <li key={ev.id} className="flex gap-2.5">
+                      <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[#F5A623]" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm text-[#172B4D]">{ev.message}</p>
+                        <p className="text-[11px] text-slate-400">{formatTimestamp(ev.created_at)}</p>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
           </div>
 
           {/* ── 3. Request details, request timeline + actions ──
@@ -1527,32 +1749,6 @@ export default function EnquiryConfirmation() {
               </div>
             </section>
 
-            {/* ── Recent activity, straight from the audit trail ──
-                MOVED BELOW Request Details to match the customer's reading
-                order. It is history, not information they came for. */}
-            {enquiry.events?.length > 0 && (
-              <details className="group overflow-hidden rounded-2xl border border-[#172B4D]/10 bg-white shadow-[0_1px_2px_rgba(23,43,77,0.04)]">
-                <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3.5 text-sm font-semibold text-[#172B4D]">
-                  <Sparkles className="h-4 w-4 text-[#F5A623]" aria-hidden="true" />
-                  Request timeline
-                  <ChevronRight
-                    className="ml-auto h-4 w-4 text-slate-400 transition-transform group-open:rotate-90"
-                    aria-hidden="true"
-                  />
-                </summary>
-                <ul className="space-y-3 border-t border-slate-100 px-4 py-4">
-                  {enquiry.events.slice(0, 10).map((ev) => (
-                    <li key={ev.id} className="flex gap-2.5">
-                      <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[#F5A623]" />
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm text-[#172B4D]">{ev.message}</p>
-                        <p className="text-[11px] text-slate-400">{formatTimestamp(ev.created_at)}</p>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            )}
 
             {/* ══ SECONDARY ACTIONS ════════════════════════════════════ */}
             <section className="border-t border-[#172B4D]/10 pt-5">

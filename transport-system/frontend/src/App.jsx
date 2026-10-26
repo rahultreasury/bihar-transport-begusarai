@@ -39,6 +39,7 @@ const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 // the legacy booking screens the Order pages link out to.
 const AdminOrders = lazy(() => import('./pages/AdminOrders'));
 const AdminOrderMaster = lazy(() => import('./pages/AdminOrderMaster'));
+const AdminLifecycleDetail = lazy(() => import('./pages/AdminLifecycleDetail'));
 const AdminBookings = lazy(() => import('./pages/AdminBookings'));
 const AdminBookingDetail = lazy(() => import('./pages/AdminBookingDetail'));
 const AdminAssignDriver = lazy(() => import('./pages/AdminAssignDriver'));
@@ -88,6 +89,14 @@ const AdminEnquiryWorkspace = lazy(() => import('./pages/AdminEnquiryWorkspace')
 function LegacyEnquiryRedirect() {
   const { id } = useParams();
   return <Navigate to={`/admin/enquiries/${id}`} replace />;
+}
+
+/**
+ * Legacy bookings detail redirect: /admin/enquiries-bookings/:bookingNumber → /admin/bookings/:bookingNumber
+ */
+function LegacyEnquiryBookingsRedirect() {
+  const { bookingNumber } = useParams();
+  return <Navigate to={`/admin/bookings/${bookingNumber}`} replace />;
 }
 
 // Auth pages
@@ -344,8 +353,8 @@ function AppContent() {
           path="/admin/enquiries-bookings/:bookingNumber"
           element={
             <ProtectedRoute>
-              <Suspense fallback={<PageLoader label="Loading enquiry..." />}>
-                <AdminEnquiryDetail />
+              <Suspense fallback={<PageLoader label="Loading order..." />}>
+                <AdminOrderMaster />
               </Suspense>
             </ProtectedRoute>
           }
@@ -395,6 +404,62 @@ function AppContent() {
           element={
             <ProtectedRoute>
               <Suspense fallback={<PageLoader label="Loading orders..." />}><AdminOrders /></Suspense>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/bookings/overview"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading..." />}><AdminLifecycleDetail /></Suspense>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/bookings/active-trips"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading..." />}><AdminLifecycleDetail /></Suspense>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/bookings/vehicle-pending"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading..." />}><AdminLifecycleDetail /></Suspense>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/bookings/in-transit"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading..." />}><AdminLifecycleDetail /></Suspense>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/bookings/delivered"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading..." />}><AdminLifecycleDetail /></Suspense>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/bookings/pod-pending"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading..." />}><AdminLifecycleDetail /></Suspense>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/bookings/completed"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading..." />}><AdminLifecycleDetail /></Suspense>
             </ProtectedRoute>
           }
         />
