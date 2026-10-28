@@ -61,16 +61,24 @@ test(`ADMIN VEHICLES — no declared column is missing from production (baseline
     'prisma.transportVehicle query (GET /api/admin/vehicles) fails with P2022'
   );
 
-  // The exact regression: these six came from an un-deployed Vehicle Hire
-  // migration and took /admin/vehicles down.
+  // The historical regression: these six (plus Enquiry.quotation_id further
+  // down) came from migrations that were UN-DEPLOYED at the time and took
+  // /admin/vehicles down. Those migrations are now COMMITTED to git
+  // (20260930120000_vehicle_hire_rate_basis_and_documents), which is exactly
+  // what `migrate deploy` applies to production — so declaring them is safe
+  // and the ban is converted from "never declare" to an evidence check:
+  // each of them must be created by a committed migration, or the original
+  // P2022 /admin 500 is back.
   for (const gone of [
     'tax_number', 'tax_expiry',
     'fitness_number', 'fitness_expiry',
     'national_permit_number', 'national_permit_expiry',
   ]) {
     assert.ok(
-      !columns.includes(gone),
-      `${gone} is created only by the un-deployed Vehicle Hire migration and must not be declared`
+      columns.includes(gone) && isBackedByMigration(gone),
+      `${gone} is declared by schema.prisma and MUST keep its committed migration ` +
+      `(20260930120000_vehicle_hire_rate_basis_and_documents) — lose that migration ` +
+      `and production 500s on /admin/vehicles again (P2022)`
     );
   }
 });
@@ -106,10 +114,16 @@ test(`ADMIN ENQUIRIES — no declared column is missing from production (baselin
     'query (GET /api/admin/enquiries) fails with P2022'
   );
 
-  // The exact regression: this came from the un-deployed Quotation migration.
+  // The exact regression path: quotation_id arrived with the phase B
+  // quotation migration. That migration is now COMMITTED to git
+  // (20260930000000_phase_b_quotation_module — the file HEAD will deploy), so
+  // the stale "must not be declared" ban became an evidence check: the column
+  // may stay declared only while its committed migration stays committed.
   assert.ok(
-    !columns.includes('quotation_id'),
-    'quotation_id is created only by the un-deployed phase_b quotation migration and must not be declared'
+    columns.includes('quotation_id') && isBackedByMigration('quotation_id'),
+    'quotation_id is declared by schema.prisma and MUST keep its committed migration ' +
+    '(20260930000000_phase_b_quotation_module) — lose it and GET /api/admin/enquiries ' +
+    '500s again (P2022)'
   );
 });
 

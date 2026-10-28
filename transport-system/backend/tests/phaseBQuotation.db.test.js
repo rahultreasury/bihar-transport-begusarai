@@ -115,11 +115,11 @@ after(async () => {
   if (!dbAvailable) return;
   // Clean up in FK-safe order. The quotation cascades from the enquiry.
   for (const id of createdBookingIds) {
-    await prisma.bookingQuotationSnapshot.deleteMany({ where: { booking_id: id } }).catch(() => {});
+    await prisma.booking_quotation_snapshots.deleteMany({ where: { booking_id: id } }).catch(() => {});
     await prisma.booking.deleteMany({ where: { booking_id: id } }).catch(() => {});
   }
   for (const id of createdEnquiryIds) {
-    await prisma.quotation.deleteMany({ where: { enquiry_id: id } }).catch(() => {});
+    await prisma.quotations.deleteMany({ where: { enquiry_id: id } }).catch(() => {});
     await prisma.enquiryEvent.deleteMany({ where: { enquiry_id: id } }).catch(() => {});
     await prisma.enquiry.updateMany({ where: { enquiry_id: id }, data: { booking_id: null } }).catch(() => {});
     await prisma.enquiry.deleteMany({ where: { enquiry_id: id } }).catch(() => {});
@@ -180,7 +180,7 @@ describe('Phase B — quotation create / save / update / validation', () => {
     assert.equal(second.quotation_id, first.quotation_id, 'same quotation row, updated in place');
     assert.equal(second.freight, 8000);
 
-    const all = await prisma.quotation.count({ where: { enquiry_id: enquiry.enquiry_id } });
+    const all = await prisma.quotations.count({ where: { enquiry_id: enquiry.enquiry_id } });
     assert.equal(all, 1, 'exactly one quotation for the enquiry');
   });
 
@@ -190,14 +190,17 @@ describe('Phase B — quotation create / save / update / validation', () => {
     await qService.saveQuotation(enquiry.enquiry_id, clientExamplePayload(), { adminId: admin.admin_id });
 
     // Attempt the duplicate directly, bypassing the service entirely.
+    // Must provide all required fields to hit the UNIQUE(enquiry_id) constraint.
     await assert.rejects(
       () =>
-        prisma.quotation.create({
+        prisma.quotations.create({
           data: {
             enquiry_id: enquiry.enquiry_id,
             quotation_number: `QT-DUP-${Date.now()}`,
             freight: 100,
             total_freight: 100,
+            updated_at: new Date(),
+            status: 'DRAFT',
           },
         }),
       'PostgreSQL must reject a duplicate quotation for one enquiry',
@@ -300,7 +303,7 @@ describe('Phase B — freight, GST, additional charges and totals', () => {
     const enquiry = await makeEnquiry();
     const q = await qService.saveQuotation(enquiry.enquiry_id, clientExamplePayload(), { adminId: admin.admin_id });
 
-    const charge = q.charges[0];
+    const charge = q.quotation_charges[0];
     assert.equal(charge.charges_name, 'Detention');
     assert.equal(charge.rate, 1500);
     assert.equal(charge.quantity, 2);
@@ -323,7 +326,7 @@ describe('Phase B — freight, GST, additional charges and totals', () => {
       { adminId: admin.admin_id },
     );
 
-    assert.equal(q.charges.length, 3);
+    assert.equal(q.quotation_charges.length, 3);
     assert.equal(q.total_additional_charges, 3000 + 450 + 450, '3000 + 450 + 450');
   });
 
@@ -344,7 +347,7 @@ describe('Phase B — freight, GST, additional charges and totals', () => {
       }),
       { adminId: admin.admin_id },
     );
-    assert.equal(q.charges[0].total, 3000, 'server recomputes, ignoring the posted total');
+    assert.equal(q.quotation_charges[0].total, 3000, 'server recomputes, ignoring the posted total');
   });
 
   test('10. total billing amount = freight + charges + charge tax', async (t) => {
@@ -396,9 +399,9 @@ describe('Phase B — payment schedules', () => {
     );
 
     assert.equal(q.payment_schedule_type, 'FULL_PAYMENT_IN_ADVANCE');
-    assert.equal(q.milestones.length, 1);
-    assert.equal(q.milestones[0].due_point, 'Full Payment in Advance');
-    assert.equal(q.milestones[0].computed_amount, q.total_billing_amount);
+    assert.equal(q.quotation_milestones.length, 1);
+    assert.equal(q.quotation_milestones[0].due_point, 'Full Payment in Advance');
+    assert.equal(q.quotation_milestones[0].computed_amount, q.total_billing_amount);
     assert.equal(q.schedule_remaining, 0);
   });
 
@@ -439,7 +442,7 @@ describe('Phase B — payment schedules', () => {
       { adminId: admin.admin_id },
     );
 
-    const byPoint = Object.fromEntries(q.milestones.map((m) => [m.due_point, m]));
+    const byPoint = Object.fromEntries(q.quotation_milestones.map((m) => [m.due_point, m]));
     assert.equal(byPoint['Booking Amount'].computed_amount, 2000);
     // 80% of 6000 = 4800 target; booking already took 2000, so only 2800 more.
     assert.equal(
@@ -465,7 +468,7 @@ describe('Phase B — payment schedules', () => {
       { adminId: admin.admin_id },
     );
 
-    const byPoint = Object.fromEntries(q.milestones.map((m) => [m.due_point, m]));
+    const byPoint = Object.fromEntries(q.quotation_milestones.map((m) => [m.due_point, m]));
     // Freight advance target is 80% of 6000 = 4800; the extra 3000 detention is
     // therefore part of what remains payable at unloading.
     assert.equal(byPoint['Advance After Loading'].computed_amount, 2800);
@@ -505,11 +508,11 @@ describe('Phase B — payment schedules', () => {
       { adminId: admin.admin_id },
     );
 
-    assert.equal(q.milestones.length, 2);
-    assert.equal(q.milestones[0].computed_amount, 2000);
-    assert.equal(q.milestones[0].remaining_balance, 7000, '9000 − 2000');
-    assert.equal(q.milestones[1].computed_amount, 7000);
-    assert.equal(q.milestones[1].remaining_balance, 0);
+    assert.equal(q.quotation_milestones.length, 2);
+    assert.equal(q.quotation_milestones[0].computed_amount, 2000);
+    assert.equal(q.quotation_milestones[0].remaining_balance, 7000, '9000 − 2000');
+    assert.equal(q.quotation_milestones[1].computed_amount, 7000);
+    assert.equal(q.quotation_milestones[1].remaining_balance, 0);
     assert.equal(q.schedule_total, 9000);
   });
 
@@ -528,9 +531,9 @@ describe('Phase B — payment schedules', () => {
       { adminId: admin.admin_id },
     );
 
-    assert.equal(q.milestones[0].computed_amount, 5400, '60% of 9000');
-    assert.equal(q.milestones[0].remaining_balance, 3600);
-    assert.equal(q.milestones[1].computed_amount, 3600);
+    assert.equal(q.quotation_milestones[0].computed_amount, 5400, '60% of 9000');
+    assert.equal(q.quotation_milestones[0].remaining_balance, 3600);
+    assert.equal(q.quotation_milestones[1].computed_amount, 3600);
     assert.equal(q.schedule_total, 9000);
     assert.equal(q.schedule_remaining, 0);
   });
@@ -550,8 +553,8 @@ describe('Phase B — payment schedules', () => {
       { adminId: admin.admin_id },
     );
 
-    assert.equal(q.milestones[0].computed_amount, 2000);
-    assert.equal(q.milestones[1].computed_amount, 4500, '50% of 9000');
+    assert.equal(q.quotation_milestones[0].computed_amount, 2000);
+    assert.equal(q.quotation_milestones[1].computed_amount, 4500, '50% of 9000');
     assert.equal(q.schedule_remaining, 2500);
   });
 
@@ -572,7 +575,7 @@ describe('Phase B — payment schedules', () => {
     );
 
     assert.deepEqual(
-      q.milestones.map((m) => m.remaining_balance),
+      q.quotation_milestones.map((m) => m.remaining_balance),
       [8000, 7000, 6000],
       'running remaining balance',
     );
@@ -663,9 +666,9 @@ describe('Phase B — send quotation and download PDF', () => {
     const fresh = await prisma.enquiry.findUnique({ where: { enquiry_id: enquiry.enquiry_id } });
     assert.equal(fresh.booking_id, null, 'NO order exists merely because a quote was sent');
 
-    const bookings = await prisma.booking.count({ where: { bookings: undefined } });
+    const bookings = await prisma.booking.count();
     assert.equal(bookings >= 0, true);
-    assert.equal(await prisma.quotation.count({ where: { enquiry_id: enquiry.enquiry_id } }), 1);
+    assert.equal(await prisma.quotations.count({ where: { enquiry_id: enquiry.enquiry_id } }), 1);
   });
 
   test('22b. repeated send is idempotent (no error, no second send)', async (t) => {
@@ -804,7 +807,7 @@ describe('Phase B — confirm order, idempotency and linkage', () => {
     const result = await qService.confirmOrder(enquiry.enquiry_id, { admin: { adminId: admin.admin_id } });
     createdBookingIds.push(result.booking.booking_id);
 
-    const snapshot = await prisma.bookingQuotationSnapshot.findUnique({
+    const snapshot = await prisma.booking_quotation_snapshots.findUnique({
       where: { booking_id: result.booking.booking_id },
     });
     assert.ok(snapshot, 'snapshot written to the booking');
@@ -984,7 +987,7 @@ describe('Phase B — financial separation', () => {
     const enquiry = await makeEnquiry();
     const q = await qService.saveQuotation(enquiry.enquiry_id, clientExamplePayload(), { adminId: admin.admin_id });
 
-    const snapshots = await prisma.bookingQuotationSnapshot.count({ where: { quotation_id: q.quotation_id } });
+    const snapshots = await prisma.booking_quotation_snapshots.count({ where: { quotation_id: q.quotation_id } });
     assert.equal(snapshots, 0, 'no booking exists yet, so no snapshot');
   });
 });

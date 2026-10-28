@@ -74,6 +74,54 @@ function readTripId(req, res) {
   return tripId;
 }
 
+/**
+ * Convert the authenticated req.user (from JWT) into the principal format
+ * expected by TripDeliveryService.getDelivery and similar methods.
+ * 
+ * The service expects principal with:
+ * - {kind: 'admin', role} for admin/super_admin/operator
+ * - {kind: 'customer', userId} for customer role
+ * - {kind: 'driver', driverId} for driver role (resolved from user_id)
+ * - {kind: 'partner', partnerId} for partner role
+ * - {kind: 'owner', ownerId} for partner/owner role
+ * 
+ * This function resolves the actual profile (driver/partner) from the database
+ * rather than relying solely on the role field, since the role field may not
+ * accurately reflect the user's current profile.
+ */
+async function buildPrincipal(user) {
+  if (!user) {
+    throw new ForbiddenError({ message: 'Authentication required' });
+  }
+
+  // Admin users have kind='admin' and role
+  if (user.kind === 'admin' || user.role === 'admin' || user.role === 'super_admin' || user.role === 'operator') {
+    return { kind: 'admin', role: user.role || 'admin' };
+  }
+
+  // For regular users, resolve their actual profile from the database
+  // Check for driver profile first (most specific)
+  const driver = await prisma.driver.findFirst({
+    where: { user_id: user.user_id },
+    select: { driver_id: true }
+  });
+  if (driver) {
+    return { kind: 'driver', driverId: driver.driver_id };
+  }
+
+  // Check for partner profile via PartnerApplication
+  const partnerApp = await prisma.partnerApplication.findFirst({
+    where: { user_id: user.user_id, status: 'approved' },
+    select: { partner_id: true }
+  });
+  if (partnerApp) {
+    return { kind: 'partner', partnerId: partnerApp.partner_id };
+  }
+
+  // Default to customer
+  return { kind: 'customer', userId: user.user_id };
+}
+
 // ============================
 // TRIP CRUD
 // ============================
@@ -192,7 +240,7 @@ router.get('/:id/payments', protect, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid trip ID' });
     }
 
-    const payments = await tripService.getTripPayments(tripId);
+    const payments = await tripService.getTripPayments(tripId, req.user);
     res.json({
       success: true,
       data: payments,
@@ -242,6 +290,7 @@ router.post('/:id/payments', protect, adminOnly, async (req, res) => {
 /**
  * GET /api/trips/client/:clientId
  * Get trips by client ID.
+ * Authorization: Customer can only see their own trips. Admin can see all.
  */
 router.get('/client/:clientId', protect, async (req, res) => {
   try {
@@ -250,7 +299,7 @@ router.get('/client/:clientId', protect, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid client ID' });
     }
 
-    const result = await tripService.getTripsByClientId(clientId, req.query);
+    const result = await tripService.getTripsByClientId(clientId, req.query, req.user);
     res.json({
       success: true,
       data: result.trips,
@@ -258,6 +307,12 @@ router.get('/client/:clientId', protect, async (req, res) => {
     });
   } catch (error) {
     console.error('Get client trips error:', error);
+    if (error instanceof ForbiddenError) {
+      return res.status(403).json({ success: false, message: error.message });
+    }
+    if (error instanceof NotFoundError) {
+      return res.status(404).json({ success: false, message: error.message });
+    }
     res.status(500).json({ success: false, message: error.message || 'Server error' });
   }
 });
@@ -265,6 +320,7 @@ router.get('/client/:clientId', protect, async (req, res) => {
 /**
  * GET /api/trips/driver/:driverId
  * Get trips by driver ID.
+ * Authorization: Driver can only see their own trips. Admin can see all.
  */
 router.get('/driver/:driverId', protect, async (req, res) => {
   try {
@@ -273,7 +329,7 @@ router.get('/driver/:driverId', protect, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid driver ID' });
     }
 
-    const result = await tripService.getTripsByDriverId(driverId, req.query);
+    const result = await tripService.getTripsByDriverId(driverId, req.query, req.user);
     res.json({
       success: true,
       data: result.trips,
@@ -281,6 +337,12 @@ router.get('/driver/:driverId', protect, async (req, res) => {
     });
   } catch (error) {
     console.error('Get driver trips error:', error);
+    if (error instanceof ForbiddenError) {
+      return res.status(403).json({ success: false, message: error.message });
+    }
+    if (error instanceof NotFoundError) {
+      return res.status(404).json({ success: false, message: error.message });
+    }
     res.status(500).json({ success: false, message: error.message || 'Server error' });
   }
 });
@@ -288,6 +350,7 @@ router.get('/driver/:driverId', protect, async (req, res) => {
 /**
  * GET /api/trips/vehicle/:vehicleId
  * Get trips by vehicle ID.
+ * Authorization: Partner can only see trips for their vehicles. Admin can see all.
  */
 router.get('/vehicle/:vehicleId', protect, async (req, res) => {
   try {
@@ -296,7 +359,7 @@ router.get('/vehicle/:vehicleId', protect, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid vehicle ID' });
     }
 
-    const result = await tripService.getTripsByVehicleId(vehicleId, req.query);
+    const result = await tripService.getTripsByVehicleId(vehicleId, req.query, req.user);
     res.json({
       success: true,
       data: result.trips,
@@ -304,6 +367,12 @@ router.get('/vehicle/:vehicleId', protect, async (req, res) => {
     });
   } catch (error) {
     console.error('Get vehicle trips error:', error);
+    if (error instanceof ForbiddenError) {
+      return res.status(403).json({ success: false, message: error.message });
+    }
+    if (error instanceof NotFoundError) {
+      return res.status(404).json({ success: false, message: error.message });
+    }
     res.status(500).json({ success: false, message: error.message || 'Server error' });
   }
 });
@@ -311,6 +380,7 @@ router.get('/vehicle/:vehicleId', protect, async (req, res) => {
 /**
  * GET /api/trips/owner/:ownerId
  * Get trips by transport owner ID.
+ * Authorization: Partner can only see trips for their linked owner. Admin can see all.
  */
 router.get('/owner/:ownerId', protect, async (req, res) => {
   try {
@@ -319,7 +389,7 @@ router.get('/owner/:ownerId', protect, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid owner ID' });
     }
 
-    const result = await tripService.getTripsByOwnerId(ownerId, req.query);
+    const result = await tripService.getTripsByOwnerId(ownerId, req.query, req.user);
     res.json({
       success: true,
       data: result.trips,
@@ -327,6 +397,12 @@ router.get('/owner/:ownerId', protect, async (req, res) => {
     });
   } catch (error) {
     console.error('Get owner trips error:', error);
+    if (error instanceof ForbiddenError) {
+      return res.status(403).json({ success: false, message: error.message });
+    }
+    if (error instanceof NotFoundError) {
+      return res.status(404).json({ success: false, message: error.message });
+    }
     res.status(500).json({ success: false, message: error.message || 'Server error' });
   }
 });
@@ -345,6 +421,9 @@ router.get('/:id/timeline', protect, async (req, res) => {
     if (isNaN(tripId)) {
       return res.status(400).json({ success: false, message: 'Invalid trip ID' });
     }
+
+    // Check authorization
+    await tripService.getTripById(tripId, req.user);
 
     const timeline = await timelineService.getTripTimeline(tripId);
     res.json({
@@ -371,6 +450,10 @@ router.get('/:id/financial-summary', protect, async (req, res) => {
     if (isNaN(tripId)) {
       return res.status(400).json({ success: false, message: 'Invalid trip ID' });
     }
+
+    // Check authorization
+    const trip = await tripService.getTripById(tripId, req.user);
+    // If we get here, authorization passed (getTripById throws ForbiddenError if not authorized)
 
     const financials = await financialService.calculateTripFinancials(tripId);
     res.json({
@@ -427,6 +510,21 @@ router.get('/:id/workflow', protect, adminOnly, async (req, res) => {
 });
 
 // --- Loading ---------------------------------------------------------------
+
+/**
+ * GET /api/trips/:id/loading
+ * Get the full loading workspace payload for a trip.
+ */
+router.get('/:id/loading', protect, adminOnly, async (req, res) => {
+  const tripId = readTripId(req, res);
+  if (tripId === null) return;
+  try {
+    const workspace = await operationalService.getLoadingWorkspace(tripId);
+    res.json({ success: true, data: workspace });
+  } catch (error) {
+    sendOperationalError(res, error, 'Get loading workspace error:');
+  }
+});
 
 /**
  * POST /api/trips/:id/loading/send
@@ -837,14 +935,60 @@ router.get('/:id/completion/readiness', protect, adminOnly, async (req, res) => 
 });
 
 /**
- * GET /api/trips/:id/delivery
- * Get delivery details including POD status.
+ * GET /api/trips/:id/pod
+ * Get proof of delivery details for a trip.
+ * Reuses the delivery service's getDelivery method which returns POD data.
  */
-router.get('/:id/delivery', protect, adminOnly, async (req, res) => {
+router.get('/:id/pod', protect, async (req, res) => {
   const tripId = readTripId(req, res);
   if (tripId === null) return;
   try {
-    const delivery = await deliveryService.getDelivery(tripId, req.user);
+    const principal = await buildPrincipal(req.user);
+    const delivery = await deliveryService.getDelivery(tripId, principal);
+    res.json({ success: true, data: delivery });
+  } catch (error) {
+    sendOperationalError(res, error, 'Get POD error:');
+  }
+});
+
+/**
+ * GET /api/trips/:id/completion
+ * Get completion summary for a trip.
+ * Reuses the delivery service's getCompletionReadiness method.
+ */
+router.get('/:id/completion', protect, async (req, res) => {
+  const tripId = readTripId(req, res);
+  if (tripId === null) return;
+  try {
+    const readiness = await deliveryService.getCompletionReadiness(tripId);
+    const trip = await deliveryService['_loadTrip'](tripId);
+    res.json({
+      success: true,
+      data: {
+        trip_id: trip.trip_id,
+        trip_number: trip.trip_number,
+        status: trip.status,
+        completed_at: trip.completed_at,
+        ready: readiness.ready,
+        blockers: readiness.blockers,
+        pod_required: trip.pod_required !== false,
+      },
+    });
+  } catch (error) {
+    sendOperationalError(res, error, 'Get completion error:');
+  }
+});
+
+/**
+ * GET /api/trips/:id/delivery
+ * Get delivery details including POD status.
+ */
+router.get('/:id/delivery', protect, async (req, res) => {
+  const tripId = readTripId(req, res);
+  if (tripId === null) return;
+  try {
+    const principal = await buildPrincipal(req.user);
+    const delivery = await deliveryService.getDelivery(tripId, principal);
     res.json({ success: true, data: delivery });
   } catch (error) {
     sendOperationalError(res, error, 'Get delivery error:');

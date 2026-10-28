@@ -15,12 +15,14 @@ const ReservationRepository = require('../repositories/ReservationRepository');
 const InvoiceRepository = require('../repositories/InvoiceRepository');
 const { logger } = require('../utils/logger');
 const TripFinancialService = require('./TripFinancialService');
+const TripProvisioningService = require('./TripProvisioningService');
 const ResourceAvailabilityService = require('./ResourceAvailabilityService');
 const BookingNotificationService = require('./BookingNotificationService');
 const { prisma } = require('../config/prisma');
 const { AppError, ValidationError, NotFoundError } = require('../utils/AppError');
 const { buildBookingNumber } = require('./BookingNumberService');
 const { validateTransition, isTerminal, canCancel, canConfirm, canSendQuote, canReject, canAssignDriver, canStartPickup, toDeliveryStatus } = require('../utils/BookingStateMachine');
+const { getCustomerCare, buildWhatsAppLink, buildCallLink } = require('../config/customerCare');
 
 /**
  * booking_events.event_payload is a TEXT column holding a JSON string. A row
@@ -56,6 +58,7 @@ class BookingService {
     this.reservationRepo = deps.reservationRepo || new ReservationRepository();
     this.invoiceRepo = deps.invoiceRepo || new InvoiceRepository();
     this.tripFinancialService = deps.tripFinancialService || new TripFinancialService();
+    this.tripProvisioningService = deps.tripProvisioningService || new TripProvisioningService();
     this.resourceAvailabilityService = deps.resourceAvailabilityService || new ResourceAvailabilityService();
     this.notificationService = deps.notificationService || new BookingNotificationService();
   }
@@ -415,7 +418,10 @@ const bookingResult = await prisma.$transaction(async (tx) => {
 
       return { ok: true };
     });
-
+ 
+    // Provision the operational trip for this booking (idempotent).
+    await this.tripProvisioningService.ensureTripForBooking(bookingId);
+ 
     return {
       ok: result.ok,
       status: 'confirmed',
@@ -741,7 +747,12 @@ const bookingResult = await prisma.$transaction(async (tx) => {
 
       return { invoice_number: invoiceNumber };
     });
-
+ 
+    // Provision the operational trip for this booking (idempotent).
+    // This creates the Trip record and links it to the booking, enabling
+    // the Vehicle Hire workflow and operational lifecycle.
+    await this.tripProvisioningService.ensureTripForBooking(bookingId);
+ 
     if (result.alreadyAccepted) {
       return {
         ok: true,
@@ -752,7 +763,7 @@ const bookingResult = await prisma.$transaction(async (tx) => {
         confirmation_source: 'CUSTOMER',
       };
     }
-
+ 
     return {
       ok: true,
       quote_status: 'ACCEPTED',
@@ -1202,14 +1213,15 @@ const bookingResult = await prisma.$transaction(async (tx) => {
           profile_image: booking.driver.profile_image,
           first_name: booking.driver.user?.first_name || null,
           last_name: booking.driver.user?.last_name || null,
-          phone: booking.driver.user?.phone || null,
+          // Phone number intentionally not exposed for public tracking
+          phone: null,
         }
       : null;
 
     const snapshotDriverInfo = isConfirmed && booking.driver_name_snapshot
       ? {
           driver_name: booking.driver_name_snapshot,
-          phone: booking.mobile_snapshot,
+          phone: null, // Do not expose personal driver phone numbers
           vehicle_number: booking.truck_number_snapshot,
           vehicle_type: null,
           owner_name: booking.partner_name_snapshot,
@@ -1224,7 +1236,7 @@ const bookingResult = await prisma.$transaction(async (tx) => {
     const driverQuoteInfo = activeReservation
       ? {
           driver_name: activeReservation.driver?.driver_name || null,
-          driver_phone: activeReservation.driver?.mobile || null,
+          driver_phone: null, // Do not expose personal driver phone numbers
           driver_rating: activeReservation.driver?.rating || null,
           vehicle_number: activeReservation.vehicle?.vehicle_number || activeReservation.driver?.vehicle_number || null,
           vehicle_name: activeReservation.vehicle?.vehicle_name || null,
@@ -1243,6 +1255,7 @@ const bookingResult = await prisma.$transaction(async (tx) => {
     // specific set of fields. Every field they reference MUST be returned
     // here so the tracking page never white-screens due to a missing key.
     // ============================================================
+    const customerCare = getCustomerCare();
     return {
       booking_id: booking.booking_id,
       booking_reference: booking.booking_reference,
@@ -1308,7 +1321,7 @@ const bookingResult = await prisma.$transaction(async (tx) => {
               ? {
                   driver_id: activeReservation.driver.driver_id,
                   driver_name: activeReservation.driver.driver_name,
-                  mobile: activeReservation.driver.mobile,
+                  mobile: null, // Do not expose personal driver phone numbers
                   rating: activeReservation.driver.rating,
                   profile_image: activeReservation.driver.profile_image,
                 }
@@ -1323,6 +1336,17 @@ const bookingResult = await prisma.$transaction(async (tx) => {
               : null,
           }
         : null,
+      // Location data for map
+      pickup_latitude: booking.pickup_latitude != null ? Number(booking.pickup_latitude) : null,
+      pickup_longitude: booking.pickup_longitude != null ? Number(booking.pickup_longitude) : null,
+      drop_latitude: booking.drop_latitude != null ? Number(booking.drop_latitude) : null,
+      drop_longitude: booking.drop_longitude != null ? Number(booking.drop_longitude) : null,
+      // Vehicle current location
+      current_latitude: booking.delivery?.current_latitude != null ? Number(booking.delivery.current_latitude) : null,
+      current_longitude: booking.delivery?.current_longitude != null ? Number(booking.delivery.current_longitude) : null,
+      last_location_update: booking.delivery?.last_location_update || null,
+      // Official support contact
+      support_contact: customerCare,
     };
   }
 
@@ -1647,15 +1671,6 @@ const bookingResult = await prisma.$transaction(async (tx) => {
       select: { trip_id: true, trip_number: true, status: true, trip_date: true },
     });
 
-    // Fallback: if no trip found by booking_id, try to find by booking_number
-    // This handles cases where linkage might be different in production
-    if (!existingTrip && booking.booking_number) {
-      existingTrip = await prisma.trip.findFirst({
-        where: { booking_number: booking.booking_number },
-        orderBy: { trip_id: 'asc' },
-        select: { trip_id: true, trip_number: true, status: true, trip_date: true },
-      });
-    }
 
     // The enquiry this order was created from. Enquiry.booking_id is UNIQUE, so
     // this is the same link EnquiryService.customerAccept wrote — it is read

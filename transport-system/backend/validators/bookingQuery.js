@@ -46,6 +46,21 @@ const QUOTE_STATUSES = [
 
 // Allowed sort fields (must be columns that exist on the Booking model).
 const SORTABLE_FIELDS = ['created_at', 'pickup_date', 'final_price', 'status', 'booking_reference'];
+const LIFECYCLE_STAGES = [
+  'ALL',
+  'ENQUIRY',
+  'QUOTATION',
+  'ORDER_CONFIRMED',
+  'VEHICLE_HIRED',
+  'LOADING',
+  'DISPATCH',
+  'TRANSIT',
+  'DELIVERY',
+  'POD',
+  'COMPLETED',
+  'POD_PENDING',
+  'DELIVERED',
+];
 
 const bookingQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -67,6 +82,7 @@ const bookingQuerySchema = z.object({
   // Admin ENQUIRY queue filter. Comma-separated so a single request can ask for
   // every actionable state (e.g. ?quote_status=PENDING,PREPARING).
   quote_status: z.string().optional().default(''),
+  stage: z.string().optional().default(''),
 }).refine((data) => {
   // Validate quote_status against the allowed set, if provided.
   if (data.quote_status) {
@@ -94,6 +110,16 @@ const bookingQuerySchema = z.object({
   }
   return true;
 }, { message: 'invalid sort_by', path: ['sort_by'] })
+.refine((data) => {
+  // Validate stage against allowed set.
+  if (data.stage && data.stage !== 'ALL') {
+    const stageKey = String(data.stage).toUpperCase();
+    if (!LIFECYCLE_STAGES.includes(stageKey) && !['POD_PENDING', 'DELIVERED'].includes(stageKey)) {
+      return false;
+    }
+  }
+  return true;
+}, { message: 'invalid stage', path: ['stage'] })
 .refine((data) => {
   // price_min <= price_max when both present.
   if (data.price_min !== '' && data.price_max !== '' && data.price_min > data.price_max) {

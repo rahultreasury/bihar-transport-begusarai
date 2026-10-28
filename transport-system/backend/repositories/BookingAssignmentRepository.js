@@ -28,6 +28,10 @@ class BookingAssignmentRepository {
           assignment_status: 'active',
         },
       });
+
+      // Sync to Trip if it exists and is in assignable state
+      await this._syncToTrip(bookingId, { driverId }, client);
+
       return { booking_assignment_id: assignment.booking_assignment_id };
     } catch (err) {
       throw err;
@@ -55,6 +59,10 @@ class BookingAssignmentRepository {
           assignment_status: 'active',
         },
       });
+
+      // Sync to Trip if it exists and is in assignable state
+      await this._syncToTrip(bookingId, { vehicleId }, client);
+
       return { booking_assignment_id: assignment.booking_assignment_id };
     } catch (err) {
       throw err;
@@ -104,6 +112,36 @@ class BookingAssignmentRepository {
     } catch (err) {
       throw err;
     }
+  }
+
+  /**
+   * Sync assignment to Trip if it exists and is in an assignable state.
+   * Uses the same assignable statuses as TripVehicleAssignmentService.
+   * @private
+   */
+  async _syncToTrip(bookingId, { driverId, vehicleId } = {}, client) {
+    if (!driverId && !vehicleId) return;
+
+    // Find the Trip for this booking
+    const trip = await client.trip.findFirst({
+      where: { booking_id: bookingId },
+      select: { trip_id: true, status: true },
+    });
+
+    if (!trip) return; // No Trip exists yet — nothing to sync
+
+    // Only sync if Trip is in an assignable state (mirrors TripVehicleAssignmentService.ASSIGNABLE_TRIP_STATUSES)
+    const assignableStatuses = ['PENDING', 'ASSIGNED', 'TO_LOADING_POINT', 'AT_LOADING_POINT'];
+    if (!assignableStatuses.includes(trip.status)) return;
+
+    const updateData = { updated_at: new Date() };
+    if (driverId) updateData.driver_id = driverId;
+    if (vehicleId) updateData.vehicle_id = vehicleId;
+
+    await client.trip.update({
+      where: { trip_id: trip.trip_id },
+      data: updateData,
+    });
   }
 }
 

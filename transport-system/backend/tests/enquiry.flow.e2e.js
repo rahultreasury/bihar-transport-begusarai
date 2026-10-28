@@ -287,12 +287,18 @@ async function main() {
   check('driver assignment succeeds', afterDriver.assigned_driver_id === driver.driver_id);
   check('status advanced to DRIVER_ASSIGNED', afterDriver.status === 'DRIVER_ASSIGNED');
 
-  // Customer must NOT see the driver before accepting.
+  // Customer can see assigned resources once both vehicle and driver are committed.
   const preAccept = toCustomerEnquiry(
     await enquiryService.loadForCustomer(enquiry.enquiry_id),
     []
   );
-  check('driver details hidden before acceptance', preAccept.assignment === null);
+  check('assignment visible after vehicle+driver assigned', !!preAccept.assignment);
+  check('driver name visible in assignment', preAccept.assignment?.driver_name === 'Raj Kumar');
+  check('vehicle number visible in assignment', preAccept.assignment?.vehicle_number === bigVehicle.vehicle_number);
+  // But driver contact details remain private.
+  const customerJson = JSON.stringify(preAccept);
+  check('driver mobile NOT in customer payload', !customerJson.includes('9000000001'));
+  check('driver alternate_mobile NOT in customer payload', !customerJson.includes('9000000002'));
 
   // ── 6-7. Quote then send ───────────────────────────────────────────────
   section('6-7. Admin quotes, then sends to customer');
@@ -311,10 +317,10 @@ async function main() {
     !draftEvents.some((e) => e.event_type === 'QUOTE_CREATED'));
 
   const sent = await enquiryService.adminSendQuote(enquiry.enquiry_id, ADMIN);
-  check('quote sent → AWAITING_CUSTOMER_ACCEPTANCE', sent.status === 'AWAITING_CUSTOMER_ACCEPTANCE');
-  check('price_status is SENT', sent.price_status === 'SENT');
-  check('quoted_at stamped', !!sent.quoted_at);
-  check('quoted_by_admin_id stamped', sent.quoted_by_admin_id === admin.admin_id);
+  check('quote sent → AWAITING_CUSTOMER_ACCEPTANCE', sent.enquiry.status === 'AWAITING_CUSTOMER_ACCEPTANCE');
+  check('price_status is SENT', sent.enquiry.price_status === 'SENT');
+  check('quoted_at stamped', !!sent.enquiry.quoted_at);
+  check('quoted_by_admin_id stamped', sent.enquiry.quoted_by_admin_id === admin.admin_id);
 
   // ── 8. Customer accepts → Booking created ──────────────────────────────
   section('8. Customer accepts the final quote');
@@ -357,9 +363,9 @@ async function main() {
   check('driver NAME visible', postAccept.assignment?.driver_name === 'Raj Kumar');
   check('vehicle NUMBER visible', postAccept.assignment?.vehicle_number === bigVehicle.vehicle_number);
 
-  const customerJson = JSON.stringify(postAccept);
-  check('driver mobile NOT in customer payload', !customerJson.includes('9000000001'));
-  check('driver alternate_mobile NOT in customer payload', !customerJson.includes('9000000002'));
+  const postAcceptJson = JSON.stringify(postAccept);
+  check('driver mobile NOT in customer payload', !postAcceptJson.includes('9000000001'));
+  check('driver alternate_mobile NOT in customer payload', !postAcceptJson.includes('9000000002'));
   check('customer has a contact route', !!postAccept.contact?.whatsappUrl);
 
   // The DRIVER's own view must not leak the customer or the price.

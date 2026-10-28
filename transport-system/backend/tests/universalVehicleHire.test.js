@@ -139,18 +139,38 @@ function buildWorld(seed = {}) {
         return clone(world.vehicleHire);
       },
     },
-    transportVehicle: {
-      findUnique: async ({ where }) => {
-        const v = [world.vehicle, world.vehicleB].find((x) => x.vehicle_id === where.vehicle_id);
-        return v ? clone(v) : null;
-      },
-    },
-    driver: {
-      findUnique: async ({ where }) => {
-        const d = [world.driver, world.driverB].find((x) => x.driver_id === where.driver_id);
-        return d ? clone(d) : null;
-      },
-    },
+     transportVehicle: {
+       findUnique: async ({ where }) => {
+         const v = [world.vehicle, world.vehicleB].find((x) => x.vehicle_id === where.vehicle_id);
+         return v ? clone(v) : null;
+       },
+       update: async ({ where, data }) => {
+         writes.push({ op: 'transportVehicle.update', data: clone(data) });
+         // Update the vehicle in world.vehicle or world.vehicleB
+         const index = [world.vehicle, world.vehicleB].findIndex(x => x.vehicle_id === where.vehicle_id);
+         if (index !== -1) {
+           if (index === 0) Object.assign(world.vehicle, data);
+           else Object.assign(world.vehicleB, data);
+         }
+         return clone([world.vehicle, world.vehicleB].find(x => x.vehicle_id === where.vehicle_id));
+       },
+     },
+     driver: {
+       findUnique: async ({ where }) => {
+         const d = [world.driver, world.driverB].find((x) => x.driver_id === where.driver_id);
+         return d ? clone(d) : null;
+       },
+       update: async ({ where, data }) => {
+         writes.push({ op: 'driver.update', data: clone(data) });
+         // Update the driver in world.driver or world.driverB
+         const index = [world.driver, world.driverB].findIndex(x => x.driver_id === where.driver_id);
+         if (index !== -1) {
+           if (index === 0) Object.assign(world.driver, data);
+           else Object.assign(world.driverB, data);
+         }
+         return clone([world.driver, world.driverB].find(x => x.driver_id === where.driver_id));
+       },
+     },
     vehicleOwner: {
       findUnique: async ({ where }) =>
         where.owner_id === world.vendor.owner_id ? clone(world.vendor) : null,

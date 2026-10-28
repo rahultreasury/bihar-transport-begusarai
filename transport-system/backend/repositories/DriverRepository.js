@@ -60,16 +60,30 @@ class DriverRepository {
     // row and keep regenerating DRV000001, colliding with the unique
     // constraint. Use a raw query with explicit NULLS LAST so the highest
     // existing non-null code is always used as the seed.
-    const rows = await client.$queryRaw`
-      SELECT driver_code
-      FROM drivers
-      WHERE driver_code IS NOT NULL
-      ORDER BY driver_code DESC
-      LIMIT 1
-    `;
+    //
+    // Clients that cannot take a raw query (the repository's unit-double
+    // fakes) fall back to the same query expressed with the ordinary
+    // delegates — the IS NOT NULL filter keeps the NULLS-first ordering from
+    // ever being the row that decides anything.
+    let lastCode = null;
+    if (typeof client.$queryRaw === 'function') {
+      const rows = await client.$queryRaw`
+        SELECT driver_code
+        FROM drivers
+        WHERE driver_code IS NOT NULL
+        ORDER BY driver_code DESC
+        LIMIT 1
+      `;
+      lastCode = rows[0] && rows[0].driver_code;
+    } else if (typeof client.driver?.findFirst === 'function') {
+      const row = await client.driver.findFirst({
+        where: { driver_code: { not: null } },
+        orderBy: { driver_code: 'desc' },
+      });
+      lastCode = row && row.driver_code;
+    }
 
     let nextNum = 1;
-    const lastCode = rows[0] && rows[0].driver_code;
     if (lastCode) {
       const match = String(lastCode).match(/DRV(\d+)/);
       if (match) {
@@ -201,6 +215,8 @@ class DriverRepository {
     const take = Math.max(1, parseInt(limit) || 20);
     const skip = (parsedPage - 1) * take;
 
+    const { getDriverWithOperationalActiveTripsWhere } = require('../utils/operationalTripStatus');
+    const operationalActiveTripWhere = getDriverWithOperationalActiveTripsWhere();
     const where = {};
 
     // Filter by partner_id (for Partner self-service scoping)
@@ -230,7 +246,17 @@ class DriverRepository {
 
     // Filter by status
     if (status) {
-      where.status = status;
+      if (status === 'on_trip') {
+        where.trips = operationalActiveTripWhere.trips;
+      } else if (status === 'available') {
+        where.status = 'available';
+        // Also ensure no operationally active trips
+        where.trips = {
+          none: operationalActiveTripWhere.trips.some,
+        };
+      } else {
+        where.status = status;
+      }
     }
 
     // Filter by availability
@@ -272,9 +298,14 @@ class DriverRepository {
 
     // Quick filters from the UI
     if (quick_filter) {
-      if (quick_filter === 'available') where.status = 'available';
-      else if (quick_filter === 'on_trip') where.status = 'on_trip';
-      else if (quick_filter === 'inactive') where.status = 'inactive';
+      if (quick_filter === 'available') {
+        where.status = 'available';
+        where.trips = {
+          none: operationalActiveTripWhere.trips.some,
+        };
+      } else if (quick_filter === 'on_trip') {
+        where.trips = operationalActiveTripWhere.trips;
+      } else if (quick_filter === 'inactive') where.status = 'inactive';
       else if (quick_filter === 'assigned') where.currentVehicle = { not: null };
       else if (quick_filter === 'unassigned') where.currentVehicle = null;
       else if (quick_filter === 'today_active') {
@@ -332,6 +363,31 @@ db().driver.findMany({
                 vehicle_id: true,
                 vehicle_number: true,
                 vehicle_type: true,
+              },
+            },
+            // Include the first operational active trip's vehicle for drivers
+            // who have no profile vehicle but have an active trip with a vehicle
+            trips: {
+              where: operationalActiveTripWhere,
+              take: 1,
+              orderBy: { created_at: 'desc' },
+              select: {
+                trip_id: true,
+                trip_number: true,
+                status: true,
+                vehicle_id: true,
+                vehicle: {
+                  select: {
+                    vehicle_id: true,
+                    vehicle_number: true,
+                    vehicle_type: true,
+                  },
+                },
+                vehicleHire: {
+                  select: {
+                    hire_id: true,
+                  },
+                },
               },
             },
           },
@@ -858,13 +914,27 @@ const drivers = result.drivers.map((d) => {
 
   /**
    * Get driver KPIs for dashboard (simplified - no employee finance).
+   * Uses the authoritative operational trip definition to ensure consistency
+   * with Order/Trip Master active trip counts.
    */
   async getDashboardStats() {
+    const { getDriverWithOperationalActiveTripsWhere } = require('../utils/operationalTripStatus');
+    const operationalActiveTripWhere = getDriverWithOperationalActiveTripsWhere();
+
     const [total, available, onTrip, inactive] = await Promise.all([
-      prisma.driver.count(),
-      prisma.driver.count({ where: { status: 'available' } }),
-      prisma.driver.count({ where: { status: 'on_trip' } }),
-      prisma.driver.count({ where: { status: 'inactive' } }),
+      db().driver.count(),
+      db().driver.count({
+        where: {
+          status: 'available',
+          trips: {
+            none: operationalActiveTripWhere.trips.some,
+          },
+        }
+      }),
+      db().driver.count({
+        where: operationalActiveTripWhere,
+      }),
+      db().driver.count({ where: { status: 'inactive' } }),
     ]);
 
     const todayStart = new Date();

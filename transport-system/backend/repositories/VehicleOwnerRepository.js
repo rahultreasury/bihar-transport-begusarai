@@ -50,16 +50,28 @@ class VehicleOwnerRepository {
     // row and keep regenerating VOW000001, colliding with the unique
     // constraint. Use a raw query with explicit NULLS LAST so the highest
     // existing non-null code is always used as the seed.
-    const rows = await client.$queryRaw`
-      SELECT owner_code
-      FROM vehicle_owners
-      WHERE owner_code IS NOT NULL
-      ORDER BY owner_code DESC
-      LIMIT 1
-    `;
+    //
+    // The delegate fallback exists for the same reason as the driver one:
+    // unit-double clients without $queryRaw still get a correct next code.
+    let lastCode = null;
+    if (typeof client.$queryRaw === 'function') {
+      const rows = await client.$queryRaw`
+        SELECT owner_code
+        FROM vehicle_owners
+        WHERE owner_code IS NOT NULL
+        ORDER BY owner_code DESC
+        LIMIT 1
+      `;
+      lastCode = rows[0] && rows[0].owner_code;
+    } else if (typeof client.vehicleOwner?.findFirst === 'function') {
+      const row = await client.vehicleOwner.findFirst({
+        where: { owner_code: { not: null } },
+        orderBy: { owner_code: 'desc' },
+      });
+      lastCode = row && row.owner_code;
+    }
 
     let nextNum = 1;
-    const lastCode = rows[0] && rows[0].owner_code;
     if (lastCode) {
       const match = String(lastCode).match(/VOW(\d+)/);
       if (match) {

@@ -696,6 +696,84 @@ async registerDriver(data) {
 
     return result;
   }
+
+  /**
+   * Synchronize driver status with their active trip assignments.
+   * This ensures the driver's status field accurately reflects their
+   * operational trip assignments.
+   *
+   * Rules:
+   * - If driver has operationally active trips → status = 'on_trip', is_available = false
+   * - If driver has no operationally active trips and status is 'on_trip' → status = 'available', is_available = true
+   * - Inactive drivers remain inactive (explicit admin action)
+   *
+   * Uses the authoritative operational trip definition from operationalTripStatus.js
+   * to ensure consistency with dashboard stats and Order/Trip Master counts.
+   *
+   * @param {number[]} [driverIds] - Optional array of driver IDs to sync. If not provided, syncs all drivers.
+   * @returns {Promise<{updated: number, details: Array}>}
+   */
+  async syncDriverStatusWithTrips(driverIds = null) {
+    const { getOperationalActiveTripWhere } = require('../utils/operationalTripStatus');
+    const operationalActiveTripWhere = getOperationalActiveTripWhere();
+    const prismaModule = require('../config/prisma');
+    function db() { return prismaModule.prisma; }
+
+    const where = driverIds ? { driver_id: { in: driverIds } } : {};
+
+    // Fetch all drivers without pagination for sync
+    const drivers = await db().driver.findMany({
+      where,
+      include: {
+        trips: {
+          where: operationalActiveTripWhere,
+          select: { trip_id: true }
+        }
+      }
+    });
+
+    const results = [];
+    let updated = 0;
+
+    for (const driver of drivers) {
+      const hasActiveTrips = driver.trips && driver.trips.length > 0;
+      const shouldBeOnTrip = hasActiveTrips;
+      const currentlyOnTrip = driver.status === 'on_trip';
+
+      if (shouldBeOnTrip && !currentlyOnTrip) {
+        // Driver has operationally active trips but status is not 'on_trip'
+        await this.repo.update(driver.driver_id, {
+          status: 'on_trip',
+          is_available: false
+        });
+        await this.repo.createTimelineEvent({
+          driver_id: driver.driver_id,
+          event_type: 'status_changed',
+          description: `Status auto-synced to on_trip (${driver.trips.length} operationally active trip${driver.trips.length > 1 ? 's' : ''})`
+        });
+        updated++;
+        results.push({ driver_id: driver.driver_id, driver_name: driver.driver_name, action: 'set_on_trip', active_trips: driver.trips.length });
+      } else if (!shouldBeOnTrip && currentlyOnTrip) {
+        // Driver has no operationally active trips but status is 'on_trip'
+        // Only auto-sync if not explicitly set to inactive by admin
+        await this.repo.update(driver.driver_id, {
+          status: 'available',
+          is_available: true
+        });
+        await this.repo.createTimelineEvent({
+          driver_id: driver.driver_id,
+          event_type: 'status_changed',
+          description: 'Status auto-synced to available (no operationally active trips)'
+        });
+        updated++;
+        results.push({ driver_id: driver.driver_id, driver_name: driver.driver_name, action: 'set_available' });
+      } else {
+        results.push({ driver_id: driver.driver_id, driver_name: driver.driver_name, action: 'no_change' });
+      }
+    }
+
+    return { updated, details: results };
+  }
 }
 
 module.exports = DriverManagementService;

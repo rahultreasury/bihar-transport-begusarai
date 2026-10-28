@@ -6,14 +6,15 @@
  * to prevent inconsistent paired-field writes (e.g. is_available without
  * status, or vice-versa).
  *
- * ACTIVE_TRIP_STATUSES is imported from TripService so the release checks
- * remain consistent with STEP 2B double-booking protection.
+ * ACTIVE_TRIP_STATUSES is imported from TripStateMachine so the release checks
+ * remain consistent with double-booking protection.
  */
 
 const { ValidationError } = require('../utils/AppError');
+const tripStateMachine = require('../utils/TripStateMachine');
 
-// Keep this in sync with TripService.ACTIVE_TRIP_STATUSES.
-const ACTIVE_TRIP_STATUSES = ['PENDING', 'ASSIGNED', 'IN_TRANSIT', 'DELIVERED'];
+// Use centralized ACTIVE_TRIP_STATUSES from TripStateMachine
+const ACTIVE_TRIP_STATUSES = tripStateMachine.ACTIVE_TRIP_STATUSES;
 
 class ResourceAvailabilityService {
   /**

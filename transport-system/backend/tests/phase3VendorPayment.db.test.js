@@ -36,6 +36,22 @@ const ADMIN = { user_id: null, role: 'admin' };
 
 // A unique-ish tag so nothing this suite creates can collide with real data.
 const TAG = `P3T${process.pid}`;
+let testCounter = 0;
+function uniqueSuffix(base) {
+  testCounter += 1;
+  return `${base}-${process.pid}-${testCounter}-${Date.now().toString(36)}`;
+}
+
+/**
+ * Generate a collision-resistant vehicle number.
+ * Uses a large random component to avoid collisions in parallel test runs.
+ * Format: P3 + uniqueSuffix (up to 17 chars for vehicle_number column)
+ */
+function generateVehicleNumber(suffix) {
+  const uniq = uniqueSuffix(suffix);
+  // vehicle_number column is varchar(20), use format P3 + uniq (no truncation)
+  return `P3${uniq}`.slice(0, 20);
+}
 const created = {
   users: [], drivers: [], vehicleOwners: [], transportVehicles: [], trips: [],
   tripFinancials: [], tripAdvances: [], tripSettlements: [], financialTransactions: [],
@@ -78,34 +94,35 @@ after(async () => {
  * @returns {Promise<{ownerId:number, tripId:number, driverId:number, vehicleId:number}>}
  */
 async function seedTrip({ freight, commissionType = null, commissionPct = null, suffix, tripDate = '2026-09-01' }) {
+  const uniq = uniqueSuffix(suffix);
   const owner = await prisma.vehicleOwner.create({
-    data: { owner_name: `P3 Owner ${suffix}`, mobile: `999${suffix}`.slice(0, 10), owner_type: 'TRANSPORT_COMPANY' },
+    data: { owner_name: `P3 Owner ${uniq}`, mobile: `999${uniq}`.slice(0, 10), owner_type: 'TRANSPORT_COMPANY' },
   });
   created.vehicleOwners.push(owner.owner_id);
 
   const vehicle = await prisma.transportVehicle.create({
-    data: { vehicle_number: `P3${suffix}`.padEnd(12, 'X').slice(0, 14), vehicle_type: 'TRUCK', owner_id: owner.owner_id },
+    data: { vehicle_number: generateVehicleNumber(suffix), vehicle_type: 'TRUCK', owner_id: owner.owner_id },
   });
   created.transportVehicles.push(vehicle.vehicle_id);
 
   const user = await prisma.user.create({
     data: {
       first_name: 'P3', last_name: 'Driver',
-      email: `p3.driver.${suffix}@example.test`,
-      phone: `88${suffix}0000`.slice(0, 10),
+      email: `p3.driver.${uniq}@example.test`,
+      phone: `88${uniq}0000`.slice(0, 10),
       password_hash: 'not-used',
     },
   });
   created.users.push(user.user_id);
 
   const driver = await prisma.driver.create({
-    data: { user_id: user.user_id, driver_name: `P3 Driver ${suffix}`, mobile: `77${suffix}0000`.slice(0, 10), transport_owner_id: owner.owner_id },
+    data: { user_id: user.user_id, driver_name: `P3 Driver ${uniq}`, mobile: `77${uniq}0000`.slice(0, 10), transport_owner_id: owner.owner_id },
   });
   created.drivers.push(driver.driver_id);
 
   const trip = await prisma.trip.create({
     data: {
-      trip_number: `BTBT-P3-${suffix}`,
+      trip_number: `BTBT-P3-${uniq}`,
       source_type: 'DIRECT',
       transport_owner_id: owner.owner_id,
       vehicle_id: vehicle.vehicle_id,
@@ -286,7 +303,7 @@ test('DB · the vendor ledger shows the whole account chronologically', async (t
       assert.ok(field in entry, `ledger entry is missing ${field}`);
     }
   }
-  assert.equal(statement.entries[0].trip_number, `BTBT-P3-10102`);
+  assert.ok(statement.entries[0].trip_number.startsWith('BTBT-P3-10102'), `trip_number should start with BTBT-P3-10102, got ${statement.entries[0].trip_number}`);
 });
 
 test('DB · a repeated request with the same reference records nothing twice', async (t) => {

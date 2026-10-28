@@ -107,8 +107,20 @@ after(async () => {
 let seedCounter = 0;
 const digitsFor = (label) => {
   seedCounter += 1;
-  return String(1000 + seedCounter + label.length * 7).padStart(4, '0').slice(-4);
+  // Include process.pid and timestamp to avoid collisions in parallel test runs
+  const uniquePart = `${process.pid}-${Date.now().toString(36)}-${seedCounter}`;
+  return String(1000 + seedCounter + label.length * 7).padStart(4, '0').slice(-4) + uniquePart.slice(-6);
 };
+
+/**
+ * Generate a collision-resistant vehicle number.
+ * Uses the existing digitsFor which includes pid + timestamp + counter.
+ * Format: P7 + digitsFor (up to 20 chars for vehicle_number column)
+ */
+function generateVehicleNumber(label) {
+  const d = digitsFor(label);
+  return `P7${d}`.slice(0, 20);
+}
 
 /** Build one owner → vehicle → driver → trip chain (plus an optional booking). */
 async function seedTrip({ freight = 50000, driverPayment = 40000, suffix, withBooking = false }) {
@@ -122,7 +134,7 @@ async function seedTrip({ freight = 50000, driverPayment = 40000, suffix, withBo
   created.owners.push(owner.owner_id);
 
   const vehicle = await prisma.transportVehicle.create({
-    data: { vehicle_number: `P7${d1}`.padEnd(12, 'X').slice(0, 14), vehicle_type: 'TRUCK', owner_id: owner.owner_id },
+    data: { vehicle_number: generateVehicleNumber(suffix), vehicle_type: 'TRUCK', owner_id: owner.owner_id },
   });
   created.vehicles.push(vehicle.vehicle_id);
 

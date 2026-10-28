@@ -185,7 +185,8 @@ const adminRelationSelect = onlyKnownRelations('Enquiry', {
   // deployed schema. `toAdminEnquiry` already renders `commercial.quotation_*`
   // as null when the relation is absent, so the admin workspace simply shows
   // "no quotation yet" instead of failing.
-  quotation: {
+  // The relation name matches the Prisma schema field: quotations_enquiries_quotation_idToquotations
+  quotations_enquiries_quotation_idToquotations: {
     select: {
       quotation_id: true,
       quotation_number: true,
@@ -480,11 +481,11 @@ function toAdminEnquiry(e, events = []) {
       booking_id: e.booking_id || null,
       // Phase B quotation status when one exists: DRAFT | RATE_QUOTED | SENT |
       // CONVERTED. Null when the enquiry has never been quoted.
-      quotation_status: e.quotation ? e.quotation.status : null,
-      quotation_number: e.quotation ? e.quotation.quotation_number : null,
-      quotation_sent_at: e.quotation ? e.quotation.sent_at : null,
-      quotation_confirmed_at: e.quotation ? e.quotation.confirmed_at : null,
-      total_billing_amount: e.quotation ? num(e.quotation.total_billing_amount) : null,
+      quotation_status: e.quotations_enquiries_quotation_idToquotations ? e.quotations_enquiries_quotation_idToquotations.status : null,
+      quotation_number: e.quotations_enquiries_quotation_idToquotations ? e.quotations_enquiries_quotation_idToquotations.quotation_number : null,
+      quotation_sent_at: e.quotations_enquiries_quotation_idToquotations ? e.quotations_enquiries_quotation_idToquotations.sent_at : null,
+      quotation_confirmed_at: e.quotations_enquiries_quotation_idToquotations ? e.quotations_enquiries_quotation_idToquotations.confirmed_at : null,
+      total_billing_amount: e.quotations_enquiries_quotation_idToquotations ? num(e.quotations_enquiries_quotation_idToquotations.total_billing_amount) : null,
       // Legacy pricing axis, kept because Enquiry.price_status is still written
       // by the pre-Phase-B quote endpoints.
       price_status: e.price_status || null,

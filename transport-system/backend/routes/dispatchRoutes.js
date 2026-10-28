@@ -579,5 +579,111 @@ router.post('/:id/transit/start', protect, adminOnly, async (req, res) => {
     sendError(res, error, 'Start transit error:');
   }
 });
+
+// ===========================================================================
+// INCIDENTS — persistent records, not notes
+// ===========================================================================
+
+/**
+ * POST /api/trips/:id/incidents
+ * Report an incident at the roadside. 201 with the persisted row; the row's
+ * `resolution` starts at ONGOING until it is explicitly closed out.
+ */
+router.post('/:id/incidents', protect, adminOnly, async (req, res) => {
+  const tripId = readId(req, res);
+  if (tripId === null) return;
+  try {
+    const incident = await transitOpsService.reportIncident(tripId, req.body, req.user);
+    return res.status(201).json({
+      success: true,
+      message: 'Incident reported',
+      data: incident,
+    });
+  } catch (error) {
+    sendError(res, error, 'Report incident error:');
+  }
+});
+
+/**
+ * GET /api/trips/:id/incidents
+ * The trip's incidents, newest first.
+ */
+router.get('/:id/incidents', protect, adminOnly, async (req, res) => {
+  const tripId = readId(req, res);
+  if (tripId === null) return;
+  try {
+    const incidents = await transitOpsService.listIncidents(tripId);
+    return res.json({ success: true, data: incidents });
+  } catch (error) {
+    sendError(res, error, 'List incidents error:');
+  }
+});
+
+/**
+ * POST /api/trips/:id/incidents/:incidentId/resolve
+ * Close an incident out with an explicit decision. Idempotent detail: the
+ * service refuses a second order for the same decision, and refuses to
+ * believe a BREAKDOWN was "handled" without the vehicle-change record.
+ */
+router.post('/:id/incidents/:incidentId/resolve', protect, adminOnly, async (req, res) => {
+  const tripId = readId(req, res);
+  if (tripId === null) return;
+  const incidentId = parseInt(req.params.incidentId, 10);
+  if (Number.isNaN(incidentId) || incidentId <= 0) {
+    return res.status(400).json({ success: false, message: 'Invalid incident ID' });
+  }
+  try {
+    const incident = await transitOpsService.resolveIncident(tripId, incidentId, req.body, req.user);
+    return res.json({
+      success: true,
+      message: 'Incident resolved',
+      data: incident,
+    });
+  } catch (error) {
+    sendError(res, error, 'Resolve incident error:');
+  }
+});
+
+// ===========================================================================
+// VEHICLE CHANGES — the swap and the history that remembers the original
+// ===========================================================================
+
+/**
+ * POST /api/trips/:id/vehicle-changes
+ * Record a mid-transit vehicle change: the original vehicle is captured on the
+ * change row BEFORE the trip moves to the replacement. When an e-way bill
+ * exists, `data.eway_bill.vehicle_update_required` names the operator's duty to
+ * amend the paper, and `data.integration_notice` says no government system was
+ * touched.
+ */
+router.post('/:id/vehicle-changes', protect, adminOnly, async (req, res) => {
+  const tripId = readId(req, res);
+  if (tripId === null) return;
+  try {
+    const result = await transitOpsService.changeVehicle(tripId, req.body, req.user);
+    return res.status(201).json({
+      success: true,
+      message: 'Vehicle change recorded',
+      data: result,
+    });
+  } catch (error) {
+    sendError(res, error, 'Vehicle change error:');
+  }
+});
+
+/**
+ * GET /api/trips/:id/vehicle-changes
+ * The vehicle this trip started with, and every swap since, oldest first.
+ */
+router.get('/:id/vehicle-changes', protect, adminOnly, async (req, res) => {
+  const tripId = readId(req, res);
+  if (tripId === null) return;
+  try {
+    const history = await transitOpsService.getVehicleHistory(tripId);
+    return res.json({ success: true, data: history });
+  } catch (error) {
+    sendError(res, error, 'Vehicle change history error:');
+  }
+});
  
 module.exports = router;

@@ -755,6 +755,17 @@ class QuotationService {
       customerVisible: false,
     });
 
+    // Sync enquiry.price_status to match quotation status for consistency.
+    // DRAFT/RATE_QUOTED -> QUOTED (prepared but not sent)
+    // SENT -> SENT (handled in sendQuotation)
+    // CONVERTED -> ACCEPTED (handled in confirmOrder)
+    if (saved.status === 'DRAFT' || saved.status === 'RATE_QUOTED') {
+      await this.prisma.enquiry.update({
+        where: { enquiry_id: enquiry.enquiry_id },
+        data: { price_status: 'QUOTED' },
+      });
+    }
+
     logger.info(
       { enquiryId: enquiry.enquiry_id, quotationId: saved.quotation_id, adminId: admin.adminId },
       'quotation.saved',
@@ -894,20 +905,111 @@ class QuotationService {
     }
 
     const now = new Date();
-    const claim = await this.prisma.quotations.updateMany({
-      where: { quotation_id: quotation.quotation_id, status: { in: ['DRAFT', 'RATE_QUOTED'] } },
-      data: {
-        status: 'SENT',
-        sent_at: now,
-        sent_by_admin_id: admin.adminId ?? null,
-        updated_by_admin_id: admin.adminId ?? null,
-        // Re-persisted from the authoritative re-derivation.
-        total_additional_charges: totals.total_additional_charges,
-        total_billing_amount: totals.total_billing_amount,
-      },
+
+    // ── ONE TRANSACTION FOR THE WHOLE PUBLISH (Batch 2B, Phase 4) ───────────
+    // Everything a "send" means happens together or not at all:
+    //   1. the quotation claim (DRAFT/RATE_QUOTED → SENT),
+    //   2. the enquiry's pricing axis (price_status SENT, quoted_at/quoted_by),
+    //   3. the enquiry's OPERATIONAL advance to AWAITING_CUSTOMER_ACCEPTANCE,
+    //   4. every timeline event, including the status walk.
+    // Before this change steps 2–4 were separate write threads with separate
+    // failure domains: a crash between them could leave a quotation marked SENT
+    // with its timeline silent, or a timeline pointing at a send that never
+    // landed. A failed send now writes NOTHING and changes NOTHING.
+    const result = await this.prisma.$transaction(async (tx) => {
+      const claim = await tx.quotations.updateMany({
+        where: { quotation_id: quotation.quotation_id, status: { in: ['DRAFT', 'RATE_QUOTED'] } },
+        data: {
+          status: 'SENT',
+          sent_at: now,
+          sent_by_admin_id: admin.adminId ?? null,
+          updated_by_admin_id: admin.adminId ?? null,
+          // Re-persisted from the authoritative re-derivation.
+          total_additional_charges: totals.total_additional_charges,
+          total_billing_amount: totals.total_billing_amount,
+        },
+      });
+
+      if (claim.count === 0) {
+        // Race: another send has just won. Nothing was written here; the caller
+        // decides how to answer after re-reading.
+        return { raceLost: true };
+      }
+
+      // The pricing axis reflects that a quote now exists.
+      await tx.enquiry.updateMany({
+        where: { enquiry_id: enquiryId },
+        data: {
+          price_status: 'SENT',
+          quoted_at: quotation.quoted_at ?? now,
+          quoted_by_admin_id: admin.adminId ?? quotation.quoted_by_admin_id ?? null,
+        },
+      });
+
+      // ── THE OPERATIONAL ADVANCE (Batch 2B, Phase 4) ───────────────────────
+      // Sending IS the customer-learn-the-price moment, so the enquiry moves to
+      // AWAITING_CUSTOMER_ACCEPTANCE — the exact stage the whole acceptance
+      // machinery (timeline, reservation release, `confirmOrder`) knows. "When
+      // appropriate" is decided by the STATE MACHINE, not by this file:
+      //   • the enquiry walks every legal stage between its current status and
+      //     AWAITING_CUSTOMER_ACCEPTANCE, each hop validated with
+      //     assertTransition() before anything is written;
+      //   • a status already past the quote stage (CUSTOMER_ACCEPTED,
+      //     CONFIRMED, closed) is left untouched — no backward move;
+      //   • an unreachable target (no legal path, terminal state) does not
+      //     refuse the PUBLISH — the document was genuinely sent and the
+      //     pricing axis records it — it only refuses the STATUS MOVE, and no
+      //     false "status changed" event is spun for it.
+      const fresh = await tx.enquiry.findUnique({
+        where: { enquiry_id: enquiryId },
+        select: { status: true },
+      });
+      const statusPath = fresh ? shortestPath(fresh.status, 'AWAITING_CUSTOMER_ACCEPTANCE') : null;
+      let advanced = false;
+      if (statusPath && statusPath.length > 0) {
+        let cursor = fresh.status;
+        for (const next of statusPath) {
+          assertTransition(cursor, next);
+          cursor = next;
+        }
+
+        const last = statusPath[statusPath.length - 1];
+        await tx.enquiry.update({
+          where: { enquiry_id: enquiryId },
+          data: { status: last },
+        });
+        advanced = true;
+
+        // The walk is recorded, so the timeline is honest about how the
+        // enquiry got here (QUOTED → AWAITING, not one silent jump).
+        let previous = fresh.status;
+        for (const stage of statusPath) {
+          await this._recordEvent(enquiryId, 'STATUS_CHANGED', {
+            message: stage === 'QUOTE_READY'
+              ? 'Final quote prepared'
+              : `Status updated to ${stage.replace(/_/g, ' ').toLowerCase()}`,
+            metadata: { from: previous, to: stage },
+          }, tx);
+          previous = stage;
+        }
+      }
+
+      await this._recordEvent(enquiryId, 'QUOTE_SENT', {
+        message: `Quotation ${quotation.quotation_number} sent to the customer`,
+        metadata: {
+          quotation_id: quotation.quotation_id,
+          total_billing_amount: totals.total_billing_amount,
+          enquiry_status_after: statusPath && statusPath.length > 0
+            ? statusPath[statusPath.length - 1]
+            : fresh?.status || null,
+        },
+        customerVisible: true,
+      }, tx);
+
+      return { raceLost: false, advanced, statusAfter: statusPath && statusPath.length > 0 ? statusPath[statusPath.length - 1] : fresh?.status || null };
     });
 
-    if (claim.count === 0) {
+    if (result.raceLost) {
       const current = await this.loadQuotation(enquiryId);
       if (current && current.status === 'SENT') {
         return { quotation: current, alreadySent: true };
@@ -915,27 +1017,10 @@ class QuotationService {
       throw new ConflictError({ message: 'This quotation changed while sending. Please refresh.' });
     }
 
-    // The enquiry stays open. Only its pricing axis reflects that a quote now
-    // exists — its operational status is untouched, so no order is implied.
-    await this.prisma.enquiry.updateMany({
-      where: { enquiry_id: enquiryId },
-      data: {
-        price_status: 'QUOTED',
-        quoted_at: quotation.quoted_at ?? now,
-        quoted_by_admin_id: admin.adminId ?? quotation.quoted_by_admin_id ?? null,
-      },
-    });
-
-    await this._recordEvent(enquiryId, 'QUOTE_SENT', {
-      message: `Quotation ${quotation.quotation_number} sent to the customer`,
-      metadata: {
-        quotation_id: quotation.quotation_id,
-        total_billing_amount: totals.total_billing_amount,
-      },
-      customerVisible: true,
-    });
-
-    logger.info({ enquiryId, quotationId: quotation.quotation_id, adminId: admin.adminId }, 'quotation.sent');
+    logger.info(
+      { enquiryId, quotationId: quotation.quotation_id, adminId: admin.adminId, advanced: result.advanced },
+      'quotation.sent',
+    );
 
     return { quotation: await this.loadQuotation(enquiryId), alreadySent: false };
   }
@@ -1116,6 +1201,12 @@ class QuotationService {
             confirmed_total_billing_amount: quotation.total_billing_amount,
           },
         });
+
+        // Sync enquiry.price_status to ACCEPTED when quotation is converted
+        await tx.enquiry.update({
+          where: { enquiry_id: enquiryId },
+          data: { price_status: 'ACCEPTED' },
+        });
       });
 
       await this._recordEvent(enquiryId, 'QUOTATION_CONFIRMED', {
@@ -1156,7 +1247,22 @@ class QuotationService {
    * Write an EnquiryEvent when the audit architecture is available.
    * Never fatal: a missing event must not fail a commercial operation.
    */
-  async _recordEvent(enquiryId, eventType, { message, metadata, customerVisible = false }) {
+  async _recordEvent(enquiryId, eventType, { message, metadata, customerVisible = false }, tx = null) {
+    /**
+     * TWO FAILURE POLICIES, AND WHY THEY DIFFER (Batch 2B, Phase 4)
+     *
+     *   With a `tx`: the caller is mid-transaction — the status change this
+     *   event describes is being written in the SAME transaction. An event
+     *   write that throws MUST propagate so the whole thing rolls back —
+     *   a failed transition must never leave a success event behind, and a
+     *   reached status must never lack its event. Swallowing here would
+     *   re-create exactly the inconsistency the transaction exists to remove.
+     *
+     *   Without a `tx`: the fire-and-forget audit notifications that used to
+     *   run best-effort keep that behavior. A logging hiccup never blocks a
+     *   save, and there is no state change it is supposed to be atomically
+     *   tied to.
+     */
     try {
       const eventService = require('./EnquiryEventService');
       const svc = eventService.default || eventService;
@@ -1169,9 +1275,10 @@ class QuotationService {
           message,
           metadata,
           customerVisible,
-        });
+        }, tx);
       }
     } catch (err) {
+      if (tx) throw err; // inside a transaction — roll the state change back
       logger.warn({ err: err.message, enquiryId, eventType }, 'quotation.event_write_failed');
     }
   }

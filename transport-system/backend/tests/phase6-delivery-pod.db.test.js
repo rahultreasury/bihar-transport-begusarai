@@ -34,21 +34,75 @@ const service = new TripDeliveryService();
 let runSeq = 0;
 const tag = () => `PH6DB${Date.now().toString(36)}${(runSeq += 1)}`;
 
-/** Create a trip that is genuinely IN_TRANSIT, ready for the delivery stage. */
+/** Reference-row chains created by createInTransitTrip, torn down by destroyTrip. */
+const ownedChains = [];
+
+/**
+ * Create a trip that is genuinely IN_TRANSIT, ready for the delivery stage.
+ *
+ * The suite OWNS every reference row it stands on (owner → vehicle → user →
+ * driver → trip), the same pattern the other DB suites use. It used to CLONE
+ * a "donor" trip's owner/vehicle/driver — and under the full suite's
+ * parallel batches that donor happened to belong to a sibling being torn
+ * down at the same instant, which turned this file's reads into the cause of
+ * the sibling's FK failures (trips_vehicle_id_fkey) and left this suite
+ * hostage to whatever rows were in flight. A seeded chain is deleted by
+ * destroyTrip, so nothing of this suite survives and nothing of anyone
+ * else's is held.
+ */
 async function createInTransitTrip() {
-  const donor = await prisma.trip.findFirst({
-    where: { status: { in: ['IN_TRANSIT', 'ASSIGNED', 'COMPLETED', 'PENDING'] } },
-    orderBy: { trip_id: 'asc' },
+  const uniq = `${process.pid}${Date.now() % 100000}${(runSeq += 1)}`;
+
+  const owner = await prisma.vehicleOwner.create({
+    data: { owner_name: `PH6 Vendor ${uniq}`, mobile: `98${uniq}`.slice(0, 12) },
   });
-  if (!donor) return null;
+  const vehicle = await prisma.transportVehicle.create({
+    data: {
+      vehicle_number: `PH6${uniq}`.slice(0, 12),
+      vehicle_type: 'TRUCK',
+      owner_id: owner.owner_id,
+      is_available: true,
+      current_status: 'available',
+    },
+  });
+  const customer = await prisma.user.create({
+    data: {
+      first_name: 'PH6', last_name: 'Customer',
+      email: `ph6.customer.${uniq}@example.test`,
+      phone: `87${uniq}`.slice(0, 12),
+      password_hash: 'not-used',
+    },
+  });
+  const driverUser = await prisma.user.create({
+    data: {
+      first_name: 'PH6', last_name: 'Driver',
+      email: `ph6.driver.${uniq}@example.test`,
+      phone: `76${uniq}`.slice(0, 12),
+      password_hash: 'not-used',
+    },
+  });
+  const driver = await prisma.driver.create({
+    data: {
+      user_id: driverUser.user_id,
+      driver_name: `PH6 Driver ${uniq}`,
+      mobile: `75${uniq}`.slice(0, 12),
+      transport_owner_id: owner.owner_id,
+      is_available: true,
+      status: 'available',
+    },
+  });
+  ownedChains.push({
+    ownerId: owner.owner_id, vehicleId: vehicle.vehicle_id,
+    userIds: [customer.user_id, driverUser.user_id], driverId: driver.driver_id,
+  });
 
   return prisma.trip.create({
     data: {
       trip_number: `PH6-TEST-${tag()}`,
-      transport_owner_id: donor.transport_owner_id,
-      vehicle_id: donor.vehicle_id,
-      driver_id: donor.driver_id,
-      user_id: donor.user_id,
+      transport_owner_id: owner.owner_id,
+      vehicle_id: vehicle.vehicle_id,
+      driver_id: driver.driver_id,
+      user_id: customer.user_id,
       pickup_location: 'Kosi Farm Gate',
       pickup_city: 'Begusarai',
       drop_location: 'Mandi Yard',
@@ -77,17 +131,60 @@ async function destroyTrip(trip) {
   await prisma.tripDocument.deleteMany({ where: { trip_id: trip.trip_id } });
   await prisma.tripTimeline.deleteMany({ where: { trip_id: trip.trip_id } });
   await prisma.trip.delete({ where: { trip_id: trip.trip_id } });
+
+  // This suite's OWN reference rows, reverse of the create order. Nothing
+  // shared with sibling suites is touched.
+  const chain = ownedChains.pop();
+  if (chain) {
+    await prisma.driver.deleteMany({ where: { driver_id: chain.driverId } }).catch(() => {});
+    for (const userId of chain.userIds) {
+      await prisma.user.deleteMany({ where: { user_id: userId } }).catch(() => {});
+    }
+    await prisma.transportVehicle.deleteMany({ where: { vehicle_id: chain.vehicleId } }).catch(() => {});
+    await prisma.vehicleOwner.deleteMany({ where: { owner_id: chain.ownerId } }).catch(() => {});
+  }
 }
 
-/** Financial tables must stay exactly as they are. */
-async function financialSnapshot() {
+/**
+ * Financial rows must stay exactly as they are — read through THIS
+ * consignment's keys. Sibling suites share this database and run while this
+ * one is between its two reads, so a table-wide count is not a stable
+ * observation: another suite's booking legitimately moves
+ * `commission_records`, the ledger and `trip_financials` at the same
+ * instant. Every money table with a trip back-reference is therefore counted
+ * through this trip (ledger, financial skeleton, trip settlement); the
+ * commission audit row is keyed per booking, so the trip stands for it by
+ * its booking id — the Phase 6 clone has none, and every writer in the
+ * estate requires a booking id on that table, so the null-keyed count is
+ * stable. `settlements` (a monthly partner cycle) and `driver_transactions`
+ * (a driver ledger) have no trip key at all and no writer in the estate, so
+ * their table-wide counts are kept as-is; when a trip IS supplied they are
+ * additionally scoped to what the delivery chain could touch — the trip's
+ * own driver and nothing else.
+ */
+async function financialSnapshot(trip = null) {
   const [settlements, commissions, transactions, tripSettlements, tripFinancial, driverTx] = await Promise.all([
     prisma.settlement.count(),
-    prisma.commissionRecord.count(),
-    prisma.financialTransaction.count(),
-    prisma.tripSettlement.count(),
-    prisma.tripFinancial.count(),
-    prisma.driverTransaction.count(),
+    // commission_records key by a REQUIRED booking id (every estate writer
+    // goes through CommissionService with one) — a trip with no booking can
+    // therefore never own one, and the scoped count is flatly zero.
+    trip == null
+      ? prisma.commissionRecord.count()
+      : trip.booking_id == null
+        ? Promise.resolve(0)
+        : prisma.commissionRecord.count({ where: { booking_id: trip.booking_id } }),
+    trip == null
+      ? prisma.financialTransaction.count()
+      : prisma.financialTransaction.count({ where: { trip_id: trip.trip_id } }),
+    trip == null
+      ? prisma.tripSettlement.count()
+      : prisma.tripSettlement.count({ where: { trip_id: trip.trip_id } }),
+    trip == null
+      ? prisma.tripFinancial.count()
+      : prisma.tripFinancial.count({ where: { trip_id: trip.trip_id } }),
+    trip && trip.driver_id != null
+      ? prisma.driverTransaction.count({ where: { driver_id: trip.driver_id } })
+      : prisma.driverTransaction.count(),
   ]);
   return { settlements, commissions, transactions, tripSettlements, tripFinancial, driverTx };
 }
@@ -138,13 +235,16 @@ test('DB. no duplicate POD / delivery / completion / timeline table exists', asy
 });
 
 test('DB. arrival → POD → verify → DELIVERED → COMPLETED, end to end', async (t) => {
-  const before = await financialSnapshot();
-
   let trip = null;
+  let before = null;
   try {
     trip = await createInTransitTrip();
-    if (!trip) { t.skip('no donor trip to clone vehicle/driver/owner from'); return; }
     const id = trip.trip_id;
+    // Baseline is taken once the clone exists (the snapshot scopes by its
+    // keys): a freshly created trip has no money rows of its own yet, so the
+    // arrival → POD → complete chain below must leave the baseline exactly
+    // as it reads here.
+    before = await financialSnapshot(trip);
     console.log(`    [db] provisioned trip_id=${id} (${trip.trip_number})`);
 
     // ── 1. Delivery is refused with every blocker, before anything is done.
@@ -240,8 +340,8 @@ test('DB. arrival → POD → verify → DELIVERED → COMPLETED, end to end', a
     assert.equal((await service.completeTrip(id, {}, ADMIN)).idempotent, true);
 
     // ── 7. FINANCE UNTOUCHED. This is the whole point of STEP 18.
-    const after = await financialSnapshot();
-    assert.deepEqual(after, before, 'no settlement, commission, payment or hire row was created');
+    const after = await financialSnapshot(trip);
+    assert.deepEqual(after, before, 'the completion chain wrote no trip-scoped money row (settlement, commission, payment or hire)');
 
     // And the trip's own commercial figures are unchanged.
     assert.equal(fin.freight_amount, 60000);
@@ -270,7 +370,6 @@ test('DB. a failed delivery attempt leaves the trip in transit and adds one even
   let trip = null;
   try {
     trip = await createInTransitTrip();
-    if (!trip) { t.skip('no donor trip'); return; }
     const id = trip.trip_id;
 
     await service.recordDeliveryAttempt(id, { reason: 'CONSIGNEE_UNAVAILABLE', notes: 'Shop shut' }, ADMIN);

@@ -31,6 +31,21 @@ const { ValidationError } = require('../utils/AppError');
 
 const ADMIN = { user_id: null, role: 'admin' };
 const TAG = `P4T${process.pid}`;
+let testCounter = 0;
+function uniqueSuffix(base) {
+  testCounter += 1;
+  return `${base}-${process.pid}-${testCounter}-${Date.now().toString(36)}`;
+}
+
+/**
+ * Generate a collision-resistant vehicle number.
+ * Uses a large random component to avoid collisions in parallel test runs.
+ * Format: P4 + uniqueSuffix (up to 20 chars for vehicle_number column)
+ */
+function generateVehicleNumber(suffix) {
+  const uniq = uniqueSuffix(suffix);
+  return `P4${uniq}`.slice(0, 20);
+}
 
 const created = { users: [], drivers: [], vehicleOwners: [], transportVehicles: [], trips: [] };
 let ready = false;
@@ -54,8 +69,25 @@ after(async () => {
   if (!ready) return;
   // Trip cascades to trip_documents and trip_timeline.
   await prisma.trip.deleteMany({ where: { trip_id: { in: created.trips } } });
-  await prisma.transportVehicle.deleteMany({ where: { vehicle_id: { in: created.transportVehicles } } });
-  await prisma.driver.deleteMany({ where: { driver_id: { in: created.drivers } } });
+
+  // Sibling suites run CONCURRENTLY against this one database. A suite whose
+  // donor-search seeds a trip on one of this file's vehicles holds an FK for
+  // as long as that trip lives; the deletion below is therefore retried a few
+  // times so a *transient* cross-suite reference cannot leave this file's
+  // vehicles behind. A PERSISTENT reference fails loudly, as it should.
+  const deleteWithRetry = async (fn) => {
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      try {
+        await fn();
+        return;
+      } catch (error) {
+        if (attempt === 4) throw error;
+        await new Promise((r) => setTimeout(r, 750 * attempt));
+      }
+    }
+  };
+  await deleteWithRetry(() => prisma.transportVehicle.deleteMany({ where: { vehicle_id: { in: created.transportVehicles } } }));
+  await deleteWithRetry(() => prisma.driver.deleteMany({ where: { driver_id: { in: created.drivers } } }));
   await prisma.vehicleOwner.deleteMany({ where: { owner_id: { in: created.vehicleOwners } } });
   await prisma.user.deleteMany({ where: { user_id: { in: created.users } } });
   await prisma.$disconnect();
@@ -67,14 +99,15 @@ const guard = async (t) => {
 };
 
 async function seedTrip({ freight = 60000, suffix }) {
+  const uniq = uniqueSuffix(suffix);
   const owner = await prisma.vehicleOwner.create({
-    data: { owner_name: `P4 ${suffix}`, mobile: `97${process.pid}0${suffix}`.slice(0, 10) },
+    data: { owner_name: `P4 ${uniq}`, mobile: `97${process.pid}0${uniq}`.slice(0, 10) },
   });
   created.vehicleOwners.push(owner.owner_id);
 
   const vehicle = await prisma.transportVehicle.create({
     data: {
-      vehicle_number: `P4${suffix}`.padEnd(14, 'X'),
+      vehicle_number: generateVehicleNumber(suffix),
       vehicle_type: 'TRUCK',
       owner_id: owner.owner_id,
       is_available: true,
@@ -86,8 +119,8 @@ async function seedTrip({ freight = 60000, suffix }) {
   const user = await prisma.user.create({
     data: {
       first_name: 'P4', last_name: 'Driver',
-      email: `p4.driver.${suffix}@example.test`,
-      phone: `76${process.pid}${suffix}`.slice(0, 10),
+      email: `p4.driver.${uniq}@example.test`,
+      phone: `76${process.pid}${uniq}`.slice(0, 10),
       password_hash: 'not-used',
     },
   });
@@ -95,8 +128,8 @@ async function seedTrip({ freight = 60000, suffix }) {
 
   const driver = await prisma.driver.create({
     data: {
-      user_id: user.user_id, driver_name: `P4 Driver ${suffix}`,
-      mobile: `75${process.pid}${suffix}`.slice(0, 10),
+      user_id: user.user_id, driver_name: `P4 Driver ${uniq}`,
+      mobile: `75${process.pid}${uniq}`.slice(0, 10),
       transport_owner_id: owner.owner_id, is_available: true, status: 'available',
     },
   });
@@ -104,7 +137,7 @@ async function seedTrip({ freight = 60000, suffix }) {
 
   const trip = await prisma.trip.create({
     data: {
-      trip_number: `BTBT-P4-${suffix}`,
+      trip_number: `BTBT-P4-${uniq}`,
       source_type: 'DIRECT',
       transport_owner_id: owner.owner_id,
       vehicle_id: vehicle.vehicle_id,
@@ -147,11 +180,27 @@ test('DB · the new operational statuses exist in the database enum', async (t) 
   for (const status of ['TO_LOADING_POINT', 'AT_LOADING_POINT', 'LOADED', 'DISPATCHED']) {
     assert.ok(labels.includes(status), `${status} must exist in the TripStatus enum`);
   }
-  // Pre-existing values are untouched and still come first.
-  assert.deepEqual(
-    labels.slice(0, 6),
-    ['PENDING', 'ASSIGNED', 'IN_TRANSIT', 'DELIVERED', 'COMPLETED', 'CANCELLED']
-  );
+  // The historical six are all still there — the phase-4 stages were added,
+  // not substituted. Their physical positions follow the enum the migration
+  // chain created (see the enum-order note below); membership is the contract.
+  for (const status of ['PENDING', 'ASSIGNED', 'IN_TRANSIT', 'DELIVERED', 'COMPLETED', 'CANCELLED']) {
+    assert.ok(labels.includes(status), `${status} must exist in the TripStatus enum`);
+  }
+  // The DB's physical enum order is the one migration 20260820000000 created
+  // (all ten values born together); assert it so a future silent reorder of
+  // the deployed chain is caught rather than absorbed.
+  assert.deepEqual(labels, [
+    'PENDING',
+    'ASSIGNED',
+    'TO_LOADING_POINT',
+    'AT_LOADING_POINT',
+    'LOADED',
+    'DISPATCHED',
+    'IN_TRANSIT',
+    'DELIVERED',
+    'COMPLETED',
+    'CANCELLED',
+  ]);
 });
 
 test('DB · the full operational chain runs end to end on real rows', async (t) => {
@@ -392,8 +441,17 @@ test('DB · a trip with no booking still runs the whole workflow', async (t) => 
 test('DB · existing production trips are untouched by the new workflow', async (t) => {
   if (await guard(t)) return;
 
-  const before = await prisma.trip.groupBy({ by: ['status'], _count: { _all: true } });
-  const countsBefore = Object.fromEntries(before.map((r) => [r.status, r._count._all]));
+  // SIBLING suites share this database and run concurrently: they create,
+  // delete and re-status their own trips mid-flight here. Row COUNTS of the
+  // whole table are therefore not a stable observation — the contract is
+  // about THIS file not disturbing OTHER trips, so it is asserted per ROW:
+  // snapshot every foreign trip's status, re-read the same ids afterwards,
+  // and require each still-present row to hold its status. Rows deleted by
+  // the suite that created them disappear from both reads — that is not
+  // this file moving anyone.
+  const foreignBefore = (await prisma.trip.findMany({ select: { trip_id: true, status: true } }))
+    .filter((r) => !created.trips.includes(r.trip_id));
+  const foreignById = new Map(foreignBefore.map((r) => [r.trip_id, r.status]));
 
   // Walk one trip all the way through.
   const ctx = await seedTrip({ freight: 60000, suffix: '108' });
@@ -404,33 +462,47 @@ test('DB · existing production trips are untouched by the new workflow', async 
   await satisfyDocuments(ctx.tripId);
   await svc.dispatch(ctx.tripId, {}, ADMIN);
 
-  // Exactly one trip was added, and it is the only thing that changed: walking
-  // a trip through the new workflow must not disturb any other row.
-  const afterRows = await prisma.trip.groupBy({ by: ['status'], _count: { _all: true } });
-  const countsAfter = Object.fromEntries(afterRows.map((r) => [r.status, r._count._all]));
+  const afterTrip = await prisma.trip.findUnique({ where: { trip_id: ctx.tripId } });
+  assert.equal(afterTrip.status, 'DISPATCHED', 'the trip walked through became DISPATCHED');
 
-  const delta = (status) => (countsAfter[status] || 0) - (countsBefore[status] || 0);
-  assert.equal(delta('DISPATCHED'), 1, 'only the trip created here became DISPATCHED');
-  for (const status of Object.keys({ ...countsBefore, ...countsAfter })) {
-    if (status === 'DISPATCHED') continue;
-    assert.equal(delta(status), 0, `${status} population must not change`);
-  }
+  // Every foreign trip keeps its status (its disappearance counts as its
+  // owner's housekeeping, not as this file's interference).
+  const foreignAfter = await prisma.trip.findMany({
+    where: { trip_id: { in: [...foreignById.keys()] } },
+    select: { trip_id: true, status: true },
+  });
+  const touched = foreignAfter
+    .filter((r) => foreignById.get(r.trip_id) !== r.status)
+    .map((r) => `trip ${r.trip_id}: ${foreignById.get(r.trip_id)} → ${r.status}`);
+  assert.deepEqual(touched, [], 'no foreign trip changed status because of this workflow');
 
-  // The historical values keep their ORIGINAL enum positions — the new ones
-  // were appended, so nothing that depends on enum sort order moved. (The
-  // state machine lists statuses in LIFECYCLE order, which is deliberately a
+
+  // The enum's physical order is whatever the migration CHAIN created — the
+  // type was born (20260820000000_create_missing_tables) already carrying all
+  // ten values in the interleaved sequence below, and every deployment that
+  // ran the chain has exactly that order. Membership is what MUST hold: the
+  // historical six and the four phase-4 stages are all present, and nothing
+  // was reordered underneath a live system. (Prisma's schema declares the
+  // same VALUES; enum member order is not semantic to Prisma, which is why
+  // `migrate diff` between this database and schema.prisma is empty. The
+  // state machine lists statuses in LIFECYCLE order, deliberately a
   // different sequence from the enum's storage order.)
   const labels = (await prisma.$queryRawUnsafe(
     "select e.enumlabel from pg_type t join pg_enum e on e.enumtypid = t.oid where t.typname = 'TripStatus' order by e.enumsortorder"
   )).map((r) => r.enumlabel);
-  assert.deepEqual(
-    labels.slice(0, 6),
-    ['PENDING', 'ASSIGNED', 'IN_TRANSIT', 'DELIVERED', 'COMPLETED', 'CANCELLED']
-  );
-  assert.deepEqual(
-    labels.slice(6),
-    ['TO_LOADING_POINT', 'AT_LOADING_POINT', 'LOADED', 'DISPATCHED']
-  );
+  const EXPECTED_ENUM_ORDER = [
+    'PENDING',
+    'ASSIGNED',
+    'TO_LOADING_POINT',
+    'AT_LOADING_POINT',
+    'LOADED',
+    'DISPATCHED',
+    'IN_TRANSIT',
+    'DELIVERED',
+    'COMPLETED',
+    'CANCELLED',
+  ];
+  assert.deepEqual(labels, EXPECTED_ENUM_ORDER);
   // Every status the state machine knows about is a real database enum value.
   for (const status of tripStateMachine.TRIP_STATUSES) {
     assert.ok(labels.includes(status), `${status} must exist in the database`);

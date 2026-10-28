@@ -189,6 +189,32 @@ class TripSettlementService {
     const newStatus = this._statusFromRemaining(outstandingAfter);
 
     const result = await this.prisma.$transaction(async (tx) => {
+      // ── CONCURRENCY GUARD (Batch 2B) ────────────────────────────────────
+      // The pre-transaction read above is advisory only: two settlements for
+      // the same trip could both pass it before either wrote. Locking the
+      // trip row serialises them — the second request waits here, then
+      // re-derives the outstanding from the same transaction's snapshot, so
+      // it sees the first request's money and is refused if it would
+      // overpay. A payment can NEVER exceed the payable even under a race.
+      //
+      // The guard degrades to no-lock on a client that cannot take one (the
+      // repository's unit-double fakes). Serialization is proven against real
+      // PostgreSQL by tests/batch2bVendorAuthority.db.test.js — the same
+      // contract with the same re-derive check either way.
+      if (typeof tx.$queryRaw === 'function') {
+        await tx.$queryRaw`SELECT trip_id FROM trips WHERE trip_id = ${trip.trip_id} FOR UPDATE`;
+      }
+
+      const lockedPosition = await new VendorLedgerService({ prisma: tx })
+        .getOwnerPosition(trip.trip_id);
+      if (input.amount > lockedPosition.outstanding) {
+        throw new ValidationError(
+          `Settlement amount (₹${input.amount}) exceeds the outstanding vendor payable (₹${lockedPosition.outstanding})`
+        );
+      }
+      const lockedAfter = Math.max(0, lockedPosition.outstanding - input.amount);
+      const lockedStatus = this._statusFromRemaining(lockedAfter);
+
       let tripFinancial = await this.tripFinancialRepo.findByTripId(trip.trip_id, tx);
       if (!tripFinancial) {
         tripFinancial = await this.tripFinancialRepo.findOrCreateByTripId(trip.trip_id, tx);
@@ -205,7 +231,7 @@ class TripSettlementService {
 
       const updated = await this.tripSettlementRepo.update(settlement.settlement_id, {
         owner_settlement_amount: cumulative,
-        owner_settlement_status: newStatus,
+        owner_settlement_status: lockedStatus,
         owner_settlement_paid_at: input.paidAt,
         owner_settlement_payment_method: input.payment_method,
         owner_settlement_reference: input.reference_number,
@@ -239,9 +265,9 @@ class TripSettlementService {
           new_value: JSON.stringify({
             amount: input.amount,
             cumulative,
-            status: newStatus,
+            status: lockedStatus,
             payment_method: input.payment_method,
-            outstanding_after: outstandingAfter,
+            outstanding_after: lockedAfter,
           }),
           reason: input.notes || null,
         },
@@ -462,10 +488,28 @@ class TripSettlementService {
       );
     }
 
-    const outstandingAfter = Math.max(0, outstandingBefore - input.amount);
-    const newStatus = this._statusFromRemaining(outstandingAfter);
-
     return await this.prisma.$transaction(async (tx) => {
+      // Same Batch 2B concurrency guard as the trip-scoped path: the advisory
+      // check above is re-verified INSIDE the transaction against the locked
+      // snapshot, so a race can never overpay the vendor.
+      let lockedOutstanding = outstandingBefore;
+      if (party === 'owner' && trip) {
+        if (typeof tx.$queryRaw === 'function') {
+          await tx.$queryRaw`SELECT trip_id FROM trips WHERE trip_id = ${trip.trip_id} FOR UPDATE`;
+        }
+        lockedOutstanding = (await new VendorLedgerService({ prisma: tx })
+          .getOwnerPosition(trip.trip_id)).outstanding;
+        if (input.amount > lockedOutstanding) {
+          throw new ValidationError(
+            `Settlement amount (₹${input.amount}) exceeds the outstanding vendor payable (₹${lockedOutstanding})`
+          );
+        }
+      }
+
+      const effectiveOutstanding = (party === 'owner' && trip) ? lockedOutstanding : outstandingBefore;
+      const outstandingAfter = Math.max(0, effectiveOutstanding - input.amount);
+      const newStatus = this._statusFromRemaining(outstandingAfter);
+
       let tripFinancial = await this.tripFinancialRepo.findByBookingId(booking.booking_id, tx);
       if (!tripFinancial) {
         tripFinancial = await this.tripFinancialRepo.findOrCreateByBookingId(booking.booking_id, tx);

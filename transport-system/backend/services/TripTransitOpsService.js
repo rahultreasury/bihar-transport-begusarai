@@ -86,6 +86,52 @@ class TripTransitOpsService {
   }
 
   // =========================================================================
+  // DELEGATE RESOLUTION (Batch 2B)
+  // =========================================================================
+  // The schema names these two tables snake_case — `trip_incidents` and
+  // `trip_vehicle_changes` (mixed in with camelCase models like `ewayBill`) —
+  // so the generated Prisma client exposes ONLY those spellings. The unit-test
+  // fakes expose camelCase delegates instead, and any future schema rename to
+  // camelCase must not require hunting every call site down. Both spellings
+  // are therefore accepted, snake_case first:
+  //
+  //   · a REAL client resolves through `trip_incidents` / `trip_vehicle_changes`
+  //   · a FAKE (or a renamed schema) resolves through `tripIncident` /
+  //     `tripVehicleChange`
+  //
+  // `null` means the underlying client genuinely has neither — and a call that
+  // NEEDS the table then fails loudly instead of dying on "reading 'create' of
+  // undefined" inside a transaction.
+
+  /** The model handle for incident rows, or null when the client has neither spelling. */
+  _incidentModel(db = this.prisma) {
+    return db.trip_incidents || db.tripIncident || null;
+  }
+
+  /** The model handle for vehicle-change rows, or null when the client has neither spelling. */
+  _vehicleChangeModel(db = this.prisma) {
+    return db.trip_vehicle_changes || db.tripVehicleChange || null;
+  }
+
+  /** The incident model FOR WRITING — throws a clear error rather than "of undefined". */
+  _requireIncidentModel(db = this.prisma) {
+    const model = this._incidentModel(db);
+    if (!model) {
+      throw new Error('TripTransitOpsService: the Prisma client exposes neither `trip_incidents` nor `tripIncident`. Regenerate the client.');
+    }
+    return model;
+  }
+
+  /** The vehicle-change model FOR WRITING — throws a clear error rather than "of undefined". */
+  _requireVehicleChangeModel(db = this.prisma) {
+    const model = this._vehicleChangeModel(db);
+    if (!model) {
+      throw new Error('TripTransitOpsService: the Prisma client exposes neither `trip_vehicle_changes` nor `tripVehicleChange`. Regenerate the client.');
+    }
+    return model;
+  }
+
+  // =========================================================================
   // THE TRANSIT WORKSPACE
   // =========================================================================
 
@@ -121,14 +167,14 @@ class TripTransitOpsService {
       this.prisma.tripDispatch
         ? this.prisma.tripDispatch.findFirst({ where: { trip_id: id } })
         : null,
-      this.prisma.tripVehicleChange
-        ? this.prisma.tripVehicleChange.findMany({
+      this._vehicleChangeModel()
+        ? this._vehicleChangeModel().findMany({
           where: { trip_id: id },
           orderBy: [{ sequence: 'asc' }],
         })
         : [],
-      this.prisma.tripIncident
-        ? this.prisma.tripIncident.findMany({
+      this._incidentModel()
+        ? this._incidentModel().findMany({
           where: { trip_id: id },
           orderBy: [{ reported_at: 'desc' }],
         })
@@ -292,7 +338,7 @@ class TripTransitOpsService {
 
     const now = new Date();
     const incident = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.tripIncident.create({
+      const created = await this._requireIncidentModel(tx).create({
         data: {
           trip_id: trip.trip_id,
           incident_type: type,
@@ -344,6 +390,30 @@ class TripTransitOpsService {
   }
 
   /**
+   * List the trip's incidents, newest first.
+   *
+   * The transit workspace already embeds the incidents it loads; this is the
+   * standalone read the incident list refreshes with.
+   *
+   * @param {number} tripId
+   * @returns {Promise<Array>}
+   */
+  async listIncidents(tripId) {
+    const id = Number(tripId);
+    if (!Number.isInteger(id) || id <= 0) throw new NotFoundError({ message: 'Trip not found' });
+
+    const trip = await this.prisma.trip.findUnique({ where: { trip_id: id }, select: { trip_id: true } });
+    if (!trip) throw new NotFoundError({ message: 'Trip not found' });
+
+    const listModel = this._incidentModel();
+    if (!listModel) return [];
+    return listModel.findMany({
+      where: { trip_id: id },
+      orderBy: [{ reported_at: 'desc' }, { incident_id: 'desc' }],
+    });
+  }
+
+  /**
    * Close an incident out with an explicit decision.
    *
    * `VEHICLE_CHANGED` is refused unless a vehicle change actually exists for
@@ -359,7 +429,7 @@ class TripTransitOpsService {
    */
   async resolveIncident(tripId, incidentId, input = {}, user = null) {
     const trip = await this._loadTrip(tripId);
-    const incident = await this.prisma.tripIncident.findFirst({
+    const incident = await this._incidentModel().findFirst({
       where: { incident_id: Number(incidentId), trip_id: trip.trip_id },
     });
     if (!incident) throw new NotFoundError({ message: 'Incident not found for this trip' });
@@ -372,7 +442,7 @@ class TripTransitOpsService {
     }
 
     if (resolution === 'VEHICLE_CHANGED') {
-      const linked = await this.prisma.tripVehicleChange.count({
+      const linked = await this._vehicleChangeModel().count({
         where: { incident_id: incident.incident_id },
       });
       if (linked === 0) {
@@ -385,7 +455,7 @@ class TripTransitOpsService {
 
     const now = new Date();
     return this.prisma.$transaction(async (tx) => {
-      const updated = await tx.tripIncident.update({
+      const updated = await this._requireIncidentModel(tx).update({
         where: { incident_id: incident.incident_id },
         data: {
           resolution,
@@ -477,13 +547,13 @@ class TripTransitOpsService {
     // must belong to this trip.
     let incident = null;
     if (input.incident_id) {
-      incident = await this.prisma.tripIncident.findFirst({
+      incident = await this._incidentModel().findFirst({
         where: { incident_id: Number(input.incident_id), trip_id: trip.trip_id },
       });
       if (!incident) throw new NotFoundError({ message: 'Incident not found for this trip' });
     }
 
-    const existingCount = await this.prisma.tripVehicleChange.count({ where: { trip_id: trip.trip_id } });
+    const existingCount = await this._vehicleChangeModel().count({ where: { trip_id: trip.trip_id } });
     const occurredAt = input.occurred_at ? new Date(input.occurred_at) : new Date();
     if (Number.isNaN(occurredAt.getTime())) {
       throw new ValidationError(`Invalid occurred_at "${input.occurred_at}"`);
@@ -491,7 +561,7 @@ class TripTransitOpsService {
     const now = new Date();
 
     const result = await this.prisma.$transaction(async (tx) => {
-      const change = await tx.tripVehicleChange.create({
+      const change = await this._requireVehicleChangeModel(tx).create({
         data: {
           trip_id: trip.trip_id,
           sequence: existingCount + 1,
@@ -530,8 +600,9 @@ class TripTransitOpsService {
       const ewayBill = tx.ewayBill
         ? await tx.ewayBill.findFirst({ where: { trip_id: trip.trip_id } })
         : null;
+      let updatedEway = null;
       if (ewayBill) {
-        await tx.ewayBill.update({
+        updatedEway = await tx.ewayBill.update({
           where: { eway_bill_id: ewayBill.eway_bill_id },
           data: {
             previous_vehicle_number: ewayBill.current_vehicle_number || trip.vehicle?.vehicle_number || null,
@@ -584,7 +655,7 @@ class TripTransitOpsService {
       // A change raised from an incident closes that incident with the same
       // decision, in the same transaction, so the two can never disagree.
       if (incident && incident.resolution === 'ONGOING') {
-        await tx.tripIncident.update({
+        await this._requireIncidentModel(tx).update({
           where: { incident_id: incident.incident_id },
           data: {
             resolution: 'VEHICLE_CHANGED',
@@ -595,7 +666,24 @@ class TripTransitOpsService {
         });
       }
 
-      return change;
+      return {
+        change,
+        // The e-way bill, as THIS change left it: the operator must amend the
+        // vehicle on the paper — `vehicle_update_required` names the duty,
+        // and NO `gov_sync_status` key is produced because no government
+        // synchronisation exists to report.
+        eway_bill: updatedEway
+          ? {
+            eway_bill_id: updatedEway.eway_bill_id,
+            eway_bill_number: updatedEway.eway_bill_number,
+            previous_vehicle_number: updatedEway.previous_vehicle_number,
+            current_vehicle_number: updatedEway.current_vehicle_number,
+            vehicle_update_required: Boolean(updatedEway.vehicle_update_required),
+          }
+          : null,
+        integration_notice: 'E-Way Bill is maintained as an internal operational record. '
+          + 'The vehicle must be amended on it by an operator; no government system was updated.',
+      };
     });
 
     return result;
@@ -611,8 +699,9 @@ class TripTransitOpsService {
     const id = Number(tripId);
     if (!Number.isInteger(id) || id <= 0) throw new NotFoundError({ message: 'Trip not found' });
 
-    const changes = this.prisma.tripVehicleChange
-      ? await this.prisma.tripVehicleChange.findMany({
+    const changeModel = this._vehicleChangeModel();
+    const changes = changeModel
+      ? await changeModel.findMany({
         where: { trip_id: id },
         orderBy: [{ sequence: 'asc' }],
       })

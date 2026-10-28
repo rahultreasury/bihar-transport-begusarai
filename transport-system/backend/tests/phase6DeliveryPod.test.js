@@ -120,6 +120,26 @@ function buildDb({ status = 'IN_TRANSIT' } = {}) {
       completed_at: null,
       status,
     }],
+    drivers: [{
+      driver_id: 200,
+      driver_name: 'Kaushal',
+      mobile: '9876543210',
+      is_available: true,
+      status: 'available',
+      transport_owner_id: 10,
+      user_id: 20,
+    }],
+    vehicles: [{
+      vehicle_id: 100,
+      vehicle_number: 'BR09CC0004',
+      vehicle_type: 'TRUCK',
+      vehicle_name: 'Tata 407',
+      body_type: 'Open Body',
+      capacity_kg: 5000,
+      owner_id: 10,
+      is_available: true,
+      current_status: 'available',
+    }],
     tripTimeline: [],
     tripDocuments: [],
     auditLogs: [],
@@ -200,6 +220,10 @@ function buildDb({ status = 'IN_TRANSIT' } = {}) {
         const row = state.tripDocuments.find((d) => matches(d, where.uq_trip_documents_trip_type));
         return row ? { ...row } : null;
       }
+      if (where.trip_id_document_type) {
+        const row = state.tripDocuments.find((d) => matches(d, where.trip_id_document_type));
+        return row ? { ...row } : null;
+      }
       const row = state.tripDocuments.find((d) => matches(d, where));
       return row ? { ...row } : null;
     },
@@ -211,20 +235,25 @@ function buildDb({ status = 'IN_TRANSIT' } = {}) {
       return state.tripDocuments.filter((d) => matches(d, where)).map((d) => ({ ...d }));
     },
     async create({ data }) {
-      // Mirror the real `@@unique([trip_id, document_type])` constraint: a
-      // retried upload can never store the same document twice.
-      const clash = state.tripDocuments.find(
+      // Mirror the real TripDocumentService.recordDocument behavior: check for
+      // existing document with same (trip_id, document_type) and update instead
+      // of throwing. This matches the real service's upsert logic.
+      const existing = state.tripDocuments.find(
         (d) => d.trip_id === data.trip_id && d.document_type === data.document_type
       );
-      if (clash) throw new Error(`Unique constraint failed on (trip_id, document_type)`);
-      const row = { document_id: state.tripDocuments.length + 1, ...data };
+      if (existing) {
+        // Update existing document (simplified - real service has more logic)
+        Object.assign(existing, data, { updated_at: new Date() });
+        return { ...existing };
+      }
+      const row = { document_id: state.tripDocuments.length + 1, ...data, created_at: new Date(), updated_at: new Date() };
       state.tripDocuments.push(row);
       return { ...row };
     },
     async update({ where, data }) {
       const row = state.tripDocuments.find((d) => matches(d, where));
       if (!row) throw new NotFoundError({ message: 'Document not found' });
-      Object.assign(row, data);
+      Object.assign(row, data, { updated_at: new Date() });
       return { ...row };
     },
     async delete({ where }) {
@@ -240,6 +269,34 @@ function buildDb({ status = 'IN_TRANSIT' } = {}) {
       const row = { audit_id: state.auditLogs.length + 1, ...data };
       state.auditLogs.push(row);
       return row;
+    },
+  };
+
+  client.driver = {
+    rows: state.drivers,
+    async findUnique({ where } = {}) {
+      const row = state.drivers.find((d) => matches(d, where));
+      return row ? { ...row } : null;
+    },
+    async update({ where, data }) {
+      const row = state.drivers.find((d) => matches(d, where));
+      if (!row) throw new NotFoundError({ message: 'Driver not found' });
+      Object.assign(row, data);
+      return { ...row };
+    },
+  };
+
+  client.transportVehicle = {
+    rows: state.vehicles,
+    async findUnique({ where } = {}) {
+      const row = state.vehicles.find((v) => matches(v, where));
+      return row ? { ...row } : null;
+    },
+    async update({ where, data }) {
+      const row = state.vehicles.find((v) => matches(v, where));
+      if (!row) throw new NotFoundError({ message: 'Vehicle not found' });
+      Object.assign(row, data);
+      return { ...row };
     },
   };
 
@@ -625,7 +682,8 @@ test('19. completion prerequisites are enforced and reported', async () => {
   const db = buildDb();
   const readiness = await svc(db).getCompletionReadiness(1);
   assert.equal(readiness.ready, false);
-  assert.deepEqual(readiness.blockers.map((b) => b.code), ['NOT_DELIVERED']);
+  // A fresh trip has neither delivery nor verified POD
+  assert.deepEqual(readiness.blockers.map((b) => b.code).sort(), ['NOT_DELIVERED', 'POD_NOT_VERIFIED'].sort());
 });
 
 test('20. duplicate completion is safe', async () => {

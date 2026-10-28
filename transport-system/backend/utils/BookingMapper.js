@@ -129,6 +129,9 @@ function flattenBooking(b) {
     otp_verified: b.delivery?.otp_verified ?? null,
     recipient_name: b.delivery?.recipient_name ?? null,
     delivery_notes: b.delivery?.delivery_notes ?? null,
+    // Trip info (most recent trip)
+    trip: b.trips && b.trips.length > 0 ? b.trips[0] : null,
+    trips: b.trips || [],
   };
 }
 

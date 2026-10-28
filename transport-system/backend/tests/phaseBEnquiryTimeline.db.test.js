@@ -184,11 +184,11 @@ before(async () => {
 after(async () => {
   if (!dbAvailable) return;
   for (const id of createdBookingIds) {
-    await prisma.bookingQuotationSnapshot.deleteMany({ where: { booking_id: id } }).catch(() => {});
+    await prisma.booking_quotation_snapshots.deleteMany({ where: { booking_id: id } }).catch(() => {});
     await prisma.booking.deleteMany({ where: { booking_id: id } }).catch(() => {});
   }
   for (const id of createdEnquiryIds) {
-    await prisma.quotation.deleteMany({ where: { enquiry_id: id } }).catch(() => {});
+    await prisma.quotations.deleteMany({ where: { enquiry_id: id } }).catch(() => {});
     await prisma.enquiryEvent.deleteMany({ where: { enquiry_id: id } }).catch(() => {});
     await prisma.enquiry.updateMany({ where: { enquiry_id: id }, data: { booking_id: null } }).catch(() => {});
     await prisma.enquiry.deleteMany({ where: { enquiry_id: id } }).catch(() => {});

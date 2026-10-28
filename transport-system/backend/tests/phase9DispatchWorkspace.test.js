@@ -193,6 +193,16 @@ function applyInclude(row, include, state) {
  * A trip in the requested state with a vehicle, a driver and a booking that
  * carries the PLANNED goods figures.
  */
+
+// Fixed deterministic dates for all tests - these are in the past relative to
+// "now" but consistent across test runs. E-Way Bill expiry is set to 30 days
+// after issuance to test valid/expiring/expired scenarios explicitly.
+const FIXED_BASE_DATE = new Date('2026-10-01T00:00:00Z');
+const FIXED_LOADING_DATE = new Date('2026-10-03T00:00:00Z');
+const DOC_ISSUED_AT = new Date(FIXED_LOADING_DATE.getTime() + 7 * 3600000);
+const DOC_CREATED_AT = new Date(FIXED_LOADING_DATE.getTime() + 7 * 3600000 + 5 * 60000);
+const DISPATCH_CREATED_AT = new Date(FIXED_LOADING_DATE.getTime() + 8 * 3600000);
+
 // Auto-increment ids must start ABOVE every id the fixture seeds by hand,
 // otherwise the first generated row collides with a seeded one and the fake
 // reports a uniqueness failure that the real database would never produce.
@@ -223,7 +233,7 @@ function makeDb({
     drop_location: 'Mandi Yard',
     drop_city: 'Patna',
     distance_km: 1490,
-    expected_delivery_date: new Date('2026-10-06T00:00:00Z'),
+    expected_delivery_date: new Date(FIXED_BASE_DATE.getTime() + 5 * 86400000),
     freight_amount: freight,
     driver_payment: null,
     owner_payment: null,
@@ -232,10 +242,10 @@ function makeDb({
     transport_owner_id: 300,
     status,
     documents_required: null,
-    sent_to_loading_at: new Date('2026-10-03T02:00:00Z'),
-    arrived_at_loading_at: new Date('2026-10-03T04:00:00Z'),
-    loading_started_at: new Date('2026-10-03T05:00:00Z'),
-    loading_completed_at: loadingCompleted ? new Date('2026-10-03T07:30:00Z') : null,
+    sent_to_loading_at: new Date(FIXED_LOADING_DATE.getTime() + 2 * 3600000),
+    arrived_at_loading_at: new Date(FIXED_LOADING_DATE.getTime() + 4 * 3600000),
+    loading_started_at: new Date(FIXED_LOADING_DATE.getTime() + 5 * 3600000),
+    loading_completed_at: loadingCompleted ? new Date(FIXED_LOADING_DATE.getTime() + 7.5 * 3600000) : null,
     loading_remarks: 'Loaded in 4 hours',
     loaded_by: 'Loader Ram',
     dispatched_at: null,
@@ -260,9 +270,9 @@ function makeDb({
     delivered_quantity: null,
     delivered_quantity_unit: null,
     delivered_weight_kg: null,
-    trip_date: new Date('2026-10-01T00:00:00Z'),
-    created_at: new Date('2026-10-01T00:00:00Z'),
-    updated_at: new Date('2026-10-01T00:00:00Z'),
+    trip_date: FIXED_BASE_DATE,
+    created_at: FIXED_BASE_DATE,
+    updated_at: FIXED_BASE_DATE,
     completed_at: null,
     cancelled_at: null,
   }], { keyField: 'trip_id' });
@@ -340,6 +350,7 @@ function makeDb({
   ], { keyField: 'charge_id' });
 
   // The mandatory paperwork, as `TripDocumentService` would have written it.
+
   state.tables.tripDocument = table(
     documents.map((type, i) => ({
       document_id: i + 1,
@@ -347,8 +358,8 @@ function makeDb({
       document_type: type,
       document_status: 'PRESENT',
       reference_number: type === 'LR' ? 'LR-2026-00125' : `${type}-REF-1`,
-      issued_at: new Date('2026-10-03T07:00:00Z'),
-      expires_at: null,
+      issued_at: DOC_ISSUED_AT,
+      expires_at: type === 'E_WAY_BILL' ? new Date(DOC_ISSUED_AT.getTime() + 30 * 86400000) : null,
       file_url: `/uploads/1/${type}/scan.pdf`,
       is_uploaded: true,
       is_verified: false,
@@ -356,8 +367,8 @@ function makeDb({
       verified_at: null,
       remarks: null,
       created_by: 1,
-      created_at: new Date('2026-10-03T07:05:00Z'),
-      updated_at: new Date('2026-10-03T07:05:00Z'),
+      created_at: DOC_CREATED_AT,
+      updated_at: DOC_CREATED_AT,
     })),
     { keyField: 'document_id' },
   );
@@ -459,6 +470,7 @@ function camel(name) {
  */
 function readyDb(overrides = {}) {
   const db = makeDb({ insuranceRequired: false, ...overrides });
+  const DISPATCH_CREATED_AT = new Date(FIXED_LOADING_DATE.getTime() + 8 * 3600000);
   db.state.tables.tripDispatch.rows.push({
     dispatch_id: 1,
     trip_id: 1,
@@ -483,8 +495,8 @@ function readyDb(overrides = {}) {
     pod_required: false,
     status: 'PENDING',
     created_by: 1,
-    created_at: new Date('2026-10-03T08:00:00Z'),
-    updated_at: new Date('2026-10-03T08:00:00Z'),
+    created_at: DISPATCH_CREATED_AT,
+    updated_at: DISPATCH_CREATED_AT,
   });
   return db;
 }
@@ -626,10 +638,12 @@ test('7. CAN dispatch when every mandatory requirement passes', async () => {
   // The E-Way Bill must be RECORDED, not merely required. Seed it the way the
   // operator would.
   const service = new TripDispatchService({ prisma: client });
+  const futureExpiry = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
+  const today = new Date().toISOString().split('T')[0];
   await service.saveEwayBill(1, {
     eway_bill_number: '121234567890',
-    eway_bill_date: '2026-10-03',
-    expiry_at: '2026-10-20',
+    eway_bill_date: today,
+    expiry_at: futureExpiry,
   }, ADMIN);
 
   const before = await service.getReadiness(1);
@@ -643,7 +657,8 @@ test('7. CAN dispatch when every mandatory requirement passes', async () => {
 test('8. dispatch changes the status LOADED → DISPATCHED', async () => {
   const { client, state } = readyDb({ valueOfGoods: 120000 });
   const service = new TripDispatchService({ prisma: client });
-  await service.saveEwayBill(1, { eway_bill_number: '121234567890', expiry_at: '2026-10-20' }, ADMIN);
+  const futureExpiry = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
+  await service.saveEwayBill(1, { eway_bill_number: '121234567890', expiry_at: futureExpiry }, ADMIN);
 
   await service.dispatch(1, {}, ADMIN);
 
@@ -654,7 +669,8 @@ test('8. dispatch changes the status LOADED → DISPATCHED', async () => {
 test('9. dispatch creates a movement-history entry', async () => {
   const { client, state } = readyDb({ valueOfGoods: 120000 });
   const service = new TripDispatchService({ prisma: client });
-  await service.saveEwayBill(1, { eway_bill_number: '121234567890', expiry_at: '2026-10-20' }, ADMIN);
+  const futureExpiry = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
+  await service.saveEwayBill(1, { eway_bill_number: '121234567890', expiry_at: futureExpiry }, ADMIN);
 
   const before = state.tables.tripTimeline.rows.length;
   const result = await service.dispatch(1, {}, ADMIN);
@@ -681,7 +697,8 @@ test('9. dispatch creates a movement-history entry', async () => {
 test('10. dispatch creates an audit entry', async () => {
   const { client, state } = readyDb({ valueOfGoods: 120000 });
   const service = new TripDispatchService({ prisma: client });
-  await service.saveEwayBill(1, { eway_bill_number: '121234567890', expiry_at: '2026-10-20' }, ADMIN);
+  const futureExpiry = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
+  await service.saveEwayBill(1, { eway_bill_number: '121234567890', expiry_at: futureExpiry }, ADMIN);
 
   await service.dispatch(1, {}, ADMIN);
 
@@ -699,7 +716,8 @@ test('10. dispatch creates an audit entry', async () => {
 test('11. dispatch data persists after a refresh', async () => {
   const { client, state } = readyDb({ valueOfGoods: 120000 });
   const first = new TripDispatchService({ prisma: client });
-  await first.saveEwayBill(1, { eway_bill_number: '121234567890', expiry_at: '2026-10-20' }, ADMIN);
+  const futureExpiry = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
+  await first.saveEwayBill(1, { eway_bill_number: '121234567890', expiry_at: futureExpiry }, ADMIN);
   await first.dispatch(1, { pod_required: true, consignee_name: 'Mill', consignee_contact: '9123456789' }, ADMIN);
 
   // A COMPLETELY NEW service instance — the equivalent of reloading the page.
@@ -718,7 +736,8 @@ test('11. dispatch data persists after a refresh', async () => {
 test('13. the E-Way Bill is linked to the Trip', async () => {
   const { client, state } = readyDb({ valueOfGoods: 120000 });
   const service = new TripDispatchService({ prisma: client });
-  await service.saveEwayBill(1, { eway_bill_number: '121234567890', expiry_at: '2026-10-20' }, ADMIN);
+  const futureExpiry = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
+  await service.saveEwayBill(1, { eway_bill_number: '121234567890', expiry_at: futureExpiry }, ADMIN);
 
   assert.equal(state.tables.ewayBill.rows.length, 1);
   const bill = state.tables.ewayBill.rows[0];
@@ -757,7 +776,8 @@ test('14. the LR/GR is linked to the Trip and to the dispatch record', async () 
 test('15. the POD requirement persists', async () => {
   const { client, state } = readyDb({ valueOfGoods: 120000 });
   const service = new TripDispatchService({ prisma: client });
-  await service.saveEwayBill(1, { eway_bill_number: '121234567890', expiry_at: '2026-10-20' }, ADMIN);
+  const futureExpiry = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
+  await service.saveEwayBill(1, { eway_bill_number: '121234567890', expiry_at: futureExpiry }, ADMIN);
 
   await service.dispatch(1, { pod_required: true }, ADMIN);
   assert.equal(state.tables.trip.rows[0].pod_required, true);
@@ -769,7 +789,8 @@ test('15. the POD requirement persists', async () => {
   // POD NOT required is equally a persisted fact, not an absence.
   const db2 = readyDb({ valueOfGoods: 120000 });
   const s2 = new TripDispatchService({ prisma: db2.client });
-  await s2.saveEwayBill(1, { eway_bill_number: '1', expiry_at: '2026-10-20' }, ADMIN);
+  const futureExpiry2 = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
+  await s2.saveEwayBill(1, { eway_bill_number: '1', expiry_at: futureExpiry2 }, ADMIN);
   await s2.dispatch(1, { pod_required: false }, ADMIN);
   assert.equal(db2.state.tables.trip.rows[0].pod_required, false);
 });
@@ -781,7 +802,8 @@ test('15. the POD requirement persists', async () => {
 test('16. a repeated dispatch does not create a second dispatch record', async () => {
   const { client, state } = readyDb({ valueOfGoods: 120000 });
   const service = new TripDispatchService({ prisma: client });
-  await service.saveEwayBill(1, { eway_bill_number: '121234567890', expiry_at: '2026-10-20' }, ADMIN);
+  const futureExpiry = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
+  await service.saveEwayBill(1, { eway_bill_number: '121234567890', expiry_at: futureExpiry }, ADMIN);
 
   const first = await service.dispatch(1, {}, ADMIN);
   const second = await service.dispatch(1, {}, ADMIN);
@@ -825,7 +847,8 @@ test('17. a failed dispatch writes NOTHING', async () => {
 test('17b. a failure inside the transaction rolls the whole thing back', async () => {
   const { client, state } = readyDb({ valueOfGoods: 120000 });
   const service = new TripDispatchService({ prisma: client });
-  await service.saveEwayBill(1, { eway_bill_number: '121234567890', expiry_at: '2026-10-20' }, ADMIN);
+  const futureExpiry = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
+  await service.saveEwayBill(1, { eway_bill_number: '121234567890', expiry_at: futureExpiry }, ADMIN);
 
   const beforeTrip = { ...state.tables.trip.rows[0] };
   const beforeTimeline = state.tables.tripTimeline.rows.length;
@@ -869,5 +892,86 @@ test('18. no government E-Way Bill confirmation is ever written', async () => {
   const readiness = await service.getReadiness(1);
   assert.equal(readiness.eway_bill_integration,
     'E-Way Bill is maintained as an internal operational record.');
+});
+
+// ===========================================================================
+// E-Way Bill Expiry Tests
+// ===========================================================================
+
+// Use actual current time as the controlled clock for these tests
+const NOW = new Date();
+const ONE_DAY_MS = 86400000;
+
+function expiryDate(daysFromNow) {
+  return new Date(NOW.getTime() + daysFromNow * ONE_DAY_MS).toISOString().split('T')[0];
+}
+
+test('E-Way Bill: valid bill (expiry > 30 days) allows dispatch readiness', async () => {
+  const { client } = readyDb({ valueOfGoods: 120000 });
+  const service = new TripDispatchService({ prisma: client });
+
+  // Valid E-Way Bill: expires in 45 days from now
+  await service.saveEwayBill(1, { eway_bill_number: '121234567890', expiry_at: expiryDate(45) }, ADMIN);
+
+  const readiness = await service.getReadiness(1);
+  const ewayCheck = readiness.checks.find((c) => c.key === 'eway_bill');
+  assert.ok(ewayCheck, 'E-Way Bill check should exist');
+  // Valid bill should have state 'passed' and NOT be in blockers
+  assert.equal(ewayCheck.state, 'passed');
+  assert.ok(!readiness.blocker_codes.includes('EWAY_BILL_EXPIRED'));
+  assert.ok(!readiness.blocker_codes.includes('EWAY_BILL_REQUIRED'));
+  assert.equal(readiness.ready, true, JSON.stringify(readiness.blockers));
+});
+
+test('E-Way Bill: expiring-soon bill (expiry within 3 days) warns but allows dispatch', async () => {
+  const { client } = readyDb({ valueOfGoods: 120000 });
+  const service = new TripDispatchService({ prisma: client });
+
+  // Expiring soon: expires in 1 day from now (well within the 3-day warning window)
+  // Using 1 day to account for time-of-day differences between NOW (with time) and expiry (midnight UTC)
+  await service.saveEwayBill(1, { eway_bill_number: '121234567890', expiry_at: expiryDate(1) }, ADMIN);
+
+  const readiness = await service.getReadiness(1);
+  const ewayCheck = readiness.checks.find((c) => c.key === 'eway_bill');
+  assert.ok(ewayCheck, 'E-Way Bill check should exist');
+  // Expiring soon: check state is 'passed' (warning maps to passed in readiness),
+  // it should NOT be in blockers, and readiness should be true
+  // The message is the same for valid and expiring; the distinction is in context/detail
+  assert.equal(ewayCheck.state, 'passed');
+  assert.ok(!readiness.blocker_codes.includes('EWAY_BILL_EXPIRED'));
+  assert.equal(readiness.ready, true, JSON.stringify(readiness.blockers));
+});
+
+test('E-Way Bill: expired bill (expiry in past) blocks dispatch', async () => {
+  const { client } = readyDb({ valueOfGoods: 120000 });
+  const service = new TripDispatchService({ prisma: client });
+
+  // Expired: expired 5 days ago
+  await service.saveEwayBill(1, { eway_bill_number: '121234567890', expiry_at: expiryDate(-5) }, ADMIN);
+
+  const readiness = await service.getReadiness(1);
+  const ewayCheck = readiness.checks.find((c) => c.key === 'eway_bill');
+  assert.ok(ewayCheck, 'E-Way Bill check should exist');
+  // Expired should have state 'failed' and be in blockers
+  assert.equal(ewayCheck.state, 'failed');
+  assert.match(ewayCheck.message, /expired/i);
+  assert.ok(readiness.blocker_codes.includes('EWAY_BILL_EXPIRED'));
+  assert.equal(readiness.ready, false);
+});
+
+test('E-Way Bill: missing expiry date is treated as not blocking (backward compatibility)', async () => {
+  const { client } = readyDb({ valueOfGoods: 120000 });
+  const service = new TripDispatchService({ prisma: client });
+
+  // No expiry_at provided
+  await service.saveEwayBill(1, { eway_bill_number: '121234567890' }, ADMIN);
+
+  const readiness = await service.getReadiness(1);
+  const ewayCheck = readiness.checks.find((c) => c.key === 'eway_bill');
+  assert.ok(ewayCheck, 'E-Way Bill check should exist');
+  // Missing expiry should have state 'passed' (RECORDED) and NOT be in blockers
+  assert.equal(ewayCheck.state, 'passed');
+  assert.ok(!readiness.blocker_codes.includes('EWAY_BILL_EXPIRED'));
+  assert.equal(readiness.ready, true, JSON.stringify(readiness.blockers));
 });
 
