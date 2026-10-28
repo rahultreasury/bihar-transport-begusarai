@@ -41,20 +41,29 @@
  */
 
 const { prisma: defaultPrisma } = require('../config/prisma');
-const { ValidationError, NotFoundError } = require('../utils/AppError');
+const { ValidationError, NotFoundError, ConflictError } = require('../utils/AppError');
 const TripTimelineRepository = require('../repositories/TripTimelineRepository');
 const AuditLogRepository = require('../repositories/AuditLogRepository');
 
 /**
- * Mirrors the Prisma `InvoiceStatus` enum exactly: PENDING · GENERATED · PAID ·
- * CANCELLED.
+ * Mirrors the Prisma `InvoiceStatus` enum exactly: PENDING · GENERATED ·
+ * PARTIALLY_PAID · PAID · CANCELLED.
  *
  * The vocabulary is the repository's, not this file's. An operator reading the
  * existing invoice list sees "GENERATED" and a new value like "ISSUED" would
  * force a translation table to explain the difference between two words that
- * mean the same thing.
+ * mean the same thing. PARTIALLY_PAID is the schema's own status for "money is
+ * in, but not all of it" (Batch 2B) — an invoice that was sworn to be PENDING
+ * with ₹35,000 of ₹50,000 collected misled every billing screen that filtered
+ * on it.
  */
-const INVOICE_STATUSES = Object.freeze(['PENDING', 'GENERATED', 'PAID', 'CANCELLED']);
+const INVOICE_STATUSES = Object.freeze([
+  'PENDING',
+  'GENERATED',
+  'PARTIALLY_PAID',
+  'PAID',
+  'CANCELLED',
+]);
 
 /** Mirrors the Prisma `PaymentStatus` vocabulary used on the ledger. */
 const LEDGER_PAYMENT_STATUSES = Object.freeze(['PAID', 'PENDING', 'FAILED', 'CANCELLED']);
@@ -73,6 +82,115 @@ class TripInvoiceService {
     this.auditRepo = new AuditLogRepository({ prisma: this.prisma });
   }
 
+  /**
+   * RECONCILE ONE INVOICE AGAINST THE LEDGER (Batch 2B, Phase 2)
+   * =========================================================================
+   * THE ONE place an Invoice's money state is recomputed and persisted. Every
+   * customer-receipt path (this service's `recordCustomerPayment`,
+   * `TripService.addPayment`, `CanonicalFinancialService.recordClientPayment`)
+   * calls this INSIDE its own transaction, so the invoice row can never claim
+   * one thing while the ledger says another.
+   *
+   * THE DEFECT IT REMOVES
+   *   A ₹50,000 invoice with ₹35,000 of receipts used to stay `PENDING` /
+   *   `UNPAID` forever, because no receipt path ever wrote the invoice's own
+   *   status column — the money was recorded on the trip and the document
+   *   silently disagreed. This method is the fix: it derives the state from
+   *   the ledger and stamps BOTH
+   *     · `payment_status`  (the String column the dispatch page reads)
+   *     · `status`          (the InvoiceStatus enum the billing lists filter)
+   *   — `PARTIALLY_PAID` when receipts are in but a balance remains, `PAID`
+   *   (with `paid_at`) when the balance is cleared.
+   *
+   * WHY A STATIC METHOD
+   *   The reconciler must run on a transaction client (`tx`), not on a
+   *   service's `this.prisma`, or it would read outside the transaction that
+   *   just moved the money and could race a second receipt. Passing the handle
+   *   in keeps every read/write on the one snapshot.
+   *
+   * RECEIPT DEFINITION
+   *   Receipts against the invoice are CREDIT rows of type CUSTOMER_PAYMENT /
+   *   CLIENT_PAYMENT that are not CANCELLED (reversals are recorded by the
+   *   caller cancelling/ reversing the original row, not as money in).
+   *
+   * @param {Object} input
+   * @param {import('@prisma/client').PrismaClient | import('@prisma/client').Prisma.TransactionClient} input.prisma
+   *        The transaction (or bare client for a standalone reconcile).
+   * @param {number} input.invoiceId
+   * @param {Date} [input.now]
+   * @returns {Promise<{invoice:Object, paymentStatus:string, status:string,
+   *   received:number, total:number, balance:number}>}
+   */
+  static async reconcileInvoiceStatus({ prisma: db, invoiceId, now = new Date() }) {
+    const invoice = await db.invoice.findUnique({ where: { invoice_id: invoiceId } });
+    if (!invoice) {
+      throw new NotFoundError({ message: 'Invoice not found' });
+    }
+
+    const receipts = await db.financialTransaction.findMany({
+      where: {
+        invoice_id: invoiceId,
+        transaction_type: { in: ['CUSTOMER_PAYMENT', 'CLIENT_PAYMENT'] },
+        // CANCELLED and REFUNDED ledger rows are not money in the till — the
+        // same exclusion the canonical due-check applies. Counting a refunded
+        // receipt as collected would leave the document claiming money the
+        // ledger has already given back.
+        status: { notIn: ['CANCELLED', 'REFUNDED'] },
+      },
+      select: { amount: true },
+    });
+
+    const received = Math.round(
+      receipts.reduce((sum, r) => sum + Number(r.amount || 0), 0) * 100,
+    ) / 100;
+    const total = Number(invoice.grand_total ?? invoice.total_amount ?? invoice.final_price ?? 0);
+    // An OVER-payment is a fully settled invoice with a change due — never a
+    // negative "balance owed" advertised to an operator.
+    const balance = Math.max(0, Math.round((total - received) * 100) / 100);
+
+    const paymentStatus = balance <= 0 && total > 0
+      ? 'PAID'
+      : received > 0 ? 'PARTIALLY_PAID' : 'UNPAID';
+
+    // THE ENUM MAPPING THE SCHEMA DECLARES:
+    //   PAID           → 'PAID'            (+ paid_at stamped once)
+    //   PARTIALLY_PAID → 'PARTIALLY_PAID'
+    //   UNPAID         → keep whatever was there (PENDING / GENERATED) so the
+    //                    document state is not coarsened by a read; but if the
+    //                    row previously claimed PAID / PARTIALLY_PAID and the
+    //                    ledger no longer shows it (a reversal), fall back to
+    //                    PENDING rather than leaving a lie behind.
+    let enumStatus = invoice.status;
+    if (paymentStatus === 'PAID') {
+      enumStatus = 'PAID';
+    } else if (paymentStatus === 'PARTIALLY_PAID') {
+      enumStatus = 'PARTIALLY_PAID';
+    } else if (invoice.status === 'PAID' || invoice.status === 'PARTIALLY_PAID') {
+      enumStatus = 'PENDING';
+    }
+
+    const data = {
+      payment_status: paymentStatus,
+      ...(enumStatus !== invoice.status ? { status: enumStatus } : {}),
+      ...(paymentStatus === 'PAID' && !invoice.paid_at ? { paid_at: now } : {}),
+      updated_at: now,
+    };
+
+    const updated = Object.keys(data).length
+      ? await db.invoice.update({ where: { invoice_id: invoiceId }, data })
+      : invoice;
+
+    return {
+      invoice: updated,
+      paymentStatus,
+      status: enumStatus,
+      received,
+      total,
+      balance,
+    };
+  }
+
+
   // =========================================================================
   // READ
   // =========================================================================
@@ -87,10 +205,27 @@ class TripInvoiceService {
     const id = Number(tripId);
     if (!Number.isInteger(id) || id <= 0) throw new NotFoundError({ message: 'Trip not found' });
 
-    const invoice = await this.prisma.invoice.findFirst({
+    let invoice = await this.prisma.invoice.findFirst({
       where: { trip_id: id },
       orderBy: [{ invoice_id: 'desc' }],
     });
+    if (!invoice) {
+      // BATCH 2B — the booking's own bill. The Phase 7 auto-invoice is
+      // booking-linked only (it predates the trip, so trip_id is NULL). The
+      // billing page must show THAT bill rather than "no invoice" — which is
+      // what used to invite the operator into raising a second document.
+      // Read-only: the document's columns are never rewritten here.
+      const trip = await this.prisma.trip.findUnique({
+        where: { trip_id: id },
+        select: { booking_id: true },
+      });
+      if (trip && trip.booking_id) {
+        invoice = await this.prisma.invoice.findFirst({
+          where: { booking_id: trip.booking_id },
+          orderBy: [{ invoice_id: 'desc' }],
+        });
+      }
+    }
     if (!invoice) return null;
 
     const position = await this.getPosition(invoice);
@@ -108,7 +243,13 @@ class TripInvoiceService {
    */
   async getPosition(invoice) {
     const payments = await this.prisma.financialTransaction.findMany({
-      where: { invoice_id: invoice.invoice_id, status: { not: 'CANCELLED' } },
+      where: {
+        invoice_id: invoice.invoice_id,
+        // CANCELLED and REFUNDED ledger rows are not money in the till — the
+        // same exclusion the reconciliation and the canonical due-check
+        // apply, so no two layers can disagree on how much was received.
+        status: { notIn: ['CANCELLED', 'REFUNDED'] },
+      },
       orderBy: [{ transaction_date: 'desc' }],
     });
 
@@ -157,14 +298,59 @@ class TripInvoiceService {
     const trip = await this.prisma.trip.findUnique({ where: { trip_id: id } });
     if (!trip) throw new NotFoundError({ message: 'Trip not found' });
 
+    // ── BATCH 2B, PHASE 3 — BILLING ELIGIBILITY ────────────────────────────
+    // An invoice is a COMMERCIAL document: it is raised only against a
+    // consignment that is real, payable and still alive.
+    //   1. A terminated consignment cannot be billed — the freight was never
+    //      earned and the order was explicitly retracted.
+    //   2. A bill needs somebody to send it to: a trip with neither a
+    //      registered customer (`user_id`) nor a client (`client_id`) has no
+    //      billing identity, and inventing one here would mean the PDF renders
+    //      a blank payer and the ledger credits nobody.
+    //   3. A zero-billing consignment has nothing to bill (the same rule the
+    //      quotation send path applies to an amount of 0).
+    if (trip.status === 'CANCELLED') {
+      throw new ConflictError({
+        message: 'A cancelled consignment cannot be invoiced. Nothing was carried or earned.',
+      });
+    }
+    if (!trip.user_id && !trip.client_id) {
+      throw new ValidationError(
+        'This consignment has no customer to bill — it has neither a registered customer nor a client account.',
+      );
+    }
+
     // Already billed → return it. Never a second bill.
     const existing = await this.prisma.invoice.findFirst({ where: { trip_id: id } });
     if (existing) {
       return { invoice: existing, created: false, position: await this.getPosition(existing) };
     }
 
+    // Already billed at BOOKING level → return THAT bill. The Phase 7
+    // auto-invoice is written when the order is confirmed — BEFORE any trip
+    // exists — so it carries booking_id with trip_id NULL, which the
+    // trip-only lookup above cannot see. Without this branch, pressing
+    // Create-Invoice on a booking-backed trip re-raised a second document
+    // and hit the per-booking unique index (invoices_booking_id_key → P2002)
+    // instead of returning the bill the operator already had. Phase 3's
+    // contract: ONE bill per consignment, whichever path raised it first.
+    if (trip.booking_id) {
+      const bookingInvoice = await this.prisma.invoice.findFirst({
+        where: { booking_id: trip.booking_id },
+        orderBy: [{ invoice_id: 'desc' }],
+      });
+      if (bookingInvoice) {
+        return { invoice: bookingInvoice, created: false, position: await this.getPosition(bookingInvoice) };
+      }
+    }
+
     const source = await this._resolveFinancialSource(trip);
     const amounts = this._computeTotals(source, overrides);
+    if (!(amounts.grand_total > 0)) {
+      throw new ValidationError(
+        'The consignment records no billable amount — there is nothing to invoice.',
+      );
+    }
     const customer = await this._resolveCustomer(trip);
     const now = new Date();
     const invoiceDate = overrides.invoice_date ? new Date(overrides.invoice_date) : now;
@@ -318,11 +504,29 @@ class TripInvoiceService {
     const trip = await this.prisma.trip.findUnique({ where: { trip_id: id } });
     if (!trip) throw new NotFoundError({ message: 'Trip not found' });
 
-    const invoice = input.invoice_id
-      ? await this.prisma.invoice.findFirst({
-        where: { invoice_id: Number(input.invoice_id), trip_id: id },
-      })
-      : await this.prisma.invoice.findFirst({ where: { trip_id: id } });
+    // The bill this receipt settles. An explicit invoice_id is honoured — but
+    // it must be THIS consignment's bill, whether it was raised against the
+    // trip or (the Phase 7 auto-invoice case) against the booking that
+    // predates the trip. An implicit lookup prefers the trip-linked document
+    // and falls back to the booking's bill — one consignment, one bill,
+    // reachable from every door.
+    let invoice = null;
+    if (input.invoice_id) {
+      invoice = await this.prisma.invoice.findFirst({
+        where: {
+          invoice_id: Number(input.invoice_id),
+          OR: [{ trip_id: id }, ...(trip.booking_id ? [{ booking_id: trip.booking_id }] : [])],
+        },
+      });
+    } else {
+      invoice = await this.prisma.invoice.findFirst({ where: { trip_id: id } });
+      if (!invoice && trip.booking_id) {
+        invoice = await this.prisma.invoice.findFirst({
+          where: { booking_id: trip.booking_id },
+          orderBy: [{ invoice_id: 'desc' }],
+        });
+      }
+    }
 
     if (!invoice) {
       throw new ValidationError('No customer invoice exists for this consignment yet. Create the invoice first.');
@@ -365,25 +569,17 @@ class TripInvoiceService {
         },
       });
 
-      // The invoice's OWN payment_status is refreshed from the ledger inside
-      // the same transaction, so a reader can never see an invoice that claims
-      // UNPAID after the money is in, or PAID before it is.
-      const all = await tx.financialTransaction.findMany({
-        where: { invoice_id: invoice.invoice_id, status: { not: 'CANCELLED' } },
+      // The invoice's money state is reconciled from the ledger inside this
+      // same transaction — the ONE reconciliation (see the static
+      // `reconcileInvoiceStatus` above), so both `payment_status` and the
+      // InvoiceStatus enum column move with the cash.
+      const recon = await TripInvoiceService.reconcileInvoiceStatus({
+        prisma: tx,
+        invoiceId: invoice.invoice_id,
+        now,
       });
-      const received = all.reduce((sum, p) => sum + Number(p.amount || 0), 0);
-      const total = Number(invoice.grand_total ?? invoice.total_amount ?? invoice.final_price ?? 0);
-      const balance = Math.round((total - received) * 100) / 100;
-      const paymentStatus = balance <= 0 ? 'PAID' : received > 0 ? 'PARTIALLY_PAID' : 'UNPAID';
-
-      const updatedInvoice = await tx.invoice.update({
-        where: { invoice_id: invoice.invoice_id },
-        data: {
-          payment_status: paymentStatus,
-          ...(paymentStatus === 'PAID' ? { paid_at: now, status: 'PAID' } : {}),
-          updated_at: now,
-        },
-      });
+      const { paymentStatus, received, total, balance } = recon;
+      const updatedInvoice = recon.invoice;
 
       await this.timelineRepo.create({
         trip_id: trip.trip_id,
@@ -397,6 +593,7 @@ class TripInvoiceService {
           payment_method: method,
           reference_number: input.reference_number || null,
           payment_status: paymentStatus,
+          invoice_status: recon.status,
           balance,
         },
         created_by: user?.user_id || null,
@@ -408,9 +605,13 @@ class TripInvoiceService {
         action: 'customer_payment_recorded',
         entity_type: 'FinancialTransaction',
         entity_id: transaction.transaction_id,
-        previous_value: JSON.stringify({ payment_status: invoice.payment_status }),
+        previous_value: JSON.stringify({
+          payment_status: invoice.payment_status,
+          status: invoice.status,
+        }),
         new_value: JSON.stringify({
           payment_status: paymentStatus,
+          status: recon.status,
           amount,
           invoice_number: invoice.invoice_number,
           balance,
@@ -617,6 +818,17 @@ class TripInvoiceService {
       quantity_unit: c.quantity_unit,
       total: c.total,
     }));
+  }
+
+  /**
+   * The billing context for the customer on a trip — the public face of
+   * `_resolveCustomer` for the route layer, so routes never reach into a
+   * private method.
+   * @param {Object} trip - a Trip row with `client` / `user` loaded as needed
+   * @returns {Promise<Object|null>}
+   */
+  async customerContext(trip) {
+    return this._resolveCustomer(trip);
   }
 
   /** @private */

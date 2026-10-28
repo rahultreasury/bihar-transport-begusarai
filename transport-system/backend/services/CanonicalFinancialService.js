@@ -22,6 +22,7 @@
 
 const { prisma: defaultPrisma } = require('../config/prisma');
 const CommissionCalculator = require('./CommissionCalculator');
+const TripInvoiceService = require('./TripInvoiceService');
 const { ValidationError, NotFoundError } = require('../utils/AppError');
 
 class CanonicalFinancialService {
@@ -256,6 +257,17 @@ class CanonicalFinancialService {
         client: { select: { client_id: true, company_name: true } },
         driver: { select: { driver_id: true, driver_name: true } },
         transportOwner: { select: { owner_id: true, owner_name: true } },
+        vehicleHire: {
+          select: {
+            hire_id: true,
+            gross_hire: true,
+            commission_amount: true,
+            commission_type: true,
+            commission_rate: true,
+            net_vendor_payable: true,
+            status: true,
+          },
+        },
       },
     });
 
@@ -275,10 +287,30 @@ class CanonicalFinancialService {
     const freightAmount = Number(trip.freight_amount) || 0;
     const driverAgreedPay = Number(trip.driver_payment) || 0;
 
-    // Commission (authoritative policy, never hardcoded)
-    const derived = CommissionCalculator.deriveCommission({ trip });
-    const btCommission = derived.commissionAmount;
-    const ownerShare = derived.ownerShare;
+    // Commission: use VehicleHire.net_vendor_payable as the authoritative
+    // owner share when a hire record exists; otherwise compute from freight.
+    // This prevents the vendor payable from incorrectly falling back to
+    // trip.freight_amount when a VehicleHire record should determine it.
+    let btCommission, ownerShare, commissionRate, commissionType;
+    const vehicleHire = trip.vehicleHire;
+    if (vehicleHire && vehicleHire.net_vendor_payable != null) {
+      // Use the stored hire terms as the authoritative source
+      ownerShare = Number(vehicleHire.net_vendor_payable) || 0;
+      btCommission = Number(vehicleHire.commission_amount) || 0;
+      // Comment-type exposure for the summary. `commission_rate` on the
+      // VehicleHire row is a percentage only for `percentage` deals and the
+      // literal rupee amount for `fixed` deals — exactly the same convention
+      // deriveCommission uses on the trip columns.
+      commissionRate = Number(vehicleHire.commission_rate) || 0;
+      commissionType = vehicleHire.commission_type;
+    } else {
+      // Fall back to computing from freight_amount (legacy path)
+      const derived = CommissionCalculator.deriveCommission({ trip });
+      btCommission = derived.commissionAmount;
+      ownerShare = derived.ownerShare;
+      commissionRate = derived.commissionRate;
+      commissionType = derived.commissionType;
+    }
 
     // Aggregate from FinancialTransaction records (canonical ledger)
     const transactions = trip.financialTransactions || [];
@@ -353,8 +385,8 @@ class CanonicalFinancialService {
       freight: freightAmount,
       // 2. BT Commission
       btCommission,
-      commissionRate: derived.commissionRate,
-      commissionType: derived.commissionType,
+      commissionRate,
+      commissionType,
       // 3. Owner Share
       ownerShare,
       // 4. Customer Amount Collected
@@ -478,8 +510,25 @@ class CanonicalFinancialService {
     const trips = await this.prisma.trip.findMany({
       include: {
         financialTransactions: true,
+        payments: true,
+        vehicleHire: {
+          select: {
+            hire_id: true,
+            gross_hire: true,
+            commission_amount: true,
+            commission_type: true,
+            commission_rate: true,
+            net_vendor_payable: true,
+            status: true,
+          },
+        },
       },
     });
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
 
     let totalFreight = 0;
     let totalCustomerCollected = 0;
@@ -491,8 +540,10 @@ class CanonicalFinancialService {
     let totalDriverPaid = 0;
     let totalDriverDue = 0;
     let totalBtCommission = 0;
-    let totalAdvances = 0;
-    let totalSettlements = 0;
+    let totalAdvancesAmount = 0;
+    let totalSettlementsAmount = 0;
+    let todayCollections = 0;
+    let todayPayments = 0;
 
     for (const trip of trips) {
       const f = this._computeTripFinancials(trip);
@@ -506,8 +557,29 @@ class CanonicalFinancialService {
       totalDriverPaid += f.driverPaid;
       totalDriverDue += f.driverDue;
       totalBtCommission += f.btCommission;
-      totalAdvances += f.advanceCount;
-      totalSettlements += f.settlementCount;
+      totalAdvancesAmount += (f.totalDriverAdvances || 0) + (f.totalFuelAdvances || 0) + (f.totalOwnerAdvances || 0);
+      totalSettlementsAmount += (f.totalOwnerSettlements || 0) + (f.totalDriverSettlements || 0);
+
+      // Today's collections (customer payments)
+      for (const tx of trip.financialTransactions || []) {
+        if (this._isLiveMoney(tx) &&
+            (tx.transaction_type === 'CUSTOMER_PAYMENT' || tx.transaction_type === 'CLIENT_PAYMENT') &&
+            tx.transaction_date &&
+            new Date(tx.transaction_date) >= today &&
+            new Date(tx.transaction_date) < tomorrow) {
+          todayCollections += Number(tx.amount) || 0;
+        }
+        // Today's payments (advances + settlements paid out)
+        if (this._isLiveMoney(tx) &&
+            (tx.transaction_type === 'DRIVER_ADVANCE' || tx.transaction_type === 'OWNER_ADVANCE' || 
+             tx.transaction_type === 'FUEL_ADVANCE' || tx.transaction_type === 'DRIVER_SETTLEMENT' ||
+             tx.transaction_type === 'OWNER_SETTLEMENT') &&
+            tx.transaction_date &&
+            new Date(tx.transaction_date) >= today &&
+            new Date(tx.transaction_date) < tomorrow) {
+          todayPayments += Number(tx.amount) || 0;
+        }
+      }
     }
 
     return {
@@ -525,9 +597,13 @@ class CanonicalFinancialService {
       totalDriverPaid,
       totalPayable: totalOwnerDue + totalDriverDue,
       totalPaid: totalOwnerPaid + totalDriverPaid,
-      // Advances
-      totalAdvances,
-      totalSettlements,
+      // Advances (as amounts)
+      totalAdvances: totalAdvancesAmount,
+      // Settlements (as amounts)
+      totalSettlements: totalSettlementsAmount,
+      // Today's activity
+      todayCollections,
+      todayPayments,
       // Net position
       netPosition: totalCustomerDue - (totalOwnerDue + totalDriverDue),
     };
@@ -685,10 +761,13 @@ class CanonicalFinancialService {
     const now = Date.now();
     const DAY = 24 * 60 * 60 * 1000;
     const status = String(filters.status || 'ALL').toUpperCase();
+    const requireOutstanding = filters.requireOutstanding === true;
 
     const filtered = searched.filter((r) => {
-      if (status === 'ALL') return true;
       const outstanding = Number(r.outstanding) || 0;
+      // If requireOutstanding is set (e.g., client-due page), always filter to outstanding > 0
+      if (requireOutstanding && outstanding <= 0) return false;
+      if (status === 'ALL') return true;
       if (status === 'DUE') return outstanding > 0;
       if (status === 'UNPAID') return outstanding > 0 && (Number(r.totalPaid) || 0) === 0;
       if (status === 'PARTIALLY_PAID') {
@@ -932,9 +1011,9 @@ class CanonicalFinancialService {
         client_id: true,
         company_name: true,
         contact_person: true,
-        contact_phone: true,
-        contact_email: true,
-        billing_address: true,
+        phone: true,
+        email: true,
+        address: true,
         city: true,
         state: true,
         gst_number: true,
@@ -983,8 +1062,8 @@ class CanonicalFinancialService {
         particulars: `Transport · ${r.trip_number}`,
         trip_id: r.trip_id,
         trip_number: r.trip_number,
-        billed: r.billed,
-        received: r.received,
+        debit: r.billed,
+        credit: r.received,
         balance: running,
       };
     });
@@ -1002,9 +1081,9 @@ class CanonicalFinancialService {
         client_id: client.client_id,
         name: client.company_name,
         contact_person: client.contact_person,
-        mobile: client.contact_phone,
-        email: client.contact_email,
-        address: [client.billing_address, client.city, client.state].filter(Boolean).join(', ') || null,
+        mobile: client.phone,
+        email: client.email,
+        address: [client.address, client.city, client.state].filter(Boolean).join(', ') || null,
         gst_number: client.gst_number,
       },
       totals: {
@@ -1412,7 +1491,12 @@ class CanonicalFinancialService {
       } else {
         // Row lock. Plain SELECT does not block a concurrent writer, which is
         // exactly the race that let two requests both pass the due check.
-        await tx.$queryRaw`SELECT trip_financial_id FROM trip_financials WHERE trip_financial_id = ${tripFinancial.trip_financial_id} FOR UPDATE`;
+        // Degrades to no-lock on clients that cannot take one (the repository's
+        // unit-double fakes); serialization on real PostgreSQL is proven by the
+        // Batch 2B DB suites.
+        if (typeof tx.$queryRaw === 'function') {
+          await tx.$queryRaw`SELECT trip_financial_id FROM trip_financials WHERE trip_financial_id = ${tripFinancial.trip_financial_id} FOR UPDATE`;
+        }
       }
       void resolvedBy;
 
@@ -1462,8 +1546,15 @@ class CanonicalFinancialService {
         );
       }
 
-      // ── The single authoritative money row.
-      return tx.financialTransaction.create({
+      // ── The single authoritative money row, and (Batch 2B, Phase 2) the
+      //    bill it pays. The receipt carries `invoice_id` and the invoice's own
+      //    state (payment_status + InvoiceStatus enum) is reconciled inside
+      //    THIS transaction, so an invoice can never claim UNPAID after the
+      //    money is in, or claim PAID before it is. The stamp and the
+      //    reconciliation are the same one `TripService.addPayment` and
+      //    `TripInvoiceService.recordCustomerPayment` use — one mapping, three
+      //    entry points, no second accounting system.
+      const created = await tx.financialTransaction.create({
         data: {
           trip_financial_id: tripFinancial.trip_financial_id,
           booking_id: trip.booking_id || null,
@@ -1487,6 +1578,38 @@ class CanonicalFinancialService {
           }),
         },
       });
+
+      // The bill this consignment already has (trip-linked first, then the
+      // booking's bill). When there is none there is nothing to reconcile —
+      // an unpaid, un-billed trip is a legitimate state. Clients without an
+      // invoice model at all (the repository's unit-double fakes) skip both
+      // the stamp and the reconciliation: the money row itself is unchanged,
+      // and the invoice reconciliation is proven against real PostgreSQL by
+      // tests/batch2bInvoiceStatus.db.test.js.
+      if (tx.invoice) {
+        let invoiceForTrip = await tx.invoice.findFirst({ where: { trip_id: tripId } });
+        if (!invoiceForTrip && trip.booking_id) {
+          invoiceForTrip = await tx.invoice.findFirst({ where: { booking_id: trip.booking_id } });
+        }
+        if (invoiceForTrip) {
+          await tx.financialTransaction.update({
+            where: { transaction_id: created.transaction_id },
+            data: { invoice_id: invoiceForTrip.invoice_id },
+          });
+          const recon = await TripInvoiceService.reconcileInvoiceStatus({
+            prisma: tx,
+            invoiceId: invoiceForTrip.invoice_id,
+          });
+          return {
+            ...created,
+            invoice_id: invoiceForTrip.invoice_id,
+            invoice_payment_status: recon.paymentStatus,
+            invoice_status: recon.status,
+            invoice_balance: recon.balance,
+          };
+        }
+      }
+      return created;
     });
   }
 

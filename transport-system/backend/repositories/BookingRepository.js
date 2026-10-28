@@ -37,6 +37,42 @@ const QUOTE_STATUS_VALUES = [
  * deliberately excludes terminal/closed states so "Awaiting Quote" never shows
  * a customer who already accepted or rejected.
  */
+/**
+ * Free-text predicate shared by the admin booking list and its lifecycle
+ * counts. Keeping both queries on the same predicate prevents the tab counts
+ * from disagreeing with the rows visible under a search.
+ *
+ * @param {string} term
+ * @returns {Object[]} Prisma OR conditions
+ */
+function bookingSearchConditions(term) {
+  const contains = { contains: String(term).trim(), mode: 'insensitive' };
+  return [
+    { booking_number: contains },
+    { booking_reference: contains },
+    { pickup_city: contains },
+    { pickup_location: contains },
+    { drop_city: contains },
+    { drop_location: contains },
+    { goods_description: contains },
+    { goods_type: contains },
+    { vehicle_type_required: contains },
+    { driver_name_snapshot: contains },
+    { truck_number_snapshot: contains },
+    {
+      user: {
+        is: {
+          OR: [
+            { first_name: contains },
+            { last_name: contains },
+            { phone: { contains: String(term) } },
+          ],
+        },
+      },
+    },
+  ];
+}
+
 const ACTIONABLE_QUOTE_STATUSES = [
   'PENDING',
   'PREPARING',
@@ -120,6 +156,22 @@ const BookingInclude = {
       otp_verified: true,
       recipient_name: true,
       delivery_notes: true,
+    },
+  },
+  trips: {
+    orderBy: { trip_id: 'desc' },
+    take: 1,
+    select: {
+      trip_id: true,
+      trip_number: true,
+      status: true,
+      driver_id: true,
+      vehicle_id: true,
+      pickup_location: true,
+      drop_location: true,
+      trip_date: true,
+      created_at: true,
+      updated_at: true,
     },
   },
 };
@@ -425,6 +477,124 @@ class BookingRepository {
    * @param {Object} filters - validated query params
    * @returns {Promise<{data: Object[], pagination: Object}>}
    */
+  /**
+   * Returns a Prisma where clause for a lifecycle category.
+   * Maps directly to the dashboard card definitions and frontend resolveOrder logic.
+   * Uses the authoritative Trip status when a Trip exists, otherwise falls back to Booking/Delivery.
+   */
+  getStageWhere(stageKey) {
+    if (!stageKey || stageKey === 'ALL') return {};
+    const key = String(stageKey).toUpperCase();
+
+    if (key === 'ACTIVE_TRIPS') {
+      // Active Trips: operational trips that are NOT completed or cancelled
+      // Includes all operational stages: ASSIGNED, TO_LOADING_POINT, AT_LOADING_POINT, LOADED, DISPATCHED, IN_TRANSIT, DELIVERED
+      // Also includes bookings that are in operational states (driver_assigned, pickup_completed, in_transit, delivered) but not completed/cancelled
+      return {
+        OR: [
+          // Trip-side: all non-terminal operational stages
+          { trips: { some: { status: { in: ['PENDING', 'ASSIGNED', 'TO_LOADING_POINT', 'AT_LOADING_POINT', 'LOADED', 'DISPATCHED', 'IN_TRANSIT', 'DELIVERED'] } } } },
+          // Booking-side: operational states (for bookings without trips yet)
+          { AND: [
+            { quote_status: 'ACCEPTED' },
+            { status: { in: ['driver_assigned', 'pickup_completed', 'in_transit', 'delivered'] } }
+          ]}
+        ]
+      };
+    } else if (key === 'ENQUIRY') {
+      // Enquiry stage: quote not yet accepted, booking still pending
+      return { quote_status: 'PENDING', status: 'pending' };
+    } else if (key === 'QUOTATION') {
+      // Quotation stage: quote prepared/sent/waiting, not yet accepted
+      return {
+        OR: [
+          { quote_status: { in: ['PREPARING', 'DRIVER_RESERVED', 'VEHICLE_RESERVED', 'SENT', 'QUOTE_SENT', 'WAITING_CUSTOMER_APPROVAL', 'REJECTED', 'EXPIRED'] } },
+          { AND: [{ quote_status: 'PENDING' }, { status: { not: 'pending' } }] }
+        ]
+      };
+    } else if (key === 'ORDER_CONFIRMED') {
+      // Order confirmed: quote accepted, booking confirmed, but no vehicle/driver assigned yet
+      return {
+        AND: [
+          { quote_status: 'ACCEPTED' },
+          { status: { in: ['confirmed', 'pending'] } },
+          { OR: [
+            { vehicle_id: null },
+            { driver_id: null }
+          ]}
+        ]
+      };
+    } else if (key === 'VEHICLE_HIRED' || key === 'VEHICLE_PENDING') {
+      // Vehicle Pending/Hired: confirmed orders with driver assigned but waiting for vehicle,
+      // OR confirmed orders with vehicle assigned but waiting for driver,
+      // OR trips in ASSIGNED/TO_LOADING_POINT/AT_LOADING_POINT/LOADED
+      return {
+        OR: [
+          // Booking-side: confirmed with driver but no vehicle, or vehicle but no driver
+          { AND: [{ quote_status: 'ACCEPTED' }, { status: { in: ['confirmed', 'driver_assigned'] } }, { OR: [{ vehicle_id: null }, { driver_id: null }] }] },
+          // Trip-side: operational trip created but not yet in transit
+          { trips: { some: { status: { in: ['PENDING', 'ASSIGNED', 'TO_LOADING_POINT', 'AT_LOADING_POINT', 'LOADED'] } } } }
+        ]
+      };
+    } else if (key === 'LOADING') {
+      // Loading: pickup in progress at loading point
+      return {
+        OR: [
+          { status: 'pickup_completed' },
+          { delivery: { is: { current_status: 'pickup_in_progress' } } },
+          { trips: { some: { status: { in: ['TO_LOADING_POINT', 'AT_LOADING_POINT', 'LOADED'] } } } }
+        ]
+      };
+    } else if (key === 'DISPATCH') {
+      // Dispatched: vehicle dispatched from loading point
+      return { trips: { some: { status: 'DISPATCHED' } } };
+    } else if (key === 'TRANSIT' || key === 'IN_TRANSIT') {
+      // In Transit: authoritative state is in transit (Trip IN_TRANSIT or Booking in_transit/pickup_completed)
+      return {
+        OR: [
+          { status: 'in_transit' },
+          { delivery: { is: { current_status: { in: ['in_transit', 'out_for_delivery'] } } } },
+          { trips: { some: { status: 'IN_TRANSIT' } } }
+        ]
+      };
+    } else if (key === 'DELIVERY' || key === 'DELIVERED') {
+      // Delivered: arrived at destination, out for delivery, or delivery confirmed
+      return {
+        OR: [
+          { delivery: { is: { current_status: 'out_for_delivery' } } },
+          { trips: { some: { status: 'DELIVERED' } } }
+        ]
+      };
+    } else if (key === 'POD' || key === 'POD_PENDING') {
+      // POD Pending: delivered but POD not yet completed/verified
+      // POD is a DOCUMENT requirement — only count orders where POD is actually required
+      // Check: trip.documents_required array contains 'POD'
+      return {
+        OR: [
+          { status: 'delivered' },
+          { delivery: { is: { current_status: 'delivered' } } }
+        ],
+        AND: [
+          { OR: [
+            { trips: { none: { status: 'COMPLETED' } } },
+            { trips: { none: { status: { in: ['COMPLETED'] } } } }
+          ]},
+          // POD must be explicitly required for this trip
+          { trips: { some: { documents_required: { array_contains: 'POD' } } } }
+        ]
+      };
+    } else if (key === 'COMPLETED') {
+      // Completed: trip completed or booking completed
+      return {
+        OR: [
+          { status: 'completed' },
+          { trips: { some: { status: 'COMPLETED' } } }
+        ]
+      };
+    }
+    return {};
+  }
+
   async listBookings(filters = {}) {
     const where = {};
 
@@ -482,32 +652,7 @@ class BookingRepository {
       // enquiry/booking id, customer name, mobile, pickup, drop, goods or
       // vehicle. It is still a real database filter — nothing is matched in
       // the browser and no results are invented client-side.
-      const term = String(filters.search).trim();
-      const contains = { contains: term, mode: 'insensitive' };
-      where.OR = [
-        { booking_number: contains },
-        { booking_reference: contains },
-        { pickup_city: contains },
-        { pickup_location: contains },
-        { drop_city: contains },
-        { drop_location: contains },
-        { goods_description: contains },
-        { goods_type: contains },
-        { vehicle_type_required: contains },
-        { driver_name_snapshot: contains },
-        { truck_number_snapshot: contains },
-        {
-          user: {
-            is: {
-              OR: [
-                { first_name: contains },
-                { last_name: contains },
-                { phone: { contains: term } },
-              ],
-            },
-          },
-        },
-      ];
+      where.OR = bookingSearchConditions(filters.search);
     }
     if (filters.date_from || filters.date_to) {
       where.pickup_date = {};
@@ -519,6 +664,14 @@ class BookingRepository {
     }
     if (filters.price_max !== '' && filters.price_max != null) {
       where.final_price = { ...(where.final_price || {}), lte: Number(filters.price_max) };
+    }
+
+    // Lifecycle stage filter (server-side)
+    if (filters.stage && filters.stage !== 'ALL') {
+      const stageWhere = this.getStageWhere(filters.stage);
+      if (Object.keys(stageWhere).length > 0) {
+        where.AND = where.AND ? [...where.AND, stageWhere] : [stageWhere];
+      }
     }
 
     const sortField = filters.sort_by || 'created_at';
@@ -551,6 +704,188 @@ class BookingRepository {
         limit,
         total,
         pages: Math.ceil(total / limit) || 0,
+      },
+    };
+  }
+
+  async getLifecycleCounts(filters = {}) {
+    const baseWhere = {};
+    if (filters.archived) {
+      baseWhere.archived_at = { not: null };
+    } else {
+      baseWhere.archived_at = null;
+    }
+
+    // The tab badges must describe the same cohort as the table. Apply the
+    // dashboard's non-stage filters here, then layer the per-stage predicate
+    // on top in the loop below.
+    if (filters.status) {
+      baseWhere.status = filters.status;
+    }
+    if (filters.search) {
+      baseWhere.OR = bookingSearchConditions(filters.search);
+    }
+    if (filters.date_from || filters.date_to) {
+      baseWhere.pickup_date = {};
+      if (filters.date_from) baseWhere.pickup_date.gte = filters.date_from;
+      if (filters.date_to) baseWhere.pickup_date.lte = filters.date_to;
+    }
+
+    const stages = [
+      'ALL',
+      'ENQUIRY',
+      'QUOTATION',
+      'ORDER_CONFIRMED',
+      'VEHICLE_HIRED',
+      'LOADING',
+      'DISPATCH',
+      'TRANSIT',
+      'DELIVERY',
+      'POD',
+      'COMPLETED',
+    ];
+
+    const results = await Promise.all(
+      stages.map(async (stage) => {
+        let where = { ...baseWhere };
+        if (stage !== 'ALL') {
+          const stageWhere = this.getStageWhere(stage);
+          if (Object.keys(stageWhere).length > 0) {
+            where.AND = where.AND ? [...where.AND, stageWhere] : [stageWhere];
+          }
+        }
+        const count = await prisma.booking.count({ where });
+        return { stage, count };
+      })
+    );
+
+    const counts = {};
+    results.forEach((r) => {
+      if (r.stage === 'VEHICLE_HIRED') counts.vehicleHired = r.count;
+      else if (r.stage === 'POD') counts.podPending = r.count;
+      else if (r.stage === 'DELIVERY') counts.delivered = r.count;
+      else if (r.stage === 'ORDER_CONFIRMED') counts.confirmed = r.count;
+      else if (r.stage === 'ALL') counts.all = r.count;
+      else if (r.stage === 'ENQUIRY') counts.enquiry = r.count;
+      else if (r.stage === 'QUOTATION') counts.quotation = r.count;
+      else if (r.stage === 'LOADING') counts.loading = r.count;
+      else if (r.stage === 'DISPATCH') counts.dispatch = r.count;
+      else if (r.stage === 'TRANSIT') counts.transit = r.count;
+      else if (r.stage === 'COMPLETED') counts.completed = r.count;
+    });
+
+    return { counts };
+  }
+
+  async getLifecycleSummary(filters = {}) {
+    const baseWhere = {};
+    if (filters.archived) {
+      baseWhere.archived_at = { not: null };
+    } else {
+      baseWhere.archived_at = null;
+    }
+
+    const { getBookingWithOperationalActiveTripsWhere } = require('../utils/operationalTripStatus');
+
+    // Active trips: operationally active trips (authoritative definition shared with Driver Management)
+    // Excludes placeholder PENDING trips without booking, vehicle hire, or driver+vehicle assignment
+    const activeTripsWhere = getBookingWithOperationalActiveTripsWhere(baseWhere);
+
+    // Vehicle pending: confirmed orders awaiting vehicle/driver assignment
+    // OR trips in early operational stages (ASSIGNED, TO_LOADING_POINT, AT_LOADING_POINT, LOADED)
+    // Uses authoritative operational trip definition for trip side
+    const { getOperationalActiveTripWhere } = require('../utils/operationalTripStatus');
+    const earlyOperationalStatuses = ['PENDING', 'ASSIGNED', 'TO_LOADING_POINT', 'AT_LOADING_POINT', 'LOADED'];
+    const vehiclePendingWhere = {
+      ...baseWhere,
+      OR: [
+        // Booking side: accepted quote, confirmed status, but missing vehicle or driver
+        {
+          AND: [
+            { quote_status: 'ACCEPTED' },
+            { status: { in: ['confirmed', 'driver_assigned'] } },
+            { OR: [{ vehicle_id: null }, { driver_id: null }] }
+          ]
+        },
+        // Trip side: early operational stages that are operationally active
+        {
+          trips: {
+            some: {
+              AND: [
+                { status: { in: earlyOperationalStatuses } },
+                getOperationalActiveTripWhere(),
+              ],
+            },
+          },
+        },
+      ],
+    };
+
+    // In transit: authoritative state is in transit
+    const inTransitWhere = {
+      ...baseWhere,
+      OR: [
+        { status: 'in_transit' },
+        { delivery: { is: { current_status: { in: ['in_transit', 'out_for_delivery'] } } } },
+        { trips: { some: { status: 'IN_TRANSIT' } } }
+      ]
+    };
+
+    // Delivered: arrived at destination
+    const deliveredWhere = {
+      ...baseWhere,
+      OR: [
+        { delivery: { is: { current_status: 'out_for_delivery' } } },
+        { trips: { some: { status: 'DELIVERED' } } }
+      ]
+    };
+
+    // POD pending: delivered but not completed, and POD is required
+    const podPendingWhere = {
+      ...baseWhere,
+      OR: [
+        { status: 'delivered' },
+        { delivery: { is: { current_status: 'delivered' } } }
+      ],
+      AND: [
+        {
+          OR: [
+            { trips: { none: { status: 'COMPLETED' } } }
+          ]
+        },
+        // POD must be explicitly required for this trip
+        { trips: { some: { documents_required: { array_contains: 'POD' } } } }
+      ]
+    };
+
+    // Completed: trip completed or booking completed
+    const completedWhere = {
+      ...baseWhere,
+      OR: [
+        { status: 'completed' },
+        { trips: { some: { status: 'COMPLETED' } } }
+      ]
+    };
+
+    const [all, activeTrips, vehiclePending, inTransit, delivered, podPending, completed] = await Promise.all([
+      prisma.booking.count({ where: baseWhere }),
+      prisma.booking.count({ where: activeTripsWhere }),
+      prisma.booking.count({ where: vehiclePendingWhere }),
+      prisma.booking.count({ where: inTransitWhere }),
+      prisma.booking.count({ where: deliveredWhere }),
+      prisma.booking.count({ where: podPendingWhere }),
+      prisma.booking.count({ where: completedWhere }),
+    ]);
+
+    return {
+      counts: {
+        totalOrders: all,
+        activeTrips: activeTrips,
+        vehiclePending: vehiclePending,
+        inTransit: inTransit,
+        delivered: delivered,
+        podPending: podPending,
+        completed: completed,
       },
     };
   }

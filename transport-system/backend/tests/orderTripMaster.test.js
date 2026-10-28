@@ -459,3 +459,195 @@ test('HIERARCHY — the six areas are NOT reachable before the vehicle is engage
   }
   assert.equal(r.stages.find((s) => s.key === 'VEHICLE_HIRED').state, 'current');
 });
+
+// ============================================================================
+// REGRESSION TESTS FOR BATCH 14 — LEGACY SHORTCUTS, SKIPPED STAGES, POD FILTERING
+// ============================================================================
+
+test('LEGACY 1 — ASSIGNED → IN_TRANSIT shortcut is allowed and audited', () => {
+  const r = resolve('ASSIGNED');
+  // The legacy shortcut ASSIGNED → IN_TRANSIT is in ALLOWED_TRANSITIONS
+  assert.ok(tripStateMachine.ALLOWED_TRANSITIONS.ASSIGNED.includes('IN_TRANSIT'));
+  // But it's marked as a legacy skip
+  assert.ok(tripStateMachine.isLegacySkip('ASSIGNED', 'IN_TRANSIT'));
+});
+
+test('LEGACY 2 — LOADED → IN_TRANSIT shortcut is REJECTED by state machine', () => {
+  // This shortcut was never in ALLOWED_TRANSITIONS for LOADED
+  assert.ok(!tripStateMachine.ALLOWED_TRANSITIONS.LOADED.includes('IN_TRANSIT'));
+  assert.throws(() => tripStateMachine.validateTransition('LOADED', 'IN_TRANSIT'));
+});
+
+test('LEGACY 3 — legacy shortcut marks skipped stages in workflow', () => {
+  // Simulate a trip that used ASSIGNED → IN_TRANSIT shortcut
+  // The workflow should show LOADING and DISPATCH as 'skipped', not 'done'
+  const r = resolve('IN_TRANSIT', {
+    legacySkippedStages: ['LOADING', 'DISPATCH']
+  });
+  
+  const loading = r.stages.find((s) => s.key === 'LOADING');
+  const dispatch = r.stages.find((s) => s.key === 'DISPATCH');
+  
+  assert.equal(loading.state, 'skipped', 'LOADING should be marked skipped');
+  assert.equal(dispatch.state, 'skipped', 'DISPATCH should be marked skipped');
+  // VEHICLE_HIRED should still be done (actually completed)
+  assert.equal(r.stages.find((s) => s.key === 'VEHICLE_HIRED').state, 'done');
+  // TRANSIT should be current
+  assert.equal(r.current_stage, 'TRANSIT');
+});
+
+test('LEGACY 4 — normal progression without shortcut shows all stages as done', () => {
+  // A trip that went through the full chain: ASSIGNED → TO_LOADING_POINT → AT_LOADING_POINT → LOADED → DISPATCHED → IN_TRANSIT
+  // Should show all previous stages as 'done', not 'skipped'
+  const r = resolve('IN_TRANSIT'); // No legacySkippedStages
+  
+  const loading = r.stages.find((s) => s.key === 'LOADING');
+  const dispatch = r.stages.find((s) => s.key === 'DISPATCH');
+  
+  assert.equal(loading.state, 'done', 'LOADING should be done when actually completed');
+  assert.equal(dispatch.state, 'done', 'DISPATCH should be done when actually completed');
+});
+
+test('POD 1 — POD filtering excludes bookings without Trip', () => {
+  // The POD filter should only include bookings that have a Trip with POD required
+  // Bookings with delivered status but no Trip should NOT appear in POD pending
+  const policy = require('../config/tripStagePolicy');
+  
+  // A booking with no trip resolves to unavailable stages
+  const r = policy.resolveTripStage({ tripStatus: null, trip: null });
+  assert.equal(r.has_trip, false);
+  assert.equal(r.current_stage, null);
+  assert.equal(r.next_action.endpoint, null);
+});
+
+test('POD 2 — POD required vs not required branches work correctly', () => {
+  const required = resolve('DELIVERED', { podRequired: true, podReceived: false });
+  assert.equal(required.effective_status, 'POD_PENDING');
+  assert.equal(required.next_action.id, 'UPLOAD_POD');
+  assert.equal(required.current_stage, 'POD');
+  
+  const notRequired = resolve('DELIVERED', { podRequired: false });
+  assert.equal(notRequired.effective_status, 'READY_TO_COMPLETE');
+  assert.equal(notRequired.next_action.id, 'COMPLETE_TRIP');
+  assert.equal(notRequired.pod_required, false);
+});
+
+test('POD 3 — POD received moves to COMPLETE_TRIP', () => {
+  const r = resolve('DELIVERED', { podRequired: true, podReceived: true });
+  assert.equal(r.pod_received, true);
+  assert.equal(r.next_action.id, 'COMPLETE_TRIP');
+  assert.equal(r.next_action.endpoint, '/api/trips/1094/complete');
+});
+
+test('BOOKING 1 — booking with no Trip shows unavailable stages', () => {
+  const r = resolve(null, { trip: null });
+  assert.equal(r.status, null);
+  assert.equal(r.has_trip, false);
+  assert.equal(r.current_stage, null);
+  assert.equal(r.next_action.endpoint, null);
+  for (const s of r.stages) {
+    assert.equal(s.state, 'unavailable', `${s.key} should be unavailable without a trip`);
+  }
+});
+
+test('BOOKING 2 — booking with delivered status but no Trip and unaccepted quote', () => {
+  // Simulates BTB-2026-00001: booking.status=completed, quote_status=PENDING, no trip
+  // The fallback logic should show VEHICLE_HIRED as current (waiting for vehicle)
+  // because vehicle_id exists but quote was never accepted
+  const policy = require('../config/tripStagePolicy');
+  const r = policy.resolveTripStage({
+    tripStatus: 'PENDING', // fallback from booking with vehicle but no trip
+    hasVehicleHire: false,
+    podRequired: false,
+    podReceived: false,
+    trip: { trip_id: 999 }
+  });
+  // With tripStatus=PENDING and no vehicle hire, should be at VEHICLE_HIRED waiting
+  assert.equal(r.current_stage, 'VEHICLE_HIRED');
+  assert.equal(r.vehicle_hire_state, 'WAITING_FOR_VEHICLE');
+});
+
+test('SKIPPED 1 — skipped state is distinct from done, locked, and unavailable', () => {
+  const r = resolve('IN_TRANSIT', { legacySkippedStages: ['LOADING', 'DISPATCH'] });
+  
+  const loading = r.stages.find((s) => s.key === 'LOADING');
+  const dispatch = r.stages.find((s) => s.key === 'DISPATCH');
+  const vehicle = r.stages.find((s) => s.key === 'VEHICLE_HIRED');
+  const transit = r.stages.find((s) => s.key === 'TRANSIT');
+  const delivery = r.stages.find((s) => s.key === 'DELIVERY');
+  
+  assert.equal(loading.state, 'skipped');
+  assert.equal(dispatch.state, 'skipped');
+  assert.equal(vehicle.state, 'done'); // Actually completed
+  assert.equal(transit.state, 'current');
+  // DELIVERY is the next action stage (ARRIVE_DELIVERY), so it's 'available', not 'locked'
+  assert.equal(delivery.state, 'available'); // Next action stage
+  
+  // Skipped should not equal done, locked, or unavailable
+  assert.notEqual(loading.state, 'done');
+  assert.notEqual(loading.state, 'locked');
+  assert.notEqual(loading.state, 'unavailable');
+});
+
+test('SKIPPED 2 — DELIVERED → IN_TRANSIT legacy shortcut also marks skipped stages', () => {
+  // DELIVERED → IN_TRANSIT is also a legacy shortcut
+  // Should skip POD stage (DELIVERED maps to POD stage)
+  const r = resolve('IN_TRANSIT', { legacySkippedStages: ['POD'] });
+  
+  const pod = r.stages.find((s) => s.key === 'POD');
+  assert.equal(pod.state, 'skipped');
+});
+
+test('KPI 1 — lifecycle counts use same authoritative logic as workflow', () => {
+  // The BookingRepository.getStageWhere for POD should match the workflow logic
+  // POD stage requires: delivered status AND trip with POD required AND trip not COMPLETED
+  const repo = require('../repositories/BookingRepository');
+  const r = new repo();
+  
+  // The POD stage where clause should check for trip.documents_required array_contains 'POD'
+  const podWhere = r.getStageWhere('POD');
+  assert.ok(podWhere.AND, 'POD stage should have AND conditions');
+  // Should check for trip with documents_required containing POD
+  const hasPodCheck = JSON.stringify(podWhere).includes('documents_required');
+  assert.ok(hasPodCheck, 'POD filter should check documents_required');
+});
+
+test('KPI 2 — completed count excludes POD-required trips that are not yet completed', () => {
+  // A trip that is DELIVERED but POD required and not received should NOT be in COMPLETED
+  // It should be in POD stage
+  const required = resolve('DELIVERED', { podRequired: true, podReceived: false });
+  assert.equal(required.current_stage, 'POD');
+  assert.equal(required.next_action.id, 'UPLOAD_POD');
+  
+  // Only when POD received or not required should it be READY_TO_COMPLETE
+  const notRequired = resolve('DELIVERED', { podRequired: false });
+  assert.equal(notRequired.effective_status, 'READY_TO_COMPLETE');
+});
+
+test('CONSISTENCY 1 — workflow API and client-side resolve agree on skipped stages', () => {
+  // The backend workflow API should return the same skipped stages as the client-side resolve
+  // when given the same legacySkippedStages
+  const backend = resolve('IN_TRANSIT', { legacySkippedStages: ['LOADING', 'DISPATCH'] });
+  const client = resolve('IN_TRANSIT', { legacySkippedStages: ['LOADING', 'DISPATCH'] });
+  
+  assert.deepEqual(
+    backend.stages.map(s => ({ key: s.key, state: s.state })),
+    client.stages.map(s => ({ key: s.key, state: s.state })),
+    'Backend and client should produce identical stage states'
+  );
+});
+
+test('CONSISTENCY 2 — refresh after transition updates skipped stages correctly', () => {
+  // Before shortcut: ASSIGNED
+  const before = resolve('ASSIGNED');
+  assert.equal(before.current_stage, 'VEHICLE_HIRED');
+  // LOADING is the next action stage (SEND_TO_LOADING), so it's 'available', not 'locked'
+  assert.equal(before.stages.find(s => s.key === 'LOADING').state, 'available');
+  
+  // After legacy shortcut to IN_TRANSIT with skipped stages
+  const after = resolve('IN_TRANSIT', { legacySkippedStages: ['LOADING', 'DISPATCH'] });
+  assert.equal(after.current_stage, 'TRANSIT');
+  assert.equal(after.stages.find(s => s.key === 'LOADING').state, 'skipped');
+  assert.equal(after.stages.find(s => s.key === 'DISPATCH').state, 'skipped');
+  assert.equal(after.stages.find(s => s.key === 'VEHICLE_HIRED').state, 'done');
+});

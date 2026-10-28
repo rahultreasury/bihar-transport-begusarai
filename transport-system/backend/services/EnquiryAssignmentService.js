@@ -26,13 +26,14 @@
 const { prisma } = require('../config/prisma');
 const { ValidationError, NotFoundError, ConflictError } = require('../utils/AppError');
 const { logger } = require('../utils/logger');
+const tripStateMachine = require('../utils/TripStateMachine');
 
 /**
  * Trip/booking statuses that mean "this resource is committed right now".
- * Mirrors ResourceAvailabilityService.ACTIVE_TRIP_STATUSES plus the enquiry
+ * Uses the centralized ACTIVE_TRIP_STATUSES from TripStateMachine plus the enquiry
  * statuses that hold a vehicle between assignment and acceptance.
  */
-const ACTIVE_TRIP_STATUSES = ['PENDING', 'ASSIGNED', 'IN_TRANSIT', 'DELIVERED'];
+const ACTIVE_TRIP_STATUSES = tripStateMachine.ACTIVE_TRIP_STATUSES;
 
 /** Enquiry statuses that already hold a vehicle/driver. */
 const ENQUIRY_HOLD_STATUSES = [

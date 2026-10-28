@@ -29,7 +29,7 @@ const protect = async (req, res, next) => {
           },
         });
 
-if (!admin) {
+        if (!admin) {
           console.log('[AUTH] Admin not found for id:', decoded.id);
           return res.status(401).json({
             success: false,
@@ -39,6 +39,7 @@ if (!admin) {
 
         console.log('[AUTH] Admin found:', admin.full_name, 'role:', admin.role);
         req.user = {
+          kind: 'admin',
           user_id: admin.admin_id,
           first_name: admin.full_name,
           email: admin.email,
@@ -71,7 +72,15 @@ if (!admin) {
         }
 
         console.log('[AUTH] User found:', user.first_name, 'role:', user.role);
-        req.user = user;
+        req.user = {
+          kind: 'user',
+          user_id: user.user_id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          email: user.email,
+          phone: user.phone,
+          role: user.role,
+        };
         console.log('[AUTH] Calling next() for user');
         next();
         return;

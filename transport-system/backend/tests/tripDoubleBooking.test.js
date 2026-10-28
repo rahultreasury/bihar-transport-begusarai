@@ -256,6 +256,7 @@ test('STEP 2B — creating a 2nd trip with both driver and vehicle busy reports 
 test('STEP 2B — reassigning a trip to a busy driver fails', async () => {
   reset();
   const svc = new TripService();
+  const adminUser = { role: 'admin', user_id: 1 };
 
   // Trip A — driver A, vehicle A.
   const tripA = await svc.createTrip(validPayload());
@@ -268,7 +269,7 @@ test('STEP 2B — reassigning a trip to a busy driver fails', async () => {
 
   // Now try to reassign Trip B's driver to driver A (who is on Trip A).
   await assert.rejects(
-    svc.updateTrip(tripB.trip_id, { driver_id: baseDriverId }),
+    svc.updateTrip(tripB.trip_id, { driver_id: baseDriverId }, adminUser),
     (err) => {
       assert.equal(err.code, 'DRIVER_UNAVAILABLE');
       return true;
@@ -284,6 +285,7 @@ test('STEP 2B — reassigning a trip to a busy driver fails', async () => {
 test('STEP 2B — reassigning a trip to a busy vehicle fails', async () => {
   reset();
   const svc = new TripService();
+  const adminUser = { role: 'admin', user_id: 1 };
 
   const tripA = await svc.createTrip(validPayload());
   const tripB = await svc.createTrip({
@@ -293,12 +295,15 @@ test('STEP 2B — reassigning a trip to a busy vehicle fails', async () => {
   });
 
   await assert.rejects(
-    svc.updateTrip(tripB.trip_id, { vehicle_id: baseVehicleId }),
+    svc.updateTrip(tripB.trip_id, { vehicle_id: baseVehicleId }, adminUser),
     (err) => {
       assert.equal(err.code, 'VEHICLE_UNAVAILABLE');
       return true;
     }
   );
+
+  const stillB = await svc.tripRepo.findById(tripB.trip_id);
+  assert.equal(stillB.vehicle_id, baseVehicleId + 1);
 });
 
 test('STEP 2B — driver/vehicle become available again after trip is CANCELLED', async () => {
@@ -323,7 +328,27 @@ test('STEP 2B — driver/vehicle become available again after trip is COMPLETED'
   const svc = new TripService();
 
   const tripA = await svc.createTrip(validPayload());
+  // Follow the valid state machine path: PENDING → ASSIGNED → TO_LOADING_POINT → AT_LOADING_POINT → LOADED → DISPATCHED → IN_TRANSIT → DELIVERED → COMPLETED
+  await svc.updateTripStatus(tripA.trip_id, 'ASSIGNED', { role: 'admin' });
+  await svc.updateTripStatus(tripA.trip_id, 'TO_LOADING_POINT', { role: 'admin' });
+  await svc.updateTripStatus(tripA.trip_id, 'AT_LOADING_POINT', { role: 'admin' });
+  await svc.updateTripStatus(tripA.trip_id, 'LOADED', { role: 'admin' });
+  await svc.updateTripStatus(tripA.trip_id, 'DISPATCHED', { role: 'admin' });
+  await svc.updateTripStatus(tripA.trip_id, 'IN_TRANSIT', { role: 'admin' });
+  await svc.updateTripStatus(tripA.trip_id, 'DELIVERED', { role: 'admin' });
+
+  // Mock the canonicalFinancialService to return customerDue = 0 for COMPLETED check
+  const originalCalc = svc.canonicalFinancialService.calculateTripFinancials;
+  svc.canonicalFinancialService.calculateTripFinancials = async () => ({
+    customerDue: 0,
+    customerCollected: 1000,
+    freight: 1000,
+  });
+
   await svc.updateTripStatus(tripA.trip_id, 'COMPLETED', { role: 'admin' });
+
+  // Restore original
+  svc.canonicalFinancialService.calculateTripFinancials = originalCalc;
 
   const tripB = await svc.createTrip({
     ...validPayload(),
@@ -350,16 +375,18 @@ test('STEP 2B — driver on a non-active (CANCELLED) trip does not block a new a
 test('STEP 2B — updating a trip without changing driver/vehicle skips the check', async () => {
   reset();
   const svc = new TripService();
+  const adminUser = { role: 'admin', user_id: 1 };
 
   const trip = await svc.createTrip(validPayload());
   // No driver/vehicle change — should pass.
-  const updated = await svc.updateTrip(trip.trip_id, { notes: 'updated' });
+  const updated = await svc.updateTrip(trip.trip_id, { notes: 'updated' }, adminUser);
   assert.equal(updated.notes, 'updated');
 });
 
 test('STEP 2B — updating trip to same driver/vehicle is NOT a conflict (no false positive)', async () => {
   reset();
   const svc = new TripService();
+  const adminUser = { role: 'admin', user_id: 1 };
 
   const trip = await svc.createTrip(validPayload());
 
@@ -368,7 +395,7 @@ test('STEP 2B — updating trip to same driver/vehicle is NOT a conflict (no fal
     driver_id: baseDriverId,
     vehicle_id: baseVehicleId,
     notes: 'noop change',
-  });
+  }, adminUser);
   assert.equal(updated.notes, 'noop change');
 });
 
@@ -438,6 +465,7 @@ test('STEP 2B.1 — different drivers produce different lock keys', async () => 
 test('STEP 2B.1 — updateTrip acquires only the locks for the changing resource', async () => {
   reset();
   const svc = new TripService();
+  const adminUser = { role: 'admin', user_id: 1 };
   const trip = await svc.createTrip(validPayload());
 
   // Clear lock records so we can isolate the updateTrip acquisition.
@@ -445,7 +473,7 @@ test('STEP 2B.1 — updateTrip acquires only the locks for the changing resource
   memory.advisoryLocks.length = 0;
 
   // Update only the driver.
-  await svc.updateTrip(trip.trip_id, { driver_id: baseDriverId + 50 });
+  await svc.updateTrip(trip.trip_id, { driver_id: baseDriverId + 50 }, adminUser);
 
   // Should have acquired ONLY the driver lock (vehicle unchanged → no need).
   // 2 keys acquired during createTrip were already cleared; this asserts the
@@ -457,13 +485,14 @@ test('STEP 2B.1 — updateTrip acquires only the locks for the changing resource
 test('STEP 2B.1 — updateTrip acquires BOTH locks when both resources change', async () => {
   reset();
   const svc = new TripService();
+  const adminUser = { role: 'admin', user_id: 1 };
   const trip = await svc.createTrip(validPayload());
   memory.advisoryLocks.length = 0;
 
   await svc.updateTrip(trip.trip_id, {
     driver_id: baseDriverId + 60,
     vehicle_id: baseVehicleId + 60,
-  });
+  }, adminUser);
 
   assert.equal(memory.advisoryLocks.length, 2);
 });
@@ -471,10 +500,11 @@ test('STEP 2B.1 — updateTrip acquires BOTH locks when both resources change', 
 test('STEP 2B.1 — updateTrip without resource changes acquires NO advisory locks', async () => {
   reset();
   const svc = new TripService();
+  const adminUser = { role: 'admin', user_id: 1 };
   const trip = await svc.createTrip(validPayload());
   memory.advisoryLocks.length = 0;
 
-  await svc.updateTrip(trip.trip_id, { notes: 'just a note' });
+  await svc.updateTrip(trip.trip_id, { notes: 'just a note' }, adminUser);
 
   // The no-resource-change path bypasses the guard entirely.
   assert.equal(memory.advisoryLocks.length, 0);
@@ -506,4 +536,82 @@ test('STEP 2B.1 — concurrent simulation: locks would serialize same-key transa
   assert.equal(vehicleKeys.length, 2, 'both calls should try to lock the vehicle');
   assert.deepEqual(driverKeys[0], driverKeys[1], 'driver lock keys must match');
   assert.deepEqual(vehicleKeys[0], vehicleKeys[1], 'vehicle lock keys must match');
+});
+
+// =============================================================================
+// Area B — Trip completion independent of customer receivables
+// =============================================================================
+
+test('Area B.1 — trip can be COMPLETED with outstanding customer balance', async () => {
+  reset();
+  const svc = new TripService();
+  const adminUser = { role: 'admin', user_id: 1 };
+
+  const trip = await svc.createTrip(validPayload());
+  // Follow the valid state machine path to DELIVERED.
+  await svc.updateTripStatus(trip.trip_id, 'ASSIGNED', adminUser);
+  await svc.updateTripStatus(trip.trip_id, 'TO_LOADING_POINT', adminUser);
+  await svc.updateTripStatus(trip.trip_id, 'AT_LOADING_POINT', adminUser);
+  await svc.updateTripStatus(trip.trip_id, 'LOADED', adminUser);
+  await svc.updateTripStatus(trip.trip_id, 'DISPATCHED', adminUser);
+  await svc.updateTripStatus(trip.trip_id, 'IN_TRANSIT', adminUser);
+  await svc.updateTripStatus(trip.trip_id, 'DELIVERED', adminUser);
+
+  // Mock canonicalFinancialService to report an OUTSTANDING customer balance.
+  const originalCalc = svc.canonicalFinancialService.calculateTripFinancials;
+  svc.canonicalFinancialService.calculateTripFinancials = async () => ({
+    customerDue: 15000, // outstanding receivable
+    customerCollected: 35000,
+    freight: 50000,
+  });
+
+  // COMPLETED must succeed despite customerDue > 0.
+  const completed = await svc.updateTripStatus(trip.trip_id, 'COMPLETED', adminUser);
+  assert.equal(completed.status, 'COMPLETED');
+  assert.ok(completed.completed_at);
+
+  // Restore.
+  svc.canonicalFinancialService.calculateTripFinancials = originalCalc;
+});
+
+test('Area B.2 — trip completion does not clear customer receivables', async () => {
+  reset();
+  const svc = new TripService();
+  const adminUser = { role: 'admin', user_id: 1 };
+
+  const trip = await svc.createTrip(validPayload());
+  await svc.updateTripStatus(trip.trip_id, 'ASSIGNED', adminUser);
+  await svc.updateTripStatus(trip.trip_id, 'TO_LOADING_POINT', adminUser);
+  await svc.updateTripStatus(trip.trip_id, 'AT_LOADING_POINT', adminUser);
+  await svc.updateTripStatus(trip.trip_id, 'LOADED', adminUser);
+  await svc.updateTripStatus(trip.trip_id, 'DISPATCHED', adminUser);
+  await svc.updateTripStatus(trip.trip_id, 'IN_TRANSIT', adminUser);
+  await svc.updateTripStatus(trip.trip_id, 'DELIVERED', adminUser);
+
+  // Record the financial state before completion.
+  const originalCalc = svc.canonicalFinancialService.calculateTripFinancials;
+  svc.canonicalFinancialService.calculateTripFinancials = async () => ({
+    customerDue: 15000,
+    customerCollected: 35000,
+    freight: 50000,
+    ownerPayable: 40000,
+    ownerPaid: 30000,
+    ownerPayableRemaining: 10000,
+    btCommission: 2000,
+  });
+
+  const before = await svc.canonicalFinancialService.calculateTripFinancials(trip.trip_id);
+
+  // Complete the trip.
+  await svc.updateTripStatus(trip.trip_id, 'COMPLETED', adminUser);
+
+  // Financial balances must remain unchanged — completion does not mark invoices
+  // paid or clear receivables.
+  const after = await svc.canonicalFinancialService.calculateTripFinancials(trip.trip_id);
+  assert.equal(after.customerDue, before.customerDue, 'customer due unchanged after completion');
+  assert.equal(after.customerCollected, before.customerCollected, 'customer collected unchanged after completion');
+  assert.equal(after.ownerPayableRemaining, before.ownerPayableRemaining, 'vendor payable remaining unchanged after completion');
+
+  // Restore.
+  svc.canonicalFinancialService.calculateTripFinancials = originalCalc;
 });

@@ -73,11 +73,16 @@ const vehicleHireRoutes = require('./routes/vehicleHireRoutes');
 // Phase 9 — the Dispatch Workspace API. Mounted AFTER tripRoutes /
 // tripFinancialRoutes; every path it owns is new, so nothing is shadowed.
 const dispatchRoutes = require('./routes/dispatchRoutes');
+const tripBillingRoutes = require('./routes/tripBillingRoutes');
 const financialRoutes = require('./routes/financialRoutes');
 // Enquiry module (pre-booking customer intake → admin quote → acceptance)
 const enquiryRoutes = require('./routes/enquiryRoutes');
 const adminEnquiryRoutes = require('./routes/adminEnquiryRoutes');
 const driverEnquiryRoutes = require('./routes/driverEnquiryRoutes');
+// Customer catalogue + place lookup, used by the mobile booking screen.
+// Both are NEW namespaces — nothing existing is renamed or shadowed.
+const catalogueRoutes = require('./routes/catalogueRoutes');
+const placesRoutes = require('./routes/placesRoutes');
 const realtime = require('./realtime/enquiryRealtime');
 const emailService = require('./services/emailService');
 
@@ -242,6 +247,9 @@ app.use('/api/admin/drivers', adminLimiter, driverManagementRoutes);
 // and never swallowed by the catch-all admin router.
 app.use('/api/admin/enquiries', adminLimiter, adminEnquiryRoutes);
 
+app.use("/api/admin/financials", adminLimiter, financialRoutes);
+// Backward compatibility: /api/financials/summary for smoke tests and legacy clients
+app.use("/api/financials", adminLimiter, financialRoutes);
 app.use('/api/admin', adminLimiter, adminRoutes);
 
 // Customer Enquiry Routes — the login-free enquiry intake + quote acceptance.
@@ -268,6 +276,15 @@ app.use('/api/licenses', bookingLimiter, licenseRoutes);
 app.use('/api/challans', bookingLimiter, challanRoutes);
 app.use('/api/appointments', bookingLimiter, appointmentRoutes);
 app.use('/api', mapsRoutes);
+
+// Customer catalogue (vehicle pricing) and place lookup.
+//
+// Both namespaces are NEW. The mobile booking screen uses them to render the
+// fleet from the server's single pricing source of truth and to resolve a
+// typed address into coordinates WITHOUT shipping a Google Maps key in the app
+// binary. The web app is untouched.
+app.use('/api/catalogue', catalogueRoutes);
+app.use('/api/places', placesRoutes);
 
 // Partner Management Routes
 app.use('/api/admin/partners', adminLimiter, partnerRoutes);
@@ -299,6 +316,12 @@ app.use('/api/trips', bookingLimiter, tripFinancialRoutes);
 // document endpoints resolve here.
 app.use('/api/trips', bookingLimiter, dispatchRoutes);
 
+// Phase 3 (Batch 2B) — TRIP CUSTOMER BILLING. POST/GET /:id/invoice,
+// /invoice/pdf and /invoice/payments — the Dispatch page's Create-Invoice block,
+// routed to the ONE invoice writer (`TripInvoiceService`). Mounted after the
+// other /api/trips routers; its /:id/invoice* patterns collide with nothing.
+app.use('/api/trips', bookingLimiter, tripBillingRoutes);
+
 // Universal Vehicle Hire Routes.
 //
 // The Enquiry workspace's "VEHICLE & DRIVER" card reads
@@ -314,9 +337,8 @@ app.use('/api/trips', bookingLimiter, dispatchRoutes);
 app.use('/api/vehicle-hire', vehicleHireRoutes);
 
 // Financial Management Routes (global financial control center)
-app.use('/api/financials', adminLimiter, financialRoutes);
 
-// Health check endpoint
+// Health check endpoint (liveness)
 app.get('/api/health', (req, res) => {
   res.json({
     success: true,
@@ -325,6 +347,41 @@ app.get('/api/health', (req, res) => {
     data: { dbReady },
     timestamp: new Date().toISOString()
   });
+});
+
+// Readiness check endpoint (checks all critical dependencies)
+app.get('/api/ready', async (req, res, next) => {
+  try {
+    const result = await testPrismaConnection();
+    if (result.success) {
+      dbReady = true;
+      res.json({
+        success: true,
+        status: 'ready',
+        message: 'All critical dependencies are available',
+        data: {
+          database: 'connected',
+          dbReady: true,
+        },
+        timestamp: new Date().toISOString(),
+      });
+    } else {
+      dbReady = false;
+      res.status(503).json({
+        success: false,
+        status: 'not_ready',
+        message: result.message,
+        data: {
+          database: 'disconnected',
+          dbReady: false,
+        },
+        timestamp: new Date().toISOString(),
+      });
+    }
+  } catch (err) {
+    dbReady = false;
+    next(err);
+  }
 });
 
 // PostgreSQL health check via Prisma (Phase 4.1)
@@ -363,6 +420,7 @@ app.use('/api', (req, res, next) => {
   // or are the mechanism to check DB status.
   const alwaysAllowed = [
     '/api/health',
+    '/api/ready',
     '/api/health/db',
     '/api/auth/login',
     '/api/auth/admin-login',

@@ -29,6 +29,21 @@ import {
   Sparkles,
   Inbox,
   Wallet,
+  Monitor,
+  FileCheck,
+  Shield,
+  UserCog,
+  CalendarCheck,
+  ClipboardList,
+  MapPinned,
+  PackageCheck,
+  UserRound,
+  Building2,
+  Handshake,
+  CreditCard,
+  ReceiptText,
+  Database,
+  ShieldCheck,
 } from 'lucide-react';
 
 import { adminEnquiryAPI } from '../../../services/enquiryAPI';
@@ -36,10 +51,13 @@ import { adminEnquiryAPI } from '../../../services/enquiryAPI';
 /**
  * The canonical nav list. Order here is the legacy order and is still used as
  * the fallback when a page passes no `navItems` at all.
+ *
+ * New entries added for the target sidebar structure (trips, partners) while
+ * preserving every existing entry for backward compatibility.
  */
 export const DEFAULT_NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/admin' },
-  { key: 'enquiries', label: 'ENQUIRY', icon: Inbox, path: '/admin/enquiries' },
+  { key: 'enquiries', label: 'Enquiries', icon: Inbox, path: '/admin/enquiries' },
   { key: 'intake-enquiries', label: 'Enquiry Intake', icon: Inbox, path: '/admin/intake-enquiries' },
   { key: 'vehicle-hire', label: 'Vehicle Hire', icon: Truck, path: '/admin/vehicle-hire' },
   { key: 'financials', label: 'Financials', icon: BarChart3, path: '/admin/financials' },
@@ -52,7 +70,71 @@ export const DEFAULT_NAV_ITEMS = [
   { key: 'analytics', label: 'Analytics', icon: BarChart3, path: '/admin/analytics' },
   { key: 'reports', label: 'Reports', icon: FileText, path: '/admin/reports' },
   { key: 'ai', label: 'AI Insights', icon: Sparkles, path: '/admin/ai' },
+  { key: 'trips', label: 'Order / Trip Master', icon: FileCheck, path: '/admin/trips' },
+  { key: 'partners', label: 'Partners', icon: Users, path: '/admin/partners' },
 ];
+
+/**
+ * The permanent sidebar shown on the Vehicle Hire console.
+ *
+ * This is a PRESENTATION of the same application. Every enabled entry points at
+ * an existing, authorised admin route; no route is added, renamed or bypassed.
+ * Items whose module does not exist in this build are marked `disabled` rather
+ * than being pointed at a dead URL.
+ *
+ * The grouping and labels follow the supplied Vehicle Hire reference while the
+ * destinations stay faithful to the real Bihar Transport application:
+ *   Bookings        → the lifecycle overview
+ *   Order / Trip    → the canonical Order / Trip Master list
+ *   Live Tracking   → the in-transit lifecycle view
+ *   POD Management  → the POD-pending lifecycle view
+ *   Payments        → the Financials payments-received section
+ *   Expenses        → the Financials advances/expenses section
+ */
+export const PERMANENT_NAV_GROUPS = Object.freeze([
+  {
+    title: null,
+    items: [
+      { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/admin' },
+    ],
+  },
+  {
+    title: 'OPERATIONS',
+    items: [
+      { key: 'enquiries', label: 'Enquiries', icon: Inbox, path: '/admin/enquiries', hasChildren: true },
+      { key: 'quotations', label: 'Quotations', icon: FileText, path: '/admin/enquiries?stage=quotations', hasChildren: true },
+      { key: 'bookings', label: 'Bookings', icon: CalendarCheck, path: '/admin/bookings/overview', hasChildren: true },
+      { key: 'vehicle-hire', label: 'Vehicle Hire', icon: Truck, path: '/admin/vehicle-hire' },
+      { key: 'trips', label: 'Order / Trip Master', icon: ClipboardList, path: '/admin/bookings' },
+      { key: 'live-tracking', label: 'Live Tracking', icon: MapPinned, path: '/admin/bookings/in-transit' },
+      { key: 'pod-management', label: 'POD Management', icon: PackageCheck, path: '/admin/bookings/pod-pending' },
+    ],
+  },
+  {
+    title: 'FLEET',
+    items: [
+      { key: 'vehicles', label: 'Vehicles', icon: Car, path: '/admin/vehicles', hasChildren: true },
+      { key: 'drivers', label: 'Drivers', icon: UserRound, path: '/admin/drivers', hasChildren: true },
+      { key: 'owners', label: 'Transport Owners', icon: Building2, path: '/admin/owners', hasChildren: true },
+      { key: 'partners', label: 'Partners', icon: Handshake, path: '/admin/partners', hasChildren: true },
+    ],
+  },
+  {
+    title: 'FINANCIALS',
+    items: [
+      { key: 'payments', label: 'Payments', icon: CreditCard, path: '/admin/financials/payments', hasChildren: true },
+      { key: 'expenses', label: 'Expenses', icon: ReceiptText, path: '/admin/financials/advances', hasChildren: true },
+      { key: 'reports', label: 'Reports', icon: BarChart3, path: '/admin/reports', hasChildren: true },
+    ],
+  },
+  {
+    title: 'SETTINGS',
+    items: [
+      { key: 'master-data', label: 'Master Data', icon: Database, path: '/admin/drivers/register-resources', hasChildren: true },
+      { key: 'users-roles', label: 'Users & Roles', icon: ShieldCheck, disabled: true, hasChildren: true },
+    ],
+  },
+]);
 
 /**
  * Legacy key → path fallback.
@@ -72,13 +154,14 @@ const KEY_PATH_FALLBACK = {
   vehicles: '/admin/vehicles',
   'vehicle-owners': '/admin/vehicle-owners',
   owners: '/admin/owners',
-  partners: '/admin/owners',
+  partners: '/admin/partners',
   settlements: '/admin/settlements',
   analytics: '/admin/analytics',
   reports: '/admin/reports',
   ai: '/admin/ai',
   settings: '/admin/settings',
   'vehicle-hire': '/admin/vehicle-hire',
+  trips: '/admin/trips',
 };
 
 /**
@@ -98,6 +181,13 @@ export function resolveNavPath(item) {
  * works: unknown keys are simply skipped, and unlisted items fall through to a
  * trailing "More" group rather than disappearing.
  *
+ * Grouped to match the target sidebar structure:
+ *   - Dashboard (standalone)
+ *   - OPERATIONS: Enquiries, Vehicle Hire, Bookings, Order / Trip Master
+ *   - FLEET: Vehicles, Drivers, Transport Owners, Partners
+ *   - FINANCIALS: Financials, Reports
+ *   - SETTINGS: (placeholder for future)
+ *
  * @param {Array<{key:string,label:string,icon:any,path:string}>} items
  * @returns {Array<{title:string, items:Array}>}
  */
@@ -106,10 +196,20 @@ export function buildNavGroups(items = DEFAULT_NAV_ITEMS) {
   const take = (...keys) => keys.map((k) => byKey.get(k)).filter(Boolean);
 
   const groups = [
-    { title: 'Operations', items: take('dashboard', 'enquiries', 'intake-enquiries', 'vehicle-hire', 'financials', 'bookings') },
-    { title: 'Network', items: take('clients', 'owners', 'vehicles', 'drivers', 'vehicle-owners') },
-    { title: 'Finance', items: take('financials', 'settlements') },
-    { title: 'Insights', items: take('analytics', 'reports', 'ai') },
+    { title: 'Dashboard', items: take('dashboard') },
+    {
+      title: 'OPERATIONS',
+      items: take('enquiries', 'vehicle-hire', 'bookings', 'trips'),
+    },
+    {
+      title: 'FLEET',
+      items: take('vehicles', 'drivers', 'owners', 'partners'),
+    },
+    {
+      title: 'FINANCIALS',
+      items: take('financials', 'reports'),
+    },
+    { title: 'SETTINGS', items: take('ai') },
   ].filter((g) => g.items.length > 0);
 
   // Anything a caller passed that none of the groups claimed.

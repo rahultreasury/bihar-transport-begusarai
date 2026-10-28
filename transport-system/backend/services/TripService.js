@@ -7,7 +7,7 @@
  */
 
 const { prisma } = require('../config/prisma');
-const { AppError, ValidationError, NotFoundError, ConflictError } = require('../utils/AppError');
+const { AppError, ValidationError, NotFoundError, ConflictError, ForbiddenError } = require('../utils/AppError');
 const TripRepository = require('../repositories/TripRepository');
 const AuditLogRepository = require('../repositories/AuditLogRepository');
 const TripTimelineRepository = require('../repositories/TripTimelineRepository');
@@ -16,7 +16,20 @@ const TripFinancialCalculationService = require('./TripFinancialCalculationServi
 const CanonicalFinancialService = require('./CanonicalFinancialService');
 const VehicleHireService = require('./VehicleHireService');
 const tripStateMachine = require('../utils/TripStateMachine');
+// Invoice reconciliation is shared with the invoice service (Batch 2B, Phase 2):
+// every customer-receipt path must move the Invoice's own status with the cash.
+const TripInvoiceService = require('./TripInvoiceService');
 const ResourceAvailabilityService = require('./ResourceAvailabilityService');
+
+/**
+ * Advisory lock namespaces for driver and vehicle resources.
+ * Using stable, deterministic keys derived from ASCII codes:
+ * - DRIVER_NS = 0x54524456 (ASCII "DRV")
+ * - VEHICLE_NS = 0x54525656 (ASCII "VEH")
+ * These match the test expectations in tripDoubleBooking.test.js.
+ */
+const DRIVER_NS = 0x54524456; // "DRV"
+const VEHICLE_NS = 0x54525656; // "VEH"
 
 /**
  * Keys a browser might try to post that must NEVER reach the database.
@@ -59,10 +72,133 @@ class TripService {
   }
 
   /**
+   * Acquire PostgreSQL transaction-scoped advisory locks for driver and vehicle resources.
+   * Locks are acquired in sorted namespace order (DRIVER_NS < VEHICLE_NS) to prevent deadlocks.
+   * Locks are held for the duration of the transaction (pg_advisory_xact_lock).
+   * Pass 0 for driverId or vehicleId to skip locking that resource.
+   *
+   * @param {object} tx - Prisma transaction client
+   * @param {number} driverId - Driver ID (0 to skip)
+   * @param {number} vehicleId - Vehicle ID (0 to skip)
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _acquireAdvisoryLocks(tx, driverId, vehicleId) {
+    // Sort by namespace to ensure consistent lock acquisition order (prevents deadlocks)
+    const locks = [];
+    if (driverId > 0) {
+      locks.push({ ns: DRIVER_NS, id: driverId });
+    }
+    if (vehicleId > 0) {
+      locks.push({ ns: VEHICLE_NS, id: vehicleId });
+    }
+    locks.sort((a, b) => a.ns - b.ns);
+
+    for (const lock of locks) {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${lock.ns}, ${lock.id})`;
+    }
+  }
+
+  /**
+   * Check if a user has access to a trip based on their role and relationships.
+   * Throws ForbiddenError if access is denied.
+   * @private
+   */
+  async _checkTripAccess(trip, user) {
+    if (!user) {
+      throw new ForbiddenError('Authentication required');
+    }
+
+    // Admin can access all trips
+    if (user.role === 'admin' || user.role === 'super_admin') {
+      return;
+    }
+
+    // Partner can access trips where they are the transport owner
+    if (user.role === 'partner') {
+      // Partner needs to be linked to a VehicleOwner
+      // Check if the trip's transport_owner_id matches a VehicleOwner linked to this partner
+      const partner = await prisma.partner.findFirst({
+        where: { user_id: user.user_id },
+        select: { partner_id: true, linkedVehicleOwner: { select: { owner_id: true } } }
+      });
+      if (partner?.linkedVehicleOwner) {
+        if (trip.transport_owner_id === partner.linkedVehicleOwner.owner_id) {
+          return;
+        }
+      }
+      throw new ForbiddenError('Insufficient permissions to access this trip');
+    }
+
+    // Driver can access trips assigned to them
+    if (user.role === 'driver') {
+      // Resolve driver_id from user_id
+      const driver = await prisma.driver.findFirst({
+        where: { user_id: user.user_id },
+        select: { driver_id: true }
+      });
+      if (driver && trip.driver_id === driver.driver_id) {
+        return;
+      }
+      throw new ForbiddenError('Insufficient permissions to access this trip');
+    }
+
+    // Customer can access trips they created
+    if (user.role === 'customer') {
+      if (trip.user_id === user.user_id || trip.client_id === user.user_id) {
+        return;
+      }
+      throw new ForbiddenError('Insufficient permissions to access this trip');
+    }
+
+    throw new ForbiddenError('Insufficient permissions to access this trip');
+  }
+
+  /**
+   * Apply authorization filters to trip query based on user role.
+   * @private
+   */
+  _applyAuthorizationFilters(filters, user) {
+    if (!user) {
+      throw new ForbiddenError('Authentication required');
+    }
+
+    const authorizedFilters = { ...filters };
+
+    // Admin can access all trips - no additional filters needed
+    if (user.role === 'admin' || user.role === 'super_admin') {
+      return authorizedFilters;
+    }
+
+    // Partner can only see trips for their linked VehicleOwner
+    if (user.role === 'partner') {
+      // This would need to be resolved - for now, we'll add a filter that will be resolved in the service
+      // The actual filtering will happen in the repository query
+      authorizedFilters._partnerUserId = user.user_id;
+      return authorizedFilters;
+    }
+
+    // Driver can only see their assigned trips
+    if (user.role === 'driver') {
+      authorizedFilters._driverUserId = user.user_id;
+      return authorizedFilters;
+    }
+
+    // Customer can only see their own trips
+    if (user.role === 'customer') {
+      authorizedFilters._customerUserId = user.user_id;
+      return authorizedFilters;
+    }
+
+    throw new ForbiddenError('Insufficient permissions to access trips');
+  }
+
+  /**
    * Get all trips with pagination, filters, and search.
    */
   async getAllTrips(filters = {}, user = null) {
-    const trips = await this.tripRepo.findAll(filters);
+    const authorizedFilters = this._applyAuthorizationFilters(filters, user);
+    const trips = await this.tripRepo.findAll(authorizedFilters);
 
     // Calculate financial data for each trip using the authoritative financial service
     // This ensures consistency with the trip detail financial API
@@ -109,6 +245,9 @@ class TripService {
    */
   async getTripById(id, user = null) {
     const trip = await this.tripRepo.findById(id);
+
+    // Check authorization
+    await this._checkTripAccess(trip, user);
 
     // Calculate financial data
     const [totalExpenses, totalPayments, expenses, payments] = await Promise.all([
@@ -324,11 +463,70 @@ class TripService {
     const hireTerms = this.vehicleHireService.validateHireTerms(data);
     for (const key of CLIENT_SUPPLIED_DERIVED_FIELDS) delete tripData[key];
 
-    const trip = await this.tripRepo.create({
-      ...tripData,
-      ...hireTerms,
-      trip_number: tripNumber,
-      status: data.status || 'PENDING',
+    // Acquire advisory locks for driver and vehicle to prevent double-booking
+    // under concurrent trip creation. Locks are held for the transaction duration.
+    const trip = await prisma.$transaction(async (tx) => {
+      await this._acquireAdvisoryLocks(tx, data.driver_id, data.vehicle_id);
+
+      // Re-check resource availability inside the transaction after acquiring locks
+      const vehicle = await tx.transportVehicle.findUnique({
+        where: { vehicle_id: data.vehicle_id },
+      });
+      if (!vehicle) throw new ValidationError('Vehicle not found');
+
+      const driver = await tx.driver.findUnique({
+        where: { driver_id: data.driver_id },
+      });
+      if (!driver) throw new ValidationError('Driver not found');
+
+      // Check for conflicting active trips with the SAME driver
+      const driverConflict = await tx.trip.findFirst({
+        where: {
+          driver_id: data.driver_id,
+          status: { in: tripStateMachine.ACTIVE_TRIP_STATUSES },
+        },
+      });
+
+      // Check for conflicting active trips with the SAME vehicle
+      const vehicleConflict = await tx.trip.findFirst({
+        where: {
+          vehicle_id: data.vehicle_id,
+          status: { in: tripStateMachine.ACTIVE_TRIP_STATUSES },
+        },
+      });
+
+      // Handle combined conflict case
+      if (driverConflict && vehicleConflict) {
+        const err = new ValidationError('Both driver and vehicle are already assigned to active trips');
+        err.code = 'DRIVER_AND_VEHICLE_UNAVAILABLE';
+        err.conflict = { driverBusy: true, vehicleBusy: true };
+        throw err;
+      }
+
+      if (driverConflict) {
+        const err = new ValidationError('Driver is already assigned to an active trip');
+        err.code = 'DRIVER_UNAVAILABLE';
+        err.conflict = { driverBusy: true, vehicleBusy: false };
+        throw err;
+      }
+
+      if (vehicleConflict) {
+        const err = new ValidationError('Vehicle is already assigned to an active trip');
+        err.code = 'VEHICLE_UNAVAILABLE';
+        err.conflict = { driverBusy: false, vehicleBusy: true };
+        throw err;
+      }
+
+      const trip = await tx.trip.create({
+        data: {
+          ...tripData,
+          ...hireTerms,
+          trip_number: tripNumber,
+          status: data.status || 'PENDING',
+        },
+      });
+
+      return trip;
     });
 
     // Create audit log
@@ -353,6 +551,9 @@ class TripService {
     // Validate trip exists
     const existingTrip = await this.tripRepo.findById(id);
 
+    // Check authorization
+    await this._checkTripAccess(existingTrip, user);
+
     // Validate booking if provided
     if (data.booking_id) {
       const bookingExists = await prisma.booking.findUnique({
@@ -363,6 +564,10 @@ class TripService {
       }
     }
 
+    // Determine if driver_id or vehicle_id is being changed
+    const driverIdChanged = data.driver_id !== undefined && data.driver_id !== existingTrip.driver_id;
+    const vehicleIdChanged = data.vehicle_id !== undefined && data.vehicle_id !== existingTrip.vehicle_id;
+
     // ── Phase 2: vehicle-hire terms are validated, derived money is not
     // accepted. The hire stays a CALCULATION of the stored gross, so an
     // update can change the rate but can never post a net figure.
@@ -371,6 +576,70 @@ class TripService {
     });
     const updateData = { ...data };
     for (const key of CLIENT_SUPPLIED_DERIVED_FIELDS) delete updateData[key];
+
+    // If driver_id or vehicle_id is being changed, acquire advisory locks and re-validate
+    if (driverIdChanged || vehicleIdChanged) {
+      const newDriverId = data.driver_id ?? existingTrip.driver_id;
+      const newVehicleId = data.vehicle_id ?? existingTrip.vehicle_id;
+
+      await prisma.$transaction(async (tx) => {
+        // Acquire advisory locks only for the resources that are changing
+        if (driverIdChanged) {
+          await this._acquireAdvisoryLocks(tx, newDriverId, 0); // 0 = no vehicle lock
+        }
+        if (vehicleIdChanged) {
+          await this._acquireAdvisoryLocks(tx, 0, newVehicleId); // 0 = no driver lock
+        }
+
+        // Re-check resource availability inside the transaction after acquiring locks
+        if (vehicleIdChanged) {
+          const vehicle = await tx.transportVehicle.findUnique({
+            where: { vehicle_id: newVehicleId },
+          });
+          if (!vehicle) throw new ValidationError('Vehicle not found');
+        }
+
+        if (driverIdChanged) {
+          const driver = await tx.driver.findUnique({
+            where: { driver_id: newDriverId },
+          });
+          if (!driver) throw new ValidationError('Driver not found');
+        }
+
+        // Check for conflicting active trips (excluding this trip)
+        if (driverIdChanged) {
+          const driverConflict = await tx.trip.findFirst({
+            where: {
+              driver_id: newDriverId,
+              status: { in: tripStateMachine.ACTIVE_TRIP_STATUSES },
+              NOT: { trip_id: id },
+            },
+          });
+          if (driverConflict) {
+            const err = new ValidationError('Driver is already assigned to an active trip');
+            err.code = 'DRIVER_UNAVAILABLE';
+            err.conflict = { driverBusy: true, vehicleBusy: false };
+            throw err;
+          }
+        }
+
+        if (vehicleIdChanged) {
+          const vehicleConflict = await tx.trip.findFirst({
+            where: {
+              vehicle_id: newVehicleId,
+              status: { in: tripStateMachine.ACTIVE_TRIP_STATUSES },
+              NOT: { trip_id: id },
+            },
+          });
+          if (vehicleConflict) {
+            const err = new ValidationError('Vehicle is already assigned to an active trip');
+            err.code = 'VEHICLE_UNAVAILABLE';
+            err.conflict = { driverBusy: false, vehicleBusy: true };
+            throw err;
+          }
+        }
+      });
+    }
 
     const trip = await this.tripRepo.update(id, { ...updateData, ...hireTerms });
 
@@ -395,6 +664,9 @@ class TripService {
    */
   async deleteTrip(id, user = null) {
     const existingTrip = await this.tripRepo.findById(id);
+
+    // Check authorization
+    await this._checkTripAccess(existingTrip, user);
 
     // Check for financial records that would block deletion
     const [expenseCount, paymentCount, advanceCount, financialCount, transactionCount, timelineCount] =
@@ -474,16 +746,19 @@ class TripService {
 
     const existingTrip = await this.tripRepo.findById(id);
 
+    // Check authorization
+    await this._checkTripAccess(existingTrip, user);
+
     // Validate THIS move, from the status the database actually holds.
     tripStateMachine.validateTransition(existingTrip.status, target);
 
-    // COMPLETION RULE: A trip MUST NOT be marked COMPLETED while Customer Due > 0
+    // COMPLETION RULE: Operational completion is independent of customer receivables.
+    // A trip may be marked COMPLETED when operational prerequisites are met (POD
+    // verification, etc.) even if customer invoices remain unpaid. Customer finance
+    // is tracked separately via invoices, payments and ledger entries; completion
+    // does not mark invoices paid or clear receivables.
     if (target === 'COMPLETED') {
-      const financials = await this.canonicalFinancialService.calculateTripFinancials(id);
-      const customerDue = financials.customerDue || 0;
-      if (customerDue > 0) {
-        throw new ValidationError(`Cannot complete trip. Customer payment pending: ₹${customerDue.toLocaleString('en-IN')}`);
-      }
+      // No customer-due gate here. Financial obligations remain intact.
     }
 
     const legacySkip = tripStateMachine.isLegacySkip(existingTrip.status, target);
@@ -529,7 +804,7 @@ class TripService {
       // COMPLETED while its vehicle and driver stay locked. The release runs
       // inside the same transaction as the status change.
       let release = { driverReleased: false, vehicleReleased: false };
-      if (target === 'COMPLETED') {
+      if (target === 'COMPLETED' || target === 'CANCELLED') {
         release = await this.resourceAvailability.releaseResourcesIfNoActiveTrip(
           updated.driver_id,
           updated.vehicle_id,
@@ -556,7 +831,7 @@ class TripService {
           to: target,
           operation: 'STATUS_SET',
           ...(legacySkip ? { legacy_skip: true } : {}),
-          ...(target === 'COMPLETED'
+          ...((target === 'COMPLETED' || target === 'CANCELLED')
             ? { driver_released: release.driverReleased, vehicle_released: release.vehicleReleased }
             : {}),
         },
@@ -565,7 +840,7 @@ class TripService {
 
       // An explicit release event so the movement history records the resource
       // hand-back as its own fact whenever a completion freed a resource.
-      if (target === 'COMPLETED' && (release.driverReleased || release.vehicleReleased)) {
+      if ((target === 'COMPLETED' || target === 'CANCELLED') && (release.driverReleased || release.vehicleReleased)) {
         await this.timelineRepo.create({
           trip_id: id,
           event_type: 'resources_released',
@@ -596,7 +871,7 @@ class TripService {
         new_value: JSON.stringify({
           status: target,
           ...(legacySkip ? { legacy_skip: true, note: 'loading/dispatch chain bypassed by admin' } : {}),
-          ...(target === 'COMPLETED'
+          ...((target === 'COMPLETED' || target === 'CANCELLED')
             ? { driver_released: release.driverReleased, vehicle_released: release.vehicleReleased }
             : {}),
         }),
@@ -613,7 +888,10 @@ class TripService {
    */
   async addExpense(tripId, data, user = null) {
     // Validate trip exists
-    await this.tripRepo.findById(tripId);
+    const trip = await this.tripRepo.findById(tripId);
+
+    // Check authorization
+    await this._checkTripAccess(trip, user);
 
     // Validate expense type
     const validTypes = ['DRIVER', 'DIESEL', 'TOLL', 'LOADING', 'UNLOADING', 'OWNER', 'MAINTENANCE', 'OTHER'];
@@ -735,6 +1013,9 @@ class TripService {
   async addPayment(tripId, data, user = null) {
     // Validate trip exists
     const trip = await this.tripRepo.findById(tripId);
+
+    // Check authorization
+    await this._checkTripAccess(trip, user);
 
     // Validate payment type
     const validTypes = ['ADVANCE', 'PARTIAL', 'FULL', 'SETTLEMENT', 'OTHER'];
@@ -873,6 +1154,26 @@ class TripService {
         },
       });
 
+      // ── BATCH 2B, PHASE 2: THE RECEIPT NAMES THE INVOICE ──────────────────
+      // A customer payment is money against a BILL, so the ledger row carries
+      // the invoice's id in `invoice_id` (the same stamp the invoice-creation
+      // path writes) and in `metadata.invoice_id` (the pre-existing metadata
+      // convention). With the stamp in place the invoice's own state can then
+      // be reconciled in the SAME transaction instead of disagreeing with the
+      // cash forever.
+      let invoiceForTrip = null;
+      if (data.invoice_id !== undefined && data.invoice_id !== null) {
+        invoiceForTrip = await tx.invoice.findFirst({
+          where: { invoice_id: Number(data.invoice_id), trip_id: tripId },
+        });
+      }
+      if (!invoiceForTrip) {
+        invoiceForTrip = await tx.invoice.findFirst({ where: { trip_id: tripId } });
+      }
+      if (!invoiceForTrip && trip.booking_id) {
+        invoiceForTrip = await tx.invoice.findFirst({ where: { booking_id: trip.booking_id } });
+      }
+
       // Create FinancialTransaction for canonical financial system
       // Use tripFinancial relation connect (required by Prisma schema)
       await tx.financialTransaction.create({
@@ -893,13 +1194,31 @@ class TripService {
           status: 'PAID',
           notes: data.notes || null,
           created_by: user?.user_id || null,
+          // The invoice stamp — when a bill exists for this consignment.
+          // RELATION form, deliberately: a create that already uses relation
+          // arguments (tripFinancial / trip above) cannot also carry the
+          // scalar FK — Prisma then selects the checked CreateInput, where
+          // `invoice_id` is not a writable argument. (The scalar remains
+          // valid on plain creates, which is how every other writer does it.)
+          ...(invoiceForTrip ? { invoices: { connect: { invoice_id: invoiceForTrip.invoice_id } } } : {}),
           metadata: JSON.stringify({
             source_type: trip.source_type,
             client_id: trip.client_id || null,
             payment_id: payment.payment_id,
+            ...(invoiceForTrip ? { invoice_id: invoiceForTrip.invoice_id } : {}),
           }),
         },
       });
+
+      // Keep the invoice honest about its own money, in this same transaction:
+      // PARTIALLY_PAID while a balance remains, PAID when it is cleared. See
+      // `TripInvoiceService.reconcileInvoiceStatus` for the single mapping.
+      if (invoiceForTrip) {
+        await TripInvoiceService.reconcileInvoiceStatus({
+          prisma: tx,
+          invoiceId: invoiceForTrip.invoice_id,
+        });
+      }
 
       return payment;
     });
@@ -935,9 +1254,12 @@ class TripService {
   /**
    * Get trip payments.
    */
-  async getTripPayments(tripId) {
+  async getTripPayments(tripId, user = null) {
     // Validate trip exists
-    await this.tripRepo.findById(tripId);
+    const trip = await this.tripRepo.findById(tripId);
+
+    // Check authorization
+    await this._checkTripAccess(trip, user);
 
     return prisma.tripPayment.findMany({
       where: { trip_id: tripId },
@@ -961,29 +1283,113 @@ class TripService {
 
   /**
    * Get trips by client ID.
+   * Authorization: Customer can only see their own trips (user_id or client_id matches).
+   * Admin can see all.
    */
-  async getTripsByClientId(clientId, filters = {}) {
+  async getTripsByClientId(clientId, filters = {}, user = null) {
+    // Check authorization
+    if (user) {
+      if (user.role === 'admin' || user.role === 'super_admin') {
+        // Admin can see all
+      } else if (user.role === 'customer') {
+        // Customer can only see their own trips
+        if (user.user_id !== clientId) {
+          throw new ForbiddenError('Insufficient permissions to access these trips');
+        }
+      } else {
+        throw new ForbiddenError('Insufficient permissions to access these trips');
+      }
+    } else {
+      throw new ForbiddenError('Authentication required');
+    }
     return this.tripRepo.findByClientId(clientId, filters);
   }
 
   /**
    * Get trips by driver ID.
+   * Authorization: Driver can only see their own trips. Admin can see all.
    */
-  async getTripsByDriverId(driverId, filters = {}) {
+  async getTripsByDriverId(driverId, filters = {}, user = null) {
+    // Check authorization
+    if (user) {
+      if (user.role === 'admin' || user.role === 'super_admin') {
+        // Admin can see all
+      } else if (user.role === 'driver') {
+        // Driver can only see their own trips
+        const driver = await prisma.driver.findFirst({
+          where: { user_id: user.user_id },
+          select: { driver_id: true }
+        });
+        if (!driver || driver.driver_id !== driverId) {
+          throw new ForbiddenError('Insufficient permissions to access these trips');
+        }
+      } else {
+        throw new ForbiddenError('Insufficient permissions to access these trips');
+      }
+    } else {
+      throw new ForbiddenError('Authentication required');
+    }
     return this.tripRepo.findByDriverId(driverId, filters);
   }
 
   /**
    * Get trips by vehicle ID.
+   * Authorization: Partner can only see trips for their vehicles. Admin can see all.
    */
-  async getTripsByVehicleId(vehicleId, filters = {}) {
+  async getTripsByVehicleId(vehicleId, filters = {}, user = null) {
+    // Check authorization
+    if (user) {
+      if (user.role === 'admin' || user.role === 'super_admin') {
+        // Admin can see all
+      } else if (user.role === 'partner') {
+        // Partner can only see trips for their vehicles
+        const vehicle = await prisma.transportVehicle.findUnique({
+          where: { vehicle_id: vehicleId },
+          select: { transport_owner_id: true }
+        });
+        if (!vehicle) {
+          throw new NotFoundError('Vehicle not found');
+        }
+        const partner = await prisma.partner.findFirst({
+          where: { user_id: user.user_id },
+          select: { linkedVehicleOwner: { select: { owner_id: true } } }
+        });
+        if (!partner?.linkedVehicleOwner || partner.linkedVehicleOwner.owner_id !== vehicle.transport_owner_id) {
+          throw new ForbiddenError('Insufficient permissions to access these trips');
+        }
+      } else {
+        throw new ForbiddenError('Insufficient permissions to access these trips');
+      }
+    } else {
+      throw new ForbiddenError('Authentication required');
+    }
     return this.tripRepo.findByVehicleId(vehicleId, filters);
   }
 
   /**
    * Get trips by transport owner ID.
+   * Authorization: Partner can only see trips for their linked owner. Admin can see all.
    */
-  async getTripsByOwnerId(ownerId, filters = {}) {
+  async getTripsByOwnerId(ownerId, filters = {}, user = null) {
+    // Check authorization
+    if (user) {
+      if (user.role === 'admin' || user.role === 'super_admin') {
+        // Admin can see all
+      } else if (user.role === 'partner') {
+        // Partner can only see trips for their linked owner
+        const partner = await prisma.partner.findFirst({
+          where: { user_id: user.user_id },
+          select: { linkedVehicleOwner: { select: { owner_id: true } } }
+        });
+        if (!partner?.linkedVehicleOwner || partner.linkedVehicleOwner.owner_id !== ownerId) {
+          throw new ForbiddenError('Insufficient permissions to access these trips');
+        }
+      } else {
+        throw new ForbiddenError('Insufficient permissions to access these trips');
+      }
+    } else {
+      throw new ForbiddenError('Authentication required');
+    }
     return this.tripRepo.findByOwnerId(ownerId, filters);
   }
 

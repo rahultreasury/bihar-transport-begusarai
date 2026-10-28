@@ -66,7 +66,7 @@ function isCanonicalBookingNumber(value) {
  */
 function normalizeBookingIdentifier(value) {
   if (!value) return '';
-  return String(value).trim().toUpperCase();
+  return String(value).trim().toUpperCase().replace(/^#/, '');
 }
 
 module.exports = {

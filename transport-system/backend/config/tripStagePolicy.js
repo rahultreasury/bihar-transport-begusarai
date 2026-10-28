@@ -188,6 +188,7 @@ function resolveTripStage({
   podRequired = true,
   podReceived = false,
   trip = null,
+  legacySkippedStages = [],
 } = {}) {
   // A booking with NO Trip is a real and common state (an order that has not
   // become operational yet). It has no Trip status, so it is reported as null
@@ -250,6 +251,8 @@ function resolveTripStage({
   const action = nextActionFor(effectiveStatus, { podRequired, podReceived, tripId });
   const currentStageKey = stageKeyFor(effectiveStatus, status);
 
+  const skippedSet = new Set(legacySkippedStages || []);
+
   return {
     // The raw operational status is returned untouched — payment, document and
     // POD state stay SEPARATE from it (§15).
@@ -264,16 +267,28 @@ function resolveTripStage({
     next_action: action,
     has_trip: true,
 
-    stages: STAGES.map((s) => ({
-      key: s.key,
-      label: s.label,
-      trip_status: s.trip_status,
-      goto: s.goto,
-      state: stageStateFor(s.key, currentStageKey, action.stage),
-      // Every stage is viewable; only the current one and the one the next
-      // action belongs to are "actionable". Nothing here can change a status.
-      requirement: STAGE_REQUIREMENT[s.key] || null,
-    })),
+    stages: STAGES.map((s) => {
+      const baseState = stageStateFor(s.key, currentStageKey, action.stage);
+      // A stage marked by the legacy shortcut (DELIVERED → IN_TRANSIT and
+      // friends) was JUMPED OVER, so it is reported as 'skipped' — crossed out
+      // on the rail rather than disguised as an achieved 'done' behind the
+      // cursor or a never-reached 'locked' ahead of it. The current stage and
+      // the one the next action belongs to keep their honest state: the skip
+      // mark never answers "where is the trip?" for the stage it is in.
+      const state = skippedSet.has(s.key) && baseState !== 'current' && baseState !== 'available'
+        ? 'skipped'
+        : baseState;
+      return {
+        key: s.key,
+        label: s.label,
+        trip_status: s.trip_status,
+        goto: s.goto,
+        state,
+        // Every stage is viewable; only the current one and the one the next
+        // action belongs to are "actionable". Nothing here can change a status.
+        requirement: STAGE_REQUIREMENT[s.key] || null,
+      };
+    }),
   };
 }
 

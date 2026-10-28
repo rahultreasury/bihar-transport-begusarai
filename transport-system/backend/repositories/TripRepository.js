@@ -94,6 +94,9 @@ class TripRepository {
       dateTo = '',
       sortBy = 'created_at',
       sortOrder = 'desc',
+      _partnerUserId = null,
+      _driverUserId = null,
+      _customerUserId = null,
     } = filters;
 
     const where = {};
@@ -167,6 +170,43 @@ class TripRepository {
       if (dateTo) {
         where.trip_date.lte = new Date(dateTo + 'T23:59:59');
       }
+    }
+
+    // Authorization filters
+    // Partner can only see trips for their linked VehicleOwner
+    if (_partnerUserId) {
+      const partner = await this.tx.partner.findFirst({
+        where: { user_id: _partnerUserId },
+        select: { linkedVehicleOwner: { select: { owner_id: true } } }
+      });
+      if (partner?.linkedVehicleOwner) {
+        where.transport_owner_id = partner.linkedVehicleOwner.owner_id;
+      } else {
+        // Partner has no linked VehicleOwner - return no results
+        where.transport_owner_id = -1;
+      }
+    }
+
+    // Driver can only see their assigned trips
+    if (_driverUserId) {
+      const driver = await this.tx.driver.findFirst({
+        where: { user_id: _driverUserId },
+        select: { driver_id: true }
+      });
+      if (driver) {
+        where.driver_id = driver.driver_id;
+      } else {
+        // Driver not found - return no results
+        where.driver_id = -1;
+      }
+    }
+
+    // Customer can only see their own trips
+    if (_customerUserId) {
+      where.OR = [
+        { user_id: _customerUserId },
+        { client_id: _customerUserId },
+      ];
     }
 
     const pageNum = parseInt(page) || 1;

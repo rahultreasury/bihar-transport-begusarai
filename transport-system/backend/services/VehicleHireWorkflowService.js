@@ -171,21 +171,51 @@ function daysUntil(date, now) {
 /** Vehicle statuses that are NOT off the road for a new hire. */
 const VEHICLE_OFF_ROAD_STATUSES = Object.freeze(['off_road', 'maintenance', 'inactive']);
 
+/**
+ * Vehicle statuses that mean the vehicle is ENGAGED — the only states that
+ * legitimately explain `is_available: false`, and the only ones the
+ * same-trip-vehicle allowance covers. `ResourceAvailabilityService` writes
+ * `on_trip`; the enquiry-assigned path may write `assigned`.
+ */
+const ENGAGED_VEHICLE_STATUSES = Object.freeze(['on_trip', 'assigned']);
+
+/** Does `vehicle`'s id match the vehicle id the caller is allowing? */
+function isSameTripVehicle(allowVehicleId, vehicle) {
+  return allowVehicleId != null && Number(vehicle.vehicle_id) === Number(allowVehicleId);
+}
+
 /** Driver statuses that mean the driver is retired. */
 const DRIVER_INACTIVE_STATUSES = Object.freeze(['inactive', 'suspended', 'retired']);
 
 /**
  * @param {Object|null} vehicle
+ * @param {number|null} [allowVehicleId] - vehicle ID to allow even if not available (e.g., already on this trip)
  * @returns {{usable:boolean, reason:string|null}}
  */
-function checkVehicleUsable(vehicle) {
+function checkVehicleUsable(vehicle, allowVehicleId = null) {
   if (!vehicle) return { usable: false, reason: 'Vehicle was not found' };
 
+  const status = String(vehicle.current_status || '').toLowerCase();
+
   if (vehicle.is_available === false) {
-    return { usable: false, reason: `Vehicle ${vehicle.vehicle_number} is marked not available` };
+    // The vehicle already assigned to THIS trip may legitimately show
+    // is_available=false — but ONLY because ResourceAvailabilityService marked
+    // it busy FOR THIS TRIP, and it always pairs that flag with an engaged
+    // status ('on_trip'; 'assigned' for the enquiry-assigned path). Hiring the
+    // same vehicle on the same trip is not a double-booking — it is the
+    // operator confirming the hire of the vehicle already engaged.
+    //
+    // A same-trip vehicle whose flag reads false and whose status is NOT
+    // engaged ('available', or anything admin-set) is an operator-declared
+    // outage: the flag means itself and is refused exactly like a stranger's
+    // vehicle. Without this refinement the twin gate — "an inactive vehicle
+    // cannot be hired" — was bypassable by any vehicle the trip already named.
+    const engagedOnThisTrip = isSameTripVehicle(allowVehicleId, vehicle) && ENGAGED_VEHICLE_STATUSES.includes(status);
+    if (!engagedOnThisTrip) {
+      return { usable: false, reason: `Vehicle ${vehicle.vehicle_number} is marked not available` };
+    }
   }
 
-  const status = String(vehicle.current_status || '').toLowerCase();
   if (VEHICLE_OFF_ROAD_STATUSES.includes(status)) {
     return {
       usable: false,
@@ -198,16 +228,39 @@ function checkVehicleUsable(vehicle) {
 
 /**
  * @param {Object|null} driver
+ * @param {number|null} [allowDriverId] - driver ID to allow even if not available (e.g., already on this trip)
  * @returns {{usable:boolean, reason:string|null}}
  */
-function checkDriverUsable(driver) {
+/**
+ * Driver statuses that legitimately explain `is_available: false` —
+ * `ResourceAvailabilityService.markDriverBusy` writes `on_trip`; the
+ * enquiry-assigned path may write `assigned`. Mirror of
+ * `ENGAGED_VEHICLE_STATUSES` for the trip's own driver.
+ */
+const ENGAGED_DRIVER_STATUSES = Object.freeze(['on_trip', 'assigned']);
+
+function checkDriverUsable(driver, allowDriverId = null) {
   if (!driver) return { usable: false, reason: 'Driver was not found' };
 
+  const status = String(driver.status || '').toLowerCase();
+
+  // The driver already engaged on THIS trip may legitimately show
+  // is_available=false — pairing the flag with an engaged status means
+  // TripVehicleAssignmentService made him busy FOR THIS TRIP when the
+  // assignment was made. Completing the hire of the trip's own driver is
+  // confirming that assignment, not double-booking anyone — the same rule
+  // checkVehicleUsable applies to the trip's own vehicle. ANY other
+  // unavailability stays refused exactly as before, and an engaged driver is
+  // still refused when his status says he is off the road (retired…).
   if (driver.is_available === false) {
-    return { usable: false, reason: `Driver ${driver.driver_name} is marked not available` };
+    const engagedOnThisTrip = allowDriverId != null
+      && Number(driver.driver_id) === Number(allowDriverId)
+      && ENGAGED_DRIVER_STATUSES.includes(status);
+    if (!engagedOnThisTrip) {
+      return { usable: false, reason: `Driver ${driver.driver_name} is marked not available` };
+    }
   }
 
-  const status = String(driver.status || '').toLowerCase();
   if (DRIVER_INACTIVE_STATUSES.includes(status)) {
     return {
       usable: false,
@@ -233,7 +286,9 @@ function checkDriverUsable(driver) {
  * @returns {Promise<{vehicle_conflict:Object|null, driver_conflict:Object|null}>}
  */
 async function findActiveTripConflicts(client, { vehicleId, driverId, excludeTripId }) {
-  const activeStatuses = ['PENDING', 'ASSIGNED', 'IN_TRANSIT', 'DELIVERED'];
+  // Use centralized ACTIVE_TRIP_STATUSES from TripStateMachine to ensure
+  // all operationally engaged statuses are checked (including loading/dispatch stages).
+  const activeStatuses = tripStateMachine.ACTIVE_TRIP_STATUSES;
 
   const [vehicleConflict, driverConflict] = await Promise.all([
     client.trip.findFirst({
@@ -242,7 +297,7 @@ async function findActiveTripConflicts(client, { vehicleId, driverId, excludeTri
         status: { in: activeStatuses },
         ...(excludeTripId ? { trip_id: { not: excludeTripId } } : {}),
       },
-      select: { trip_id: true, trip_number: true, status: true },
+      select: { trip_id: true, trip_number: true, status: true, booking_id: true, booking: { select: { booking_number: true } } },
     }),
     client.trip.findFirst({
       where: {
@@ -250,7 +305,7 @@ async function findActiveTripConflicts(client, { vehicleId, driverId, excludeTri
         status: { in: activeStatuses },
         ...(excludeTripId ? { trip_id: { not: excludeTripId } } : {}),
       },
-      select: { trip_id: true, trip_number: true, status: true },
+      select: { trip_id: true, trip_number: true, status: true, booking_id: true, booking: { select: { booking_number: true } } },
     }),
   ]);
 
@@ -1155,6 +1210,12 @@ class VehicleHireWorkflowService {
       trip_date: tripDate = '',
       vehicle_type: vehicleType = '',
       business_model: businessModel = '',
+      // Additive filters used by the status chips. `hire_state` narrows the
+      // DERIVED vehicle-hire state (waiting / assigned / hired) and
+      // `trip_status` narrows the operational lifecycle stage. Neither changes
+      // the default queue, which remains `view=waiting`.
+      hire_state: hireStateFilter = '',
+      trip_status: tripStatusFilter = '',
       page = 1,
       limit = 25,
     } = filters;
@@ -1169,46 +1230,82 @@ class VehicleHireWorkflowService {
     // NOT from the presence of a hire row alone.
     const hireReady = { in: policy.HIRE_LIST_TRIP_STATUSES };
 
-    const where = { status: hireReady };
+    // The status chips can also drill into stages that have left the hiring
+    // queue (in transit / delivered / completed). Those are READ-ONLY views of
+    // the same trips; they do not widen the default queue. The queue statuses
+    // stay inside HIRE_LIST_TRIP_STATUSES.
+    const LIFECYCLE_STATUSES = Object.freeze([
+      'PENDING',
+      'ASSIGNED',
+      'TO_LOADING_POINT',
+      'AT_LOADING_POINT',
+      'LOADED',
+      'DISPATCHED',
+      'IN_TRANSIT',
+      'DELIVERED',
+      'COMPLETED',
+    ]);
+    const ARCHIVE_STATUSES = Object.freeze(['IN_TRANSIT', 'DELIVERED', 'COMPLETED', 'LOADED', 'DISPATCHED']);
+
+    const requestedStatus = String(tripStatusFilter || '').toUpperCase();
+    const validStatus = LIFECYCLE_STATUSES.includes(requestedStatus) ? requestedStatus : '';
+    const isArchiveView = ARCHIVE_STATUSES.includes(validStatus);
+
+    const where = {
+      status: validStatus
+        ? (isArchiveView ? validStatus : { in: policy.HIRE_LIST_TRIP_STATUSES })
+        : hireReady,
+    };
+    if (validStatus && !isArchiveView) where.status = validStatus;
 
     // `view` narrows by the DERIVED hire state, which cannot be expressed as a
     // simple Prisma relation filter. It is therefore applied after the rows are
     // read, against the same `hireStateFor` rule the serializer uses. To keep
     // pagination honest, the counts below are computed with the same predicate.
+    // Each filter is its own AND clause. A free-text search is a single OR
+    // across the searchable columns; making those columns separate AND clauses
+    // (the previous shape) required every column to contain the term at once,
+    // which could never match a real row.
+    const andClauses = [];
+
     if (businessModel) {
-      where.OR = [
-        { business_model: String(businessModel).toUpperCase() },
-        { vehicleHire: { business_model: String(businessModel).toUpperCase() } },
-      ];
+      const model = String(businessModel).toUpperCase();
+      andClauses.push({
+        OR: [
+          { business_model: model },
+          { vehicleHire: { business_model: model } },
+        ],
+      });
     }
 
-    const searchClauses = [];
     if (term) {
-      searchClauses.push(
-        { trip_number: { contains: term, mode: 'insensitive' } },
-        { pickup_city: { contains: term, mode: 'insensitive' } },
-        { drop_city: { contains: term, mode: 'insensitive' } },
-        { pickup_location: { contains: term, mode: 'insensitive' } },
-        { drop_location: { contains: term, mode: 'insensitive' } },
-        { booking: { booking_number: { contains: term, mode: 'insensitive' } } },
-        { booking: { goods_description: { contains: term, mode: 'insensitive' } } },
-        { client: { company_name: { contains: term, mode: 'insensitive' } } },
-        { vehicle: { vehicle_number: { contains: term, mode: 'insensitive' } } },
-        { driver: { driver_name: { contains: term, mode: 'insensitive' } } },
-        { transportOwner: { owner_name: { contains: term, mode: 'insensitive' } } }
-      );
+      andClauses.push({
+        OR: [
+          { trip_number: { contains: term, mode: 'insensitive' } },
+          { pickup_city: { contains: term, mode: 'insensitive' } },
+          { drop_city: { contains: term, mode: 'insensitive' } },
+          { pickup_location: { contains: term, mode: 'insensitive' } },
+          { drop_location: { contains: term, mode: 'insensitive' } },
+          { booking: { booking_number: { contains: term, mode: 'insensitive' } } },
+          { booking: { goods_description: { contains: term, mode: 'insensitive' } } },
+          { client: { company_name: { contains: term, mode: 'insensitive' } } },
+          { vehicle: { vehicle_number: { contains: term, mode: 'insensitive' } } },
+          { driver: { driver_name: { contains: term, mode: 'insensitive' } } },
+          { transportOwner: { owner_name: { contains: term, mode: 'insensitive' } } },
+        ],
+      });
     }
+
     if (vehicleType) {
-      searchClauses.push({
+      andClauses.push({
         OR: [
           { vehicle: { vehicle_type: { contains: vehicleType, mode: 'insensitive' } } },
           { booking: { vehicle_type_required: { contains: vehicleType, mode: 'insensitive' } } },
         ],
       });
     }
-    if (term || vehicleType) {
-      where.AND = searchClauses;
-    }
+
+    if (andClauses.length) where.AND = andClauses;
     if (tripDate) {
       const from = new Date(tripDate);
       if (!Number.isNaN(from.getTime())) {
@@ -1218,7 +1315,20 @@ class VehicleHireWorkflowService {
       }
     }
 
-    const [allRows, waitingCount, assignedCount, hiredCount, toLoadingCount] = await Promise.all([
+    const [
+      allRows,
+      queueCount,
+      waitingCount,
+      assignedCount,
+      hiredCount,
+      toLoadingCount,
+      toLoadingOnlyCount,
+      loadingCount,
+      inTransitCount,
+      deliveredCount,
+      completedCount,
+      queueHireTrips,
+    ] = await Promise.all([
       this.prisma.trip.findMany({
         where,
         orderBy: [{ trip_date: 'desc' }, { trip_id: 'desc' }],
@@ -1301,6 +1411,7 @@ class VehicleHireWorkflowService {
       // table uses, so the KPI cards can never disagree with the rows beneath
       // them. Counts deliberately ignore the `view` filter — they describe the
       // whole queue, which is what an operator switching tabs expects to see.
+      this.prisma.trip.count({ where: { status: hireReady } }),
       this.prisma.trip.count({ where: { status: hireReady, vehicle_id: null } }),
       this.prisma.trip.count({ where: { status: hireReady, vehicle_id: { not: null } } }),
       this.prisma.trip.count({
@@ -1308,6 +1419,29 @@ class VehicleHireWorkflowService {
       }),
       this.prisma.trip.count({
         where: { status: hireReady, OR: [{ status: 'TO_LOADING_POINT' }, { status: 'AT_LOADING_POINT' }] },
+      }),
+      // The status-chip counts. To Loading and Loading are deliberately
+      // separate here: the KPI keeps its historic combined figure, while the
+      // two chips each describe exactly one lifecycle stage.
+      this.prisma.trip.count({ where: { status: 'TO_LOADING_POINT' } }),
+      this.prisma.trip.count({ where: { status: 'AT_LOADING_POINT' } }),
+      this.prisma.trip.count({ where: { status: 'IN_TRANSIT' } }),
+      this.prisma.trip.count({ where: { status: 'DELIVERED' } }),
+      this.prisma.trip.count({ where: { status: 'COMPLETED' } }),
+      // The KPI money is a property of the whole hire queue, not of the
+      // current search/date/status slice. Reading it from its own query keeps
+      // the headline figures stable while an operator drills into a stage.
+      this.prisma.trip.findMany({
+        where: { status: hireReady, vehicleHire: { isNot: null } },
+        select: {
+          vehicleHire: {
+            select: {
+              gross_hire: true,
+              commission_amount: true,
+              net_vendor_payable: true,
+            },
+          },
+        },
       }),
     ]);
 
@@ -1326,11 +1460,6 @@ class VehicleHireWorkflowService {
       return { trip: t, hireState };
     });
 
-    // Only rows that actually carry a hire contribute money. `sumDecimal`
-    // receives the unwrapped trip, because the picker reads the hire relation
-    // straight off it.
-    const hiredTrips = decorated.filter((d) => d.trip.vehicleHire).map((d) => d.trip);
-
     const counts = {
       waiting: waitingCount,
       assigned: assignedCount,
@@ -1341,21 +1470,44 @@ class VehicleHireWorkflowService {
       // Headline money, summed from the STORED hire columns across the whole
       // queue. Gross is never replaced by net — they are summed separately, so
       // the KPI row can never imply that the commission was taken off the gross.
-      gross_hire: sumDecimal(hiredTrips, (t) => t.vehicleHire.gross_hire),
-      commission_amount: sumDecimal(hiredTrips, (t) => t.vehicleHire.commission_amount),
-      net_vendor_payable: sumDecimal(hiredTrips, (t) => t.vehicleHire.net_vendor_payable),
+      gross_hire: sumDecimal(queueHireTrips, (t) => t.vehicleHire.gross_hire),
+      commission_amount: sumDecimal(queueHireTrips, (t) => t.vehicleHire.commission_amount),
+      net_vendor_payable: sumDecimal(queueHireTrips, (t) => t.vehicleHire.net_vendor_payable),
+      // Per-stage counts for the status chips. `all` is the operational queue;
+      // the lifecycle stages below it are read from the whole trip table so a
+      // chip never shows an invented number.
+      statuses: {
+        all: queueCount,
+        waiting: waitingCount,
+        hired: hiredCount,
+        to_loading: toLoadingOnlyCount,
+        loading: loadingCount,
+        in_transit: inTransitCount,
+        delivered: deliveredCount,
+        completed: completedCount,
+      },
     };
 
-    const filtered =
-      view === 'waiting'
-        ? decorated.filter(
-            (d) =>
-              d.hireState === policy.HIRE_STATE.WAITING_FOR_VEHICLE
-              || d.hireState === policy.HIRE_STATE.VEHICLE_ASSIGNED
-          )
-        : view === 'hired'
-          ? decorated.filter((d) => d.hireState === policy.HIRE_STATE.VEHICLE_HIRED)
-          : decorated;
+    // A lifecycle-stage request is already narrowed in SQL. Only the queue
+    // views apply the derived-state narrowing, so an archive stage can never be
+    // silently emptied by the default `waiting` view.
+    let filtered = decorated;
+    if (!validStatus) {
+      if (view === 'waiting') {
+        filtered = decorated.filter(
+          (d) =>
+            d.hireState === policy.HIRE_STATE.WAITING_FOR_VEHICLE
+            || d.hireState === policy.HIRE_STATE.VEHICLE_ASSIGNED
+        );
+      } else if (view === 'hired') {
+        filtered = decorated.filter((d) => d.hireState === policy.HIRE_STATE.VEHICLE_HIRED);
+      }
+    }
+
+    const requestedHireState = String(hireStateFilter || '').toUpperCase();
+    if (Object.values(policy.HIRE_STATE).includes(requestedHireState)) {
+      filtered = filtered.filter((d) => d.hireState === requestedHireState);
+    }
 
     const total = filtered.length;
     const pageRows = filtered.slice(skip, skip + take);
@@ -2150,7 +2302,7 @@ class VehicleHireWorkflowService {
     });
     if (!vehicle) throw new ValidationError(`Vehicle ${vehicleId} was not found`);
 
-    const vehicleUsability = checkVehicleUsable(vehicle);
+    const vehicleUsability = checkVehicleUsable(vehicle, trip.vehicle_id);
     if (!vehicleUsability.usable) throw new ValidationError(vehicleUsability.reason);
 
     // ── 2. Vendor ──────────────────────────────────────────────────────────
@@ -2191,7 +2343,7 @@ class VehicleHireWorkflowService {
     });
     if (!driver) throw new ValidationError(`Driver ${driverId} was not found`);
 
-    const driverUsability = checkDriverUsable(driver);
+    const driverUsability = checkDriverUsable(driver, trip.driver_id);
     if (!driverUsability.usable) throw new ValidationError(driverUsability.reason);
 
     // ── 4. Existing conflict check, reused ─────────────────────────────────
@@ -2204,13 +2356,15 @@ class VehicleHireWorkflowService {
         excludeTripId: trip.trip_id,
       });
       if (vehicleConflict) {
+        const bookingNumber = vehicleConflict.booking?.booking_number || vehicleConflict.booking_id ? `booking #${vehicleConflict.booking_id}` : 'unknown booking';
         throw new ValidationError(
-          `Vehicle ${vehicle.vehicle_number} is already engaged on trip ${vehicleConflict.trip_number} (${vehicleConflict.status})`
+          `Vehicle ${vehicle.vehicle_number} is already engaged on trip ${vehicleConflict.trip_number} (${vehicleConflict.status}) — belongs to ${bookingNumber}`
         );
       }
       if (driverConflict) {
+        const bookingNumber = driverConflict.booking?.booking_number || driverConflict.booking_id ? `booking #${driverConflict.booking_id}` : 'unknown booking';
         throw new ValidationError(
-          `Driver ${driver.driver_name} is already engaged on trip ${driverConflict.trip_number} (${driverConflict.status})`
+          `Driver ${driver.driver_name} is already engaged on trip ${driverConflict.trip_number} (${driverConflict.status}) — belongs to ${bookingNumber}`
         );
       }
     }
@@ -2584,3 +2738,5 @@ module.exports = VehicleHireWorkflowService;
 module.exports.VehicleHireWorkflowService = VehicleHireWorkflowService;
 module.exports.parseDocumentDate = parseDocumentDate;
 module.exports.sumDecimal = sumDecimal;
+module.exports.checkVehicleUsable = checkVehicleUsable;
+module.exports.checkDriverUsable = checkDriverUsable;

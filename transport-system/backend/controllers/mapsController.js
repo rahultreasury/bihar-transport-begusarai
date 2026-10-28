@@ -77,6 +77,8 @@ const calculatePriceHandler = async (req, res) => {
         distanceKm,
         duration: '0 hours 0 mins',
         price,
+        priceMin: Math.round(distanceKm * rateMin),
+        priceMax: Math.round(distanceKm * rateMax),
         rate,
         rateMin,
         rateMax,
@@ -97,6 +99,11 @@ const calculatePriceHandler = async (req, res) => {
       distanceKm,
       duration,
       price,
+      // The lower and upper bound of the price for THIS route, computed from
+      // the same distance and the vehicle's own rate range. Clients display
+      // these instead of pricing the route themselves.
+      priceMin: Math.round(distanceKm * rateMin),
+      priceMax: Math.round(distanceKm * rateMax),
       rate,
       rateMin,
       rateMax,

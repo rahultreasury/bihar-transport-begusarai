@@ -650,6 +650,18 @@ class EnquiryService {
         where: { enquiry_id: enquiry.enquiry_id },
       });
 
+      // Find existing trip for this enquiry (or its booking) to exclude from
+      // conflict checks. A consignment never conflicts with its own trip.
+      const existingTrip = await tx.trip.findFirst({
+        where: {
+          OR: [
+            { enquiry_id: fresh.enquiry_id },
+            ...(fresh.booking_id ? [{ booking_id: fresh.booking_id }] : []),
+          ],
+        },
+        select: { trip_id: true },
+      });
+
       const validated = await this.assignments.validateAssignment(
         {
           enquiry: fresh,
@@ -658,6 +670,7 @@ class EnquiryService {
           partnerId,
           ownerId,
           isReassignment: Boolean(opts.isReassignment),
+          excludeTripId: existingTrip?.trip_id ?? null,
         },
         tx
       );
@@ -1375,6 +1388,18 @@ class EnquiryService {
     const driverId = enquiry.assigned_driver_id ?? null;
     if (!vehicleId && !driverId) return true;
 
+    // Find the trip for this enquiry/booking to exclude from conflict checks.
+    const client = tx || this.prisma;
+    const existingTrip = await client.trip.findFirst({
+      where: {
+        OR: [
+          { enquiry_id: enquiry.enquiry_id },
+          ...(enquiry.booking_id ? [{ booking_id: enquiry.booking_id }] : []),
+        ],
+      },
+      select: { trip_id: true },
+    });
+
     try {
       await this.enquiryAssignment.validateAssignment(
         {
@@ -1386,6 +1411,7 @@ class EnquiryService {
           // The consignment's own reservation is not a conflict with itself; this
           // is a re-check, not a replacement.
           isReassignment: true,
+          excludeTripId: existingTrip?.trip_id ?? null,
         },
         tx,
       );

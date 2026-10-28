@@ -51,6 +51,7 @@ const tripStateMachine = require('../utils/TripStateMachine');
 // The EXISTING availability / conflict rules (rules 1-8), reused rather than
 // reimplemented. Injectable so a test can supply its own.
 const defaultAvailabilityService = require('./EnquiryAssignmentService');
+const ResourceAvailabilityService = require('./ResourceAvailabilityService');
 // Recognises a placeholder owner row so the UI can say "not recorded" instead of
 // printing "Orphan Driver Owner". It NEVER rewrites data and never substitutes a
 // different owner — payouts route on `owner_id`, and that must stay untouched.
@@ -85,6 +86,7 @@ class TripVehicleAssignmentService {
     this.prisma = deps.prisma || defaultPrisma;
     this.timelineRepo = new TripTimelineRepository({ prisma: this.prisma });
     this.availability = deps.availability || defaultAvailabilityService;
+    this.resourceAvailability = new ResourceAvailabilityService({ prisma: this.prisma });
   }
 
   // ==========================================================================
@@ -610,7 +612,7 @@ class TripVehicleAssignmentService {
           await tx.booking.update({ where: { booking_id: trip.booking_id }, data: bookingPatch });
         }
       }
-    });
+    }, { timeout: 60000 });
 
     // 4. Trip status follows the assignment, through the EXISTING state
     //    machine. A trip that gained a vehicle while still PENDING becomes
@@ -618,12 +620,37 @@ class TripVehicleAssignmentService {
     //    is also what VehicleHirePolicy reads as VEHICLE HIRED territory. The
     //    distinction between "assigned" and "hired" is carried by the
     //    `vehicle_hires` row, never by overloading this status.
-    if (trip.status === 'PENDING' && vehicleId && driverId) {
-      tripStateMachine.validateOperationalTransition(trip.status, 'ASSIGNED');
+    const updatedTrip = await this.prisma.trip.findUnique({ where: { trip_id: trip.trip_id } });
+    if (updatedTrip && updatedTrip.status === 'PENDING' && vehicleId && driverId) {
+      tripStateMachine.validateOperationalTransition(updatedTrip.status, 'ASSIGNED');
       await this.prisma.trip.update({
         where: { trip_id: trip.trip_id },
         data: { status: 'ASSIGNED' },
       });
+    }
+
+    // 5. Handle resource availability on reassignment
+    // After successful assignment, release old resources if they changed and are no longer on active trips
+    // Mark new resources as busy if the trip is in active state
+    const finalTrip = await this.prisma.trip.findUnique({ where: { trip_id: trip.trip_id } });
+    const isActiveTrip = finalTrip && tripStateMachine.ACTIVE_TRIP_STATUSES.includes(finalTrip.status);
+    
+    // Release old resources if they changed
+    if (vehicleChanged && previousVehicleId) {
+      await this.resourceAvailability.releaseVehicleIfNoActiveTrip(previousVehicleId, trip.trip_id);
+    }
+    if (driverChanged && previousDriverId) {
+      await this.resourceAvailability.releaseDriverIfNoActiveTrip(previousDriverId, trip.trip_id);
+    }
+    
+    // Mark new resources as busy if trip is active
+    if (isActiveTrip) {
+      if (vehicleId) {
+        await this.resourceAvailability.markVehicleBusy(vehicleId);
+      }
+      if (driverId) {
+        await this.resourceAvailability.markDriverBusy(driverId);
+      }
     }
 
     return this.getCurrentAssignment({ tripId: trip.trip_id });

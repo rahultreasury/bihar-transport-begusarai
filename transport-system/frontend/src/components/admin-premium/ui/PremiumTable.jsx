@@ -41,6 +41,8 @@ const SORT_ARROW_UP = '↑';
     focusedIndex,
     onRowClick,
     dense = false,
+    className = '',
+    getRowId,
   }) {
   const resolvedColumns = useMemo(() => columns || [], [columns]);
   const resolvedRows = Array.isArray(rows) ? rows : [];
@@ -67,7 +69,7 @@ const SORT_ARROW_UP = '↑';
   return (
     <div
       ref={tableRef}
-      className={`bt-table-wrap relative w-full max-w-full ${dense ? 'bt-table-density-compact' : ''}`}
+      className={`bt-table-wrap relative w-full max-w-full ${dense ? 'bt-table-density-compact' : ''} ${className}`}
       tabIndex={0}
       onKeyDown={onKeyDown}
       role="grid"
@@ -154,7 +156,7 @@ const SORT_ARROW_UP = '↑';
               </tr>
             ) : (
               resolvedRows.map((r, idx) => {
-                const rowId = r.id || r.booking_id || idx;
+                const rowId = getRowId ? getRowId(r, idx) : r.id || r.booking_id || idx;
                 const isSelected = selectedIds?.has(rowId);
                 const isFocused = focusedIndex === idx;
                 const isClickable = !!onRowClick;

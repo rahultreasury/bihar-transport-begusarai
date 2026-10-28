@@ -78,6 +78,22 @@ const OPERATIONAL_SEQUENCE = Object.freeze([
 const TERMINAL_STATUSES = Object.freeze(['COMPLETED', 'CANCELLED']);
 
 /**
+ * Trip statuses that mean a vehicle/driver is operationally engaged.
+ * Used for double-booking protection, availability checks, and resource release.
+ * Includes ALL non-terminal operational statuses where a resource is committed.
+ */
+const ACTIVE_TRIP_STATUSES = Object.freeze([
+  'PENDING',
+  'ASSIGNED',
+  'TO_LOADING_POINT',
+  'AT_LOADING_POINT',
+  'LOADED',
+  'DISPATCHED',
+  'IN_TRANSIT',
+  'DELIVERED',
+]);
+
+/**
  * Edges that skip the loading/dispatch chain. Preserved from the pre-Phase-4
  * UI. Audited whenever they are used.
  */
@@ -217,6 +233,7 @@ module.exports = {
   TRIP_STATUSES,
   OPERATIONAL_SEQUENCE,
   TERMINAL_STATUSES,
+  ACTIVE_TRIP_STATUSES,
   LEGACY_SKIP_TRANSITIONS,
   ALLOWED_TRANSITIONS,
   validateTransition,

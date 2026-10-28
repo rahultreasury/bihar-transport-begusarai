@@ -70,6 +70,67 @@ class VendorLedgerService {
     this.vehicleHireService = new VehicleHireService(deps);
   }
 
+  /**
+   * The fields needed from a `VehicleHire` row to state the trip's money.
+   */
+  static get VEHICLE_HIRE_SELECT() {
+    return {
+      hire_id: true,
+      gross_hire: true,
+      commission_type: true,
+      commission_rate: true,
+      commission_amount: true,
+      net_vendor_payable: true,
+      status: true,
+    };
+  }
+
+  // =========================================================================
+  // HIRE MONEY — THE AUTHORITATIVE SOURCE
+  // =========================================================================
+
+  /**
+   * State what Bihar Transport owes the vendor for ONE trip.
+   *
+   * ORDER OF AUTHORITY (Batch 2B — why this helper exists):
+   *   1. A `VehicleHire` record — the Phase 2 commercial document — IS the
+   *      applicable hire for the trip's business model. When one exists its
+   *      stored figures (gross_hire / commission_amount / net_vendor_payable)
+   *      are copied verbatim; they are never recomputed and the customer
+   *      freight (trip.freight_amount) is NEVER consulted.
+   *      Before this change the vendor position silently fell back to the
+   *      trip-based derivation below even when a hire record was on file, so
+   *      a trip billed as hire ₹42,000 net ₹40,000 — with customer freight
+   *      ₹50,000 — reported a ₹47,500 payable from the wrong money.
+   *   2. NO hire record → the legacy trip-based derivation
+   *      (`VehicleHireService.buildVehicleHire`) — gross from
+   *      trip.freight_amount, commission from the trip's stored terms. This
+   *      preserves every pre-VehicleHire-trip workflow exactly as it was.
+   *
+   * @param {Object} trip - a Trip row (with `vehicleHire` + `transportOwner`
+   *        loaded when the caller has them)
+   * @returns {{source:'VEHICLE_HIRE_RECORD'|'TRIP_TERMS', grossHire:number,
+   *            commissionAmount:number, netVendorPayable:number}}
+   */
+  _resolveHireMoney(trip) {
+    const hire = trip.vehicleHire;
+    if (hire && hire.net_vendor_payable != null) {
+      return {
+        source: 'VEHICLE_HIRE_RECORD',
+        grossHire: roundMoney(Number(hire.gross_hire) || 0),
+        commissionAmount: roundMoney(Number(hire.commission_amount) || 0),
+        netVendorPayable: roundMoney(Number(hire.net_vendor_payable) || 0),
+      };
+    }
+    const legacy = this.vehicleHireService.buildVehicleHire(trip);
+    return {
+      source: 'TRIP_TERMS',
+      grossHire: legacy.grossHire,
+      commissionAmount: legacy.commissionAmount,
+      netVendorPayable: legacy.netVendorPayable,
+    };
+  }
+
   // =========================================================================
   // CLASSIFICATION
   // =========================================================================
@@ -150,6 +211,7 @@ class VendorLedgerService {
         transport_owner_id: true,
         vehicle_id: true,
         driver_id: true,
+        vehicleHire: { select: VendorLedgerService.VEHICLE_HIRE_SELECT },
         transportOwner: {
           select: { owner_id: true, owner_name: true, owner_type: true, mobile: true },
         },
@@ -158,8 +220,10 @@ class VendorLedgerService {
 
     if (!trip) throw new NotFoundError('Trip not found');
 
-    // ── The Phase 2 identity, from the one existing calculator ─────────────
-    const hire = this.vehicleHireService.buildVehicleHire(trip);
+    // ── The Phase 2 identity, from the applicable hire ─────────────────────
+    // A VehicleHire record is authoritative when one exists; the legacy
+    // trip-terms derivation applies only where no hire record was created.
+    const hire = this._resolveHireMoney(trip);
 
     // ── Money actually moved, from the canonical ledger ────────────────────
     const transactions = await this.prisma.financialTransaction.findMany({
@@ -189,8 +253,19 @@ class VendorLedgerService {
       trip_number: trip.trip_number,
       status: trip.status,
 
-      vendor: hire.vendor,
+      vendor: trip.transportOwner
+        ? {
+            owner_id: trip.transportOwner.owner_id,
+            owner_name: trip.transportOwner.owner_name ?? null,
+            owner_type: trip.transportOwner.owner_type ?? null,
+            mobile: trip.transportOwner.mobile ?? null,
+          }
+        : null,
       owner_id: trip.transport_owner_id,
+
+      // Which record stated the hire — VEHICLE_HIRE_RECORD when the Phase 2
+      // commercial document exists, TRIP_TERMS for the legacy trip path.
+      hire_source: hire.source,
 
       // ── The hire, unchanged by any money movement ───────────────────────
       grossHire: hire.grossHire,
@@ -253,6 +328,7 @@ class VendorLedgerService {
         commission_type: true,
         commission_percentage: true,
         transport_owner_id: true,
+        vehicleHire: { select: VendorLedgerService.VEHICLE_HIRE_SELECT },
       },
       orderBy: [{ trip_date: 'asc' }, { trip_id: 'asc' }],
     });
@@ -261,7 +337,7 @@ class VendorLedgerService {
     const events = [];
 
     for (const trip of trips) {
-      const hire = this.vehicleHireService.buildVehicleHire(trip);
+      const hire = this._resolveHireMoney(trip);
       events.push({
         sortKey: new Date(trip.trip_date || trip.created_at || 0).getTime(),
         order: 0,
@@ -278,7 +354,7 @@ class VendorLedgerService {
         balance: null,
         payment_method: null,
         created_by: null,
-        notes: 'Net vendor payable raised by the vehicle hire (gross − commission)',
+        notes: `Net vendor payable raised by the vehicle hire (gross − commission) — from ${hire.source}`,
       });
     }
 

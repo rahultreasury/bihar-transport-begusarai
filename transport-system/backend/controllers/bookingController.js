@@ -14,6 +14,7 @@ const asyncHandler = require('../middleware/asyncHandler');
 const BookingService = require('../services/BookingService');
 const BookingAssignmentService = require('../services/BookingAssignmentService');
 const BookingQueryService = require('../services/BookingQueryService');
+const CanonicalFinancialService = require('../services/CanonicalFinancialService');
 const { parseBookingQuery } = require('../validators/bookingQuery');
 const { validateRequest } = require('../middleware/validateRequest');
 const { logger } = require('../utils/logger');
@@ -248,6 +249,49 @@ function createBookingController(deps = {}) {
     });
   });
 
+  /**
+   * GET /api/admin/bookings/lifecycle-counts
+   * Get lifecycle counts per stage.
+   */
+  const getLifecycleCounts = asyncHandler(async (req, res, next) => {
+    if (!ADMIN_ROLES.includes(req.user?.role)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const { data, error } = parseBookingQuery(req.query || {});
+    if (error) {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+        data: null,
+        details: error.details,
+      });
+    }
+
+    const result = await queryService.getLifecycleCounts(data);
+    return res.json({
+      success: true,
+      counts: result.counts,
+    });
+  });
+
+  const getLifecycleSummary = asyncHandler(async (req, res, next) => {
+    if (!ADMIN_ROLES.includes(req.user?.role)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+    const [lifecycleResult, financials] = await Promise.all([
+      queryService.getLifecycleSummary({}),
+      new CanonicalFinancialService().calculateGlobalFinancials(),
+    ]);
+    return res.json({
+      success: true,
+      counts: {
+        ...lifecycleResult.counts,
+        outstandingAmount: financials.totalCustomerDue || 0,
+      },
+    });
+  });
+
   return {
     createBooking,
     getUserBookings,
@@ -258,6 +302,8 @@ function createBookingController(deps = {}) {
     rejectQuote,
     trackBooking,
     listBookings,
+    getLifecycleCounts,
+    getLifecycleSummary,
   };
 }
 

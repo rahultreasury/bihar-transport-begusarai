@@ -65,6 +65,14 @@ function makeFakeRepos(overrides = {}) {
     }),
   };
 
+  // Fake TripProvisioningService — ensures trip provisioning is called but
+  // doesn't touch the real database.
+  const tripProvisioningService = {
+    ensureTripForBooking: async (bookingId) => {
+      return { trip: { trip_id: 999, booking_id: bookingId, status: 'PENDING' }, created: true };
+    },
+  };
+
   // Fake prisma transaction helper — executes the callback with a fake tx.
   const tx = {
     bookingAssignment: { create: async () => ({ booking_assignment_id: 1 }) },
@@ -87,6 +95,7 @@ function makeFakeRepos(overrides = {}) {
     timelineRepo,
     reservationRepo,
     invoiceRepo,
+    tripProvisioningService,
     prisma,
     state,
     timelineEvents,
@@ -100,6 +109,7 @@ function makeService(fakes) {
     timelineRepo: fakes.timelineRepo,
     reservationRepo: fakes.reservationRepo,
     invoiceRepo: fakes.invoiceRepo,
+    tripProvisioningService: fakes.tripProvisioningService,
   });
 }
 

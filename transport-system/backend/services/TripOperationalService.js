@@ -45,9 +45,19 @@ const { ValidationError, NotFoundError } = require('../utils/AppError');
 const TripTimelineRepository = require('../repositories/TripTimelineRepository');
 const AuditLogRepository = require('../repositories/AuditLogRepository');
 const TripDocumentService = require('./TripDocumentService');
+const ResourceAvailabilityService = require('./ResourceAvailabilityService');
 const tripStateMachine = require('../utils/TripStateMachine');
 const documentPolicy = require('../config/tripDocumentPolicy');
 const stagePolicy = require('../config/tripStagePolicy');
+const dispatchPolicy = require('../config/dispatchPolicy');
+
+/** Parse the loose date strings `TransportVehicle` stores its expiries as. */
+function parseLooseDate(value) {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
 
 /**
  * The operational transitions this service performs. Kept as data so the
@@ -164,6 +174,7 @@ class TripOperationalService {
     this.timelineRepo = new TripTimelineRepository({ prisma: this.prisma });
     this.auditRepo = new AuditLogRepository({ prisma: this.prisma });
     this.documentService = new TripDocumentService(deps);
+    this.resourceAvailability = new ResourceAvailabilityService({ prisma: this.prisma });
   }
 
   // =========================================================================
@@ -229,6 +240,138 @@ class TripOperationalService {
     });
 
     return updated;
+  }
+
+  // =========================================================================
+  // LOADING WORKSPACE
+  // =========================================================================
+
+  /**
+   * Everything the Loading page renders, in one response.
+   *
+   * Mirrors the pattern of TripDispatchService.getWorkspace so the Loading
+   * workspace has a single authoritative data source.
+   *
+   * @param {number} tripId
+   * @returns {Promise<Object>}
+   */
+  async getLoadingWorkspace(tripId) {
+    const trip = await this._loadTrip(tripId, true);
+    const checklist = await this.documentService.getChecklist(trip);
+    const readiness = await this.getDispatchReadiness(tripId);
+    const now = new Date();
+
+    const customer = this._resolveCustomer(trip);
+    const charges = await this._resolveCharges(trip);
+
+    return {
+      trip_id: trip.trip_id,
+      trip_number: trip.trip_number,
+      status: trip.status,
+
+      header: {
+        trip_number: trip.trip_number,
+        customer,
+        route: {
+          from: trip.pickup_location,
+          to: trip.drop_location,
+          distance_km: trip.distance_km ?? null,
+        },
+        vehicle: trip.vehicle
+          ? { vehicle_number: trip.vehicle.vehicle_number, vehicle_type: trip.vehicle.vehicle_type }
+          : null,
+        driver: trip.driver ? { driver_name: trip.driver.driver_name } : null,
+        vendor: trip.transportOwner
+          ? { owner_name: trip.transportOwner.owner_name }
+          : null,
+        current_status: trip.status,
+        expected_delivery_date: trip.expected_delivery_date,
+      },
+
+      readiness: {
+        ready: readiness.ready,
+        blockers: readiness.blockers,
+        checks: readiness.checks,
+        summary: readiness.summary,
+      },
+
+      shipment: {
+        consignor: customer?.name || trip.booking?.customer_name || null,
+        pickup: trip.pickup_location,
+        pickup_city: trip.pickup_city,
+        drop: trip.drop_location,
+        drop_city: trip.drop_city,
+        goods_description: trip.booking?.goods_description || null,
+        planned_quantity: trip.booking?.number_of_items ?? null,
+        planned_quantity_unit: trip.booking?.quantity_unit ?? null,
+        planned_weight_kg: trip.booking?.goods_weight_kg ?? null,
+        actual_quantity: trip.actual_quantity ?? null,
+        actual_quantity_unit: trip.actual_quantity_unit ?? null,
+        actual_weight_kg: trip.actual_weight_kg ?? null,
+        trip_type: trip.source_type,
+        distance_km: trip.distance_km ?? null,
+        expected_delivery_date: trip.expected_delivery_date,
+        value_of_goods: trip.value_of_goods ?? null,
+      },
+
+      vehicle: trip.vehicle
+        ? {
+            vehicle_number: trip.vehicle.vehicle_number,
+            vehicle_type: trip.vehicle.vehicle_type,
+            vehicle_name: trip.vehicle.vehicle_name,
+            body_type: trip.vehicle.body_type,
+            capacity_kg: trip.vehicle.capacity_kg,
+            owner: trip.transportOwner?.owner_name || null,
+            documents: this.evaluateVehicleDocuments(trip.vehicle, now),
+          }
+        : null,
+
+      driver: trip.driver
+        ? {
+            driver_id: trip.driver.driver_id,
+            driver_name: trip.driver.driver_name,
+            mobile: trip.driver.mobile ?? null,
+            status: trip.driver.status ?? null,
+          }
+        : null,
+
+      loading: {
+        completed: Boolean(trip.loading_completed_at),
+        loading_started_at: trip.loading_started_at,
+        completed_at: trip.loading_completed_at,
+        remarks: trip.loading_remarks,
+        loaded_by: trip.loaded_by,
+        actual_quantity: trip.actual_quantity ?? null,
+        actual_quantity_unit: trip.actual_quantity_unit ?? null,
+        actual_weight_kg: trip.actual_weight_kg ?? null,
+        location: trip.pickup_location,
+        sent_to_loading_at: trip.sent_to_loading_at,
+        arrived_at_loading_at: trip.arrived_at_loading_at,
+      },
+
+      documents: checklist,
+
+      charges,
+    };
+  }
+
+  /**
+   * Resolve the customer for the workspace header.
+   * @private
+   */
+  _resolveCustomer(trip) {
+    if (trip.booking?.user) return { kind: 'user', name: `${trip.booking.user.first_name || ''} ${trip.booking.user.last_name || ''}`.trim() };
+    if (trip.user) return { kind: 'user', name: `${trip.user.first_name || ''} ${trip.user.last_name || ''}`.trim() };
+    return null;
+  }
+
+  /**
+   * Resolve additional charges for the shipment.
+   * @private
+   */
+  async _resolveCharges(trip) {
+    // Placeholder - charges are managed separately in financials
+    return { lines: [], total: 0 };
   }
 
   // =========================================================================
@@ -397,9 +540,9 @@ class TripOperationalService {
     // about a trip nothing has hired yet, not an error.
     const hire = this.prisma.vehicleHire
       ? await this.prisma.vehicleHire.findUnique({
-        where: { trip_id: trip.trip_id },
-        select: { hire_id: true, status: true },
-      })
+          where: { trip_id: trip.trip_id },
+          select: { hire_id: true, status: true },
+        })
       : null;
 
     const podItems = (checklist?.items || []).filter(
@@ -410,13 +553,75 @@ class TripOperationalService {
     const podRequired = podItems.some((d) => d.required);
     const podReceived = podItems.some((d) => d.is_present);
 
+    // Check timeline for legacy skip events to mark skipped stages. A client
+    // without the timeline delegate (the repository's unit-double fakes)
+    // simply has no legacy-skip knowledge to mark.
+    const timeline = typeof this.prisma.tripTimeline?.findMany === 'function'
+      ? await this.prisma.tripTimeline.findMany({
+        where: { trip_id: trip.trip_id },
+        select: { metadata: true },
+      })
+      : [];
+
+    const legacySkippedStages = new Set();
+    for (const event of timeline) {
+      try {
+        const meta = typeof event.metadata === 'string' ? JSON.parse(event.metadata) : event.metadata;
+        if (meta && meta.legacy_skip === true && meta.from && meta.to) {
+          // Determine which stages were skipped between from and to
+          const skipped = this._getSkippedStages(meta.from, meta.to);
+          skipped.forEach(s => legacySkippedStages.add(s));
+        }
+      } catch (e) {
+        // Ignore parse errors
+      }
+    }
+
     return stagePolicy.resolveTripStage({
       tripStatus: trip.status,
       hasVehicleHire: Boolean(hire) && hire.status !== 'CANCELLED',
       podRequired,
       podReceived,
       trip: { trip_id: trip.trip_id, trip_number: trip.trip_number },
+      legacySkippedStages: Array.from(legacySkippedStages),
     });
+  }
+
+  /**
+   * Determine which lifecycle stages were skipped between two trip statuses.
+   * @private
+   */
+  _getSkippedStages(fromStatus, toStatus) {
+    const statusToStage = {
+      PENDING: 'VEHICLE_HIRED',
+      ASSIGNED: 'VEHICLE_HIRED',
+      TO_LOADING_POINT: 'LOADING',
+      AT_LOADING_POINT: 'LOADING',
+      LOADED: 'LOADING',
+      DISPATCHED: 'DISPATCH',
+      IN_TRANSIT: 'TRANSIT',
+      DELIVERED: 'DELIVERY',  // DELIVERED maps to DELIVERY stage (POD comes after)
+      COMPLETED: 'COMPLETED',
+      CANCELLED: 'COMPLETED',
+    };
+
+    const STAGES = [
+      'ENQUIRY', 'QUOTATION', 'ORDER_CONFIRMED', 'VEHICLE_HIRED',
+      'LOADING', 'DISPATCH', 'TRANSIT', 'DELIVERY', 'POD', 'COMPLETED'
+    ];
+
+    const fromStage = statusToStage[fromStatus];
+    const toStage = statusToStage[toStatus];
+
+    if (!fromStage || !toStage) return [];
+
+    const fromIdx = STAGES.indexOf(fromStage);
+    const toIdx = STAGES.indexOf(toStage);
+
+    if (fromIdx < 0 || toIdx < 0 || fromIdx >= toIdx) return [];
+
+    // Return stages strictly between from and to (exclusive)
+    return STAGES.slice(fromIdx + 1, toIdx);
   }
 
   // =========================================================================
@@ -646,6 +851,17 @@ class TripOperationalService {
         created_by: user?.user_id || null,
       }, tx);
 
+      // Release resources if cancelling - only if no other active trips
+      let release = { driverReleased: false, vehicleReleased: false };
+      if (operation === OPERATIONS.CANCEL) {
+        release = await this.resourceAvailability.releaseResourcesIfNoActiveTrip(
+          trip.driver_id,
+          trip.vehicle_id,
+          trip.trip_id,
+          tx
+        );
+      }
+
       await this.auditRepo.create({
         user_id: user?.user_id || null,
         user_role: user?.role || 'system',
@@ -653,8 +869,35 @@ class TripOperationalService {
         entity_type: 'Trip',
         entity_id: trip.trip_id,
         previous_value: JSON.stringify({ status: trip.status }),
-        new_value: JSON.stringify({ status: target, operation, ...metadata }),
+        new_value: JSON.stringify({
+          status: target,
+          operation,
+          ...metadata,
+          ...(operation === OPERATIONS.CANCEL ? { driver_released: release.driverReleased, vehicle_released: release.vehicleReleased } : {}),
+        }),
       }, tx);
+
+      // Add timeline event for resources released on cancel
+      if (operation === OPERATIONS.CANCEL && (release.driverReleased || release.vehicleReleased)) {
+        await this.timelineRepo.create({
+          trip_id: trip.trip_id,
+          event_type: 'resources_released',
+          description: [
+            release.driverReleased ? 'Driver released' : null,
+            release.vehicleReleased ? 'Vehicle released' : null,
+          ].filter(Boolean).join(' and '),
+          reference_type: 'trip',
+          reference_id: trip.trip_id,
+          metadata: {
+            operation: 'RELEASE_RESOURCES',
+            driver_released: release.driverReleased,
+            vehicle_released: release.vehicleReleased,
+            driver_id: trip.driver_id,
+            vehicle_id: trip.vehicle_id,
+          },
+          created_by: user?.user_id || null,
+        }, tx);
+      }
 
       return updated;
     });
@@ -662,7 +905,7 @@ class TripOperationalService {
     return { trip: result, idempotent: false, status: target };
   }
 
-  /**
+/**
    * Load a trip, optionally with the relations readiness needs.
    * @param {number} tripId
    * @param {boolean} [withRelations]
@@ -676,25 +919,102 @@ class TripOperationalService {
       where: { trip_id: id },
       include: withRelations
         ? {
-          // Only columns that actually exist: TransportVehicle and Driver have
-          // no `is_active`.
-          vehicle: { select: { vehicle_id: true, vehicle_number: true, is_available: true, current_status: true } },
-          driver: { select: { driver_id: true, driver_name: true, is_available: true, status: true } },
-          booking: {
-            select: {
-              goods_description: true,
-              number_of_items: true,
-              quantity_unit: true,
-              goods_weight_kg: true,
-              weight_unit: true,
+            // Only columns that actually exist: TransportVehicle and Driver have
+            // no `is_active`.
+            vehicle: { select: { vehicle_id: true, vehicle_number: true, vehicle_name: true, vehicle_type: true, body_type: true, capacity_kg: true, is_available: true, current_status: true } },
+            driver: { select: { driver_id: true, driver_name: true, mobile: true, is_available: true, status: true } },
+            transportOwner: { select: { owner_id: true, owner_name: true, mobile: true } },
+            user: { select: { user_id: true, first_name: true, last_name: true, email: true, phone: true } },
+            client: { select: { client_id: true, company_name: true } },
+            booking: {
+              select: {
+                goods_description: true,
+                number_of_items: true,
+                quantity_unit: true,
+                goods_weight_kg: true,
+                weight_unit: true,
+                user: { select: { user_id: true, first_name: true, last_name: true, email: true, phone: true } },
+              },
             },
-          },
-        }
+          }
         : undefined,
     });
 
     if (!trip) throw new NotFoundError('Trip not found');
     return trip;
+  }
+
+  // =========================================================================
+  // DOCUMENT HELPERS (shared with TripDispatchService)
+  // =========================================================================
+
+  /**
+   * The vehicle's statutory papers, read from the columns Phase 8 already
+   * added. Read-only: the Vehicle Hire page owns writing them.
+   *
+   * @param {Object|null} vehicle
+   * @param {Date} [now]
+   * @returns {Array<{key,label,number,expiry,state,blocking}>}
+   */
+  evaluateVehicleDocuments(vehicle, now = new Date()) {
+    if (!vehicle) return [];
+    return dispatchPolicy.VEHICLE_DOCUMENTS.map((spec) => {
+      const raw = vehicle[spec.expiry_field];
+      const expiry = parseLooseDate(raw);
+      const state = expiry
+        ? dispatchPolicy.classifyExpiry(expiry, dispatchPolicy.VEHICLE_DOCUMENT_EXPIRING_WITHIN_DAYS, now)
+        : 'NOT_RECORDED';
+      return {
+        key: spec.key,
+        label: spec.label,
+        number: vehicle[spec.number_field] || null,
+        expiry: raw || null,
+        state,
+        blocking: Boolean(spec.blocking),
+      };
+    });
+  }
+
+  /**
+   * Build the document checklist for a trip.
+   * @private
+   */
+  _documentChecklist(trip) {
+    const checklist = this.documentService.getChecklist ? this.documentService.getChecklist(trip) : { items: [], missing: [] };
+    // This is called synchronously but getChecklist is async. For workspace,
+    // the caller should pass the pre-loaded checklist. This is a fallback.
+    return { items: [], missing: [] };
+  }
+
+  /**
+   * Find a document by type(s).
+   * @private
+   */
+  _document(documents, types) {
+    if (!documents || !documents.length) return null;
+    const typeSet = new Set(types.map((t) => String(t).toUpperCase()));
+    return documents.find((d) => typeSet.has(String(d.document_type).toUpperCase())) || null;
+  }
+
+  /**
+   * Summarize a document for workspace payloads.
+   * @private
+   */
+  _documentSummary(doc) {
+    if (!doc) return null;
+    return {
+      document_id: doc.document_id,
+      document_type: doc.document_type,
+      document_status: doc.document_status,
+      reference_number: doc.reference_number,
+      issued_at: doc.issued_at,
+      expires_at: doc.expires_at,
+      file_url: doc.file_url,
+      is_uploaded: Boolean(doc.file_url),
+      verified: doc.is_verified ?? false,
+      verified_by: doc.verified_by ?? null,
+      verified_at: doc.verified_at ?? null,
+    };
   }
 }
 

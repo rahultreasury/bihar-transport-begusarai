@@ -26,6 +26,14 @@ class BookingQueryService {
   async listBookings(filters) {
     return await this.bookingRepo.listBookings(filters);
   }
+
+  async getLifecycleCounts(filters) {
+    return await this.bookingRepo.getLifecycleCounts(filters);
+  }
+
+  async getLifecycleSummary(filters) {
+    return await this.bookingRepo.getLifecycleSummary(filters);
+  }
 }
 
 module.exports = BookingQueryService;

@@ -10,11 +10,15 @@ const { createBookingController } = require('../controllers/bookingController');
 const { BookingDeletionService } = require('../services/BookingDeletionService');
 const VehicleOwnerService = require('../services/VehicleOwnerService');
 const CanonicalFinancialService = require('../services/CanonicalFinancialService');
+const TripVehicleAssignmentService = require('../services/TripVehicleAssignmentService');
+const TripProvisioningService = require('../services/TripProvisioningService');
 
 const bookingService = new BookingService();
 const bookingAssignmentService = new BookingAssignmentService();
 const bookingController = createBookingController();
 const vehicleOwnerService = new VehicleOwnerService();
+
+const ACTIVE_TRIP_STATUSES = ['PENDING', 'ASSIGNED', 'WAITING_FOR_VEHICLE', 'VEHICLE_HIRED', 'WAITING_FOR_LOADING', 'LOADING', 'TO_LOADING_POINT', 'AT_LOADING_POINT', 'LOADED', 'DISPATCHED', 'IN_TRANSIT', 'ARRIVED_AT_DESTINATION', 'DELIVERED', 'POD_SUBMITTED', 'POD_VERIFIED'];
 
 const VEHICLE_STATUS_FILTERS = {
   available: {
@@ -23,9 +27,22 @@ const VEHICLE_STATUS_FILTERS = {
       { current_status: null, is_available: true },
       { current_status: '', is_available: true },
     ],
+    AND: [
+      {
+        trips: {
+          none: {
+            status: { notIn: ['COMPLETED', 'CANCELLED'] },
+          },
+        },
+      },
+    ],
   },
   on_trip: {
-    OR: [{ current_status: 'on_trip' }, { current_status: 'assigned' }],
+    trips: {
+      some: {
+        status: { notIn: ['COMPLETED', 'CANCELLED'] },
+      },
+    },
   },
   assigned: { current_status: 'assigned' },
   maintenance: { current_status: 'maintenance' },
@@ -38,7 +55,18 @@ const VEHICLE_STATUS_FILTERS = {
   },
 };
 
-const getVehicleStatusWhere = (status) => VEHICLE_STATUS_FILTERS[status] || null;
+const getVehicleStatusWhere = (status) => {
+  if (status === 'on_trip') {
+    return {
+      trips: {
+        some: {
+          status: { notIn: ['COMPLETED', 'CANCELLED'] },
+        },
+      },
+    };
+  }
+  return VEHICLE_STATUS_FILTERS[status] || null;
+};
 
 const getDocumentStatusWhere = (documentStatus) => {
   const today = new Date();
@@ -659,6 +687,8 @@ router.get('/vehicles', protect, async (req, res) => {
 // authorization, and error handling live in the controller (which forwards
 // errors to the centralized error handler via next(error)).
 router.get('/bookings', protect, bookingController.listBookings);
+router.get('/bookings/lifecycle-counts', protect, bookingController.getLifecycleCounts);
+router.get('/bookings/lifecycle-summary', protect, bookingController.getLifecycleSummary);
 
 // @route   POST /api/admin/bookings/:id/send-quote
 // @desc    Send a final quote to the customer (Final Transport Charge).
@@ -2526,6 +2556,19 @@ data: {
       return updatedBooking;
     });
 
+    // Sync assignment to Trip so Vehicle Hire page stays in sync
+    try {
+      const tripAssignmentService = new TripVehicleAssignmentService();
+      await tripAssignmentService.assign(
+        { bookingId },
+        { vehicle_id: assignedVehicleId, driver_id: parsedDriverId },
+        { userId: req.user.user_id, role: req.user.role }
+      );
+    } catch (syncError) {
+      console.error('Trip assignment sync failed:', syncError);
+      // Don't fail the request - the booking assignment succeeded
+    }
+
     // ── The COMPLETE persisted assignment ────────────────────────────────
     // Re-read from the database rather than echoing the request, so the
     // response can only ever describe what was actually committed.
@@ -2730,6 +2773,19 @@ router.post('/bookings/:id/assign-vehicle', protect, async (req, res) => {
     }
 
     const result = await bookingAssignmentService.assignVehicle(bookingId, parseInt(vehicle_id), req.user.user_id);
+
+    // Sync assignment to Trip so Vehicle Hire page stays in sync
+    try {
+      const tripAssignmentService = new TripVehicleAssignmentService();
+      await tripAssignmentService.assign(
+        { bookingId },
+        { vehicle_id: parseInt(vehicle_id) },
+        { userId: req.user.user_id, role: req.user.role }
+      );
+    } catch (syncError) {
+      console.error('Trip assignment sync failed:', syncError);
+      // Don't fail the request - the booking assignment succeeded
+    }
 
     res.json({
       success: true,

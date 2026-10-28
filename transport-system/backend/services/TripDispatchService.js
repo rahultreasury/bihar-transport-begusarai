@@ -763,20 +763,27 @@ class TripDispatchService {
    */
   evaluateDeliveryInfo(trip, dispatch) {
     // The consignee is a PERSON AT THE OTHER END, and this schema has never
-    // captured one: `Booking` stores the drop PLACE (drop_location / drop_city /
-    // drop_address) but no consignee contact. These are recorded at dispatch time,
-    // not pre-requisites for dispatch readiness.
+    // captured one on Booking: `Booking` stores the drop PLACE (drop_location /
+    // drop_city / drop_address) but no consignee contact. These two facts are
+    // therefore recorded on the dispatch record BEFORE the vehicle leaves —
+    // and they are a REAL requirement, restored by Batch 2B:
+    //
+    //   a truck that leaves without a named consignee cannot be staged for
+    //   POD, cannot be handed over cleanly, and the gap cannot be recovered
+    //   from a vehicle already on the road. `saveDeliveryInfo()` supports
+    //   writing one (and clearing one with explicit nulls), `buildReadiness`
+    //   reports the gap as DELIVERY_INFORMATION_INCOMPLETE, and `dispatch()`
+    //   refuses until it is filled.
     const consigneeName = dispatch?.consignee_name || null;
     const consigneeContact = dispatch?.consignee_contact || null;
     const pod = dispatchPolicy.resolvePodRequirement(trip);
 
-    // Consignee details are captured during dispatch, not required before dispatch.
-    // The only delivery requirement that could block dispatch is POD requirement
-    // if configured, which is handled separately.
     const missing = [];
+    if (!consigneeName) missing.push('consignee_name');
+    if (!consigneeContact) missing.push('consignee_contact');
 
     return {
-      complete: true,
+      complete: missing.length === 0,
       missing,
       consignee_name: consigneeName,
       consignee_contact: consigneeContact,
@@ -788,7 +795,9 @@ class TripDispatchService {
       expected_delivery_date: trip.expected_delivery_date || null,
       pod_required: pod.required,
       pod_source: pod.source,
-      message: `Delivery information will be recorded at dispatch. ${pod.required ? 'Proof of delivery is required.' : ''}`,
+      message: missing.length === 0
+        ? `Delivery information is complete. ${pod.required ? 'Proof of delivery is required.' : 'Proof of delivery is not required.'}`
+        : `Record ${missing.join(' and ')} before dispatch — the consignee cannot be recovered once the vehicle has left.`,
     };
   }
 
@@ -1482,6 +1491,11 @@ class TripDispatchService {
           lr_gr_number: lrGrNumber,
           eway_bill_number: ewayBillNumber,
           eway_bill_source: 'INTERNAL_RECORD',
+          // An honest NEGATIVE claim, and why it travels with the record: the
+          // government e-way bill API is NOT integrated, so no reader may
+          // infer that a government system was informed of this dispatch —
+          // the same disclosure the e-way bill endpoint itself makes.
+          government_eway_bill_api_connected: false,
           invoice_id: clean.invoice_id || null,
           pod_required: dispatchRow.pod_required,
           location: placeLine(trip.pickup_location, trip.pickup_city),

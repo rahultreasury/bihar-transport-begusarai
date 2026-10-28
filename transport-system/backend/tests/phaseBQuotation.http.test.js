@@ -173,11 +173,11 @@ after(async () => {
     if (!serverProc.killed) serverProc.kill('SIGKILL');
   }
   for (const id of createdBookingIds) {
-    await prisma.bookingQuotationSnapshot.deleteMany({ where: { booking_id: id } }).catch(() => {});
+    await prisma.booking_quotation_snapshots.deleteMany({ where: { booking_id: id } }).catch(() => {});
     await prisma.booking.deleteMany({ where: { booking_id: id } }).catch(() => {});
   }
   for (const id of createdEnquiryIds) {
-    await prisma.quotation.deleteMany({ where: { enquiry_id: id } }).catch(() => {});
+    await prisma.quotations.deleteMany({ where: { enquiry_id: id } }).catch(() => {});
     await prisma.enquiryEvent.deleteMany({ where: { enquiry_id: id } }).catch(() => {});
     await prisma.enquiry.updateMany({ where: { enquiry_id: id }, data: { booking_id: null } }).catch(() => {});
     await prisma.enquiry.deleteMany({ where: { enquiry_id: id } }).catch(() => {});
@@ -329,7 +329,7 @@ describe('Phase B — quotation endpoints over real HTTP', () => {
     const res = await api('POST', `/api/admin/enquiries/${enquiry.enquiry_id}/quotation/confirm-order`);
     createdBookingIds.push(res.json.data.order.booking_id);
 
-    const snapshot = await prisma.bookingQuotationSnapshot.findUnique({
+    const snapshot = await prisma.booking_quotation_snapshots.findUnique({
       where: { booking_id: res.json.data.order.booking_id },
     });
     assert.ok(snapshot, 'snapshot written');
