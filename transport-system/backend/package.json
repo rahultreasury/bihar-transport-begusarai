@@ -13,7 +13,8 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy",
     "prisma:migrate:status": "prisma migrate status",
-    "db:deploy": "prisma generate && prisma migrate deploy"
+    "db:deploy": "prisma generate && prisma migrate deploy",
+    "diagnose:production": "node scripts/diagnose-neon-migration-state.js"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
