@@ -26,7 +26,17 @@ const prisma = globalForPrisma.prisma || new PrismaClient({
   datasources: {
     db: {
       url: process.env.DATABASE_URL
-        ? `${process.env.DATABASE_URL}${process.env.DATABASE_URL.includes('?') ? '&' : '?'}connection_limit=20&pool_timeout=10&idle_timeout=30`
+        ? (() => {
+            try {
+              const u = new URL(process.env.DATABASE_URL);
+              if (!u.searchParams.has('connection_limit')) u.searchParams.set('connection_limit', '20');
+              if (!u.searchParams.has('pool_timeout')) u.searchParams.set('pool_timeout', '10');
+              if (!u.searchParams.has('idle_timeout')) u.searchParams.set('idle_timeout', '30');
+              return u.toString();
+            } catch {
+              return process.env.DATABASE_URL;
+            }
+          })()
         : undefined,
     },
   },

@@ -40,39 +40,54 @@
 
 -- ── Enums ────────────────────────────────────────────────────────────────
 -- Who the hire is billed to.
-CREATE TYPE "VehicleHireBillingTo" AS ENUM (
+DO $$
+BEGIN
+    CREATE TYPE "VehicleHireBillingTo" AS ENUM (
   'CONSIGNOR',
   'CONSIGNEE',
   'THIRD_PARTY',
   'VEHICLE_VENDOR'
 );
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
 -- How this hire is commercially booked.
-CREATE TYPE "VehicleHireBusinessModel" AS ENUM (
+DO $$
+BEGIN
+    CREATE TYPE "VehicleHireBusinessModel" AS ENUM (
   'COMMISSION',
   'CONTRACT'
 );
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
 -- The basis the gross hire was quoted on. These values reuse the rate
 -- catalogue the booking form already ships
 -- (frontend/src/utils/bookingForm.js → RATE_AS_PER_OPTIONS). FIXED is that
 -- catalogue's "quotes the whole trip" mode, i.e. a per-trip hire.
-CREATE TYPE "VehicleHireRateBasis" AS ENUM (
+DO $$
+BEGIN
+    CREATE TYPE "VehicleHireRateBasis" AS ENUM (
   'FIXED',
   'PER_TON',
   'PER_KG',
   'PER_DAY',
   'MONTHLY'
 );
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ── Columns (all nullable — no existing row is modified) ──────────────────
-ALTER TABLE "trips" ADD COLUMN "billing_to" "VehicleHireBillingTo";
-ALTER TABLE "trips" ADD COLUMN "business_model" "VehicleHireBusinessModel";
-ALTER TABLE "trips" ADD COLUMN "rate_basis" "VehicleHireRateBasis";
+ALTER TABLE "trips" ADD COLUMN IF NOT EXISTS "billing_to" "VehicleHireBillingTo";
+ALTER TABLE "trips" ADD COLUMN IF NOT EXISTS "business_model" "VehicleHireBusinessModel";
+ALTER TABLE "trips" ADD COLUMN IF NOT EXISTS "rate_basis" "VehicleHireRateBasis";
 
 -- Commission terms for THIS hire. commission_type reuses the existing
 -- 'percentage' | 'fixed' convention already stored as text on
 -- commission_records.commission_type, so CommissionCalculator's supported
 -- types apply unchanged and no second vocabulary is introduced.
-ALTER TABLE "trips" ADD COLUMN "commission_type" TEXT;
-ALTER TABLE "trips" ADD COLUMN "commission_percentage" DOUBLE PRECISION;
+ALTER TABLE "trips" ADD COLUMN IF NOT EXISTS "commission_type" TEXT;
+ALTER TABLE "trips" ADD COLUMN IF NOT EXISTS "commission_percentage" DOUBLE PRECISION;

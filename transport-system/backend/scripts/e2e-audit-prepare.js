@@ -19,6 +19,26 @@
  * idempotent — existing ids are skipped.
  */
 
+
+// SAFETY GUARD: Refuse to run against production or non-local databases.
+const _dbUrl = process.env.DATABASE_URL || '';
+const _host = (() => { try { return new URL(_dbUrl).hostname; } catch { return ''; } })();
+const _allowOverride = process.argv.includes('--allow-production');
+if (_host && !_host.includes('localhost') && !_host.includes('127.0.0.1') && !_host.includes('::1')) {
+  if (!_allowOverride || !_host.includes('neon.tech')) {
+    console.error('SAFETY: This script must not run against a non-local database.');
+    console.error('Host detected:', _host);
+    console.error('Use a local throwaway database, or pass --allow-production for an explicitly allow-listed throwaway DB.');
+    process.exit(1);
+  }
+  if (_host.includes('neon.tech')) {
+    console.error('SAFETY: Refusing to run against Neon (production).');
+    console.error('This script drops and recreates tables. It must never run against production.');
+    process.exit(1);
+  }
+}
+
+
 const { execSync } = require('child_process');
 const path = require('path');
 const { PrismaClient } = require('@prisma/client');

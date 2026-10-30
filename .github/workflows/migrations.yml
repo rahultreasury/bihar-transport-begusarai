@@ -1,0 +1,67 @@
+name: Migration CI
+
+on:
+  pull_request:
+    paths:
+      - 'transport-system/backend/prisma/**'
+      - 'transport-system/backend/scripts/lint-migrations.js'
+  push:
+    branches: [main]
+    paths:
+      - 'transport-system/backend/prisma/**'
+
+jobs:
+  migration-check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: testdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: transport-system/backend/package-lock.json
+
+      - name: Install dependencies
+        run: cd transport-system/backend && npm ci
+
+      - name: Lint migrations
+        run: cd transport-system/backend && npm run lint:migrations
+
+      - name: Deploy migrations (first run)
+        run: cd transport-system/backend && DATABASE_URL="postgresql://test:test@localhost:5432/testdb" npx prisma migrate deploy
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/testdb
+
+      - name: Check schema diff (must be empty)
+        run: |
+          cd transport-system/backend
+          DIFF=$(DATABASE_URL="postgresql://test:test@localhost:5432/testdb" npx prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url "postgresql://test:test@localhost:5432/testdb" 2>&1)
+          echo "$DIFF"
+          if echo "$DIFF" | grep -q "difference\|Difference\|diff"; then
+            echo "ERROR: Schema diff is not empty"
+            exit 1
+          fi
+
+      - name: Deploy migrations (idempotency check)
+        run: cd transport-system/backend && DATABASE_URL="postgresql://test:test@localhost:5432/testdb" npx prisma migrate deploy
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/testdb
+
+      - name: Validate Prisma schema
+        run: cd transport-system/backend && npx prisma validate

@@ -15,16 +15,16 @@
 --    CLIENT_PAYMENT / TRIP_EXPENSE / EXPENSE_REIMBURSEMENT / REVERSAL.
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel='CLIENT_PAYMENT' AND enumtypid=(SELECT oid FROM pg_type WHERE typname='FinancialTransactionType')) THEN
-    ALTER TYPE "FinancialTransactionType" ADD VALUE 'CLIENT_PAYMENT';
+    ALTER TYPE "FinancialTransactionType" ADD VALUE IF NOT EXISTS 'CLIENT_PAYMENT';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel='TRIP_EXPENSE' AND enumtypid=(SELECT oid FROM pg_type WHERE typname='FinancialTransactionType')) THEN
-    ALTER TYPE "FinancialTransactionType" ADD VALUE 'TRIP_EXPENSE';
+    ALTER TYPE "FinancialTransactionType" ADD VALUE IF NOT EXISTS 'TRIP_EXPENSE';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel='EXPENSE_REIMBURSEMENT' AND enumtypid=(SELECT oid FROM pg_type WHERE typname='FinancialTransactionType')) THEN
-    ALTER TYPE "FinancialTransactionType" ADD VALUE 'EXPENSE_REIMBURSEMENT';
+    ALTER TYPE "FinancialTransactionType" ADD VALUE IF NOT EXISTS 'EXPENSE_REIMBURSEMENT';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel='REVERSAL' AND enumtypid=(SELECT oid FROM pg_type WHERE typname='FinancialTransactionType')) THEN
-    ALTER TYPE "FinancialTransactionType" ADD VALUE 'REVERSAL';
+    ALTER TYPE "FinancialTransactionType" ADD VALUE IF NOT EXISTS 'REVERSAL';
   END IF;
 END $$;
 

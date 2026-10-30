@@ -354,6 +354,37 @@ app.get('/api/ready', async (req, res, next) => {
   try {
     const result = await testPrismaConnection();
     if (result.success) {
+      // Check for failed/unfinished migrations
+      let migrationStatus = 'unknown';
+      try {
+        const { prisma } = require('./config/prisma');
+        const failedMigrations = await prisma.$queryRaw`
+          SELECT migration_name, finished_at, rolled_back_at
+          FROM "_prisma_migrations"
+          WHERE finished_at IS NULL OR rolled_back_at IS NOT NULL
+        `;
+        if (failedMigrations.length > 0) {
+          migrationStatus = 'failed_or_unfinished';
+          dbReady = false;
+          res.status(503).json({
+            success: false,
+            status: 'not_ready',
+            message: 'Database migrations are in a failed or unfinished state',
+            data: {
+              database: 'connected',
+              dbReady: false,
+              migrationStatus,
+              failedMigrations: failedMigrations.map(m => m.migration_name),
+            },
+            timestamp: new Date().toISOString(),
+          });
+          return;
+        }
+        migrationStatus = 'ok';
+      } catch (migErr) {
+        // _prisma_migrations table might not exist yet (fresh DB)
+        migrationStatus = 'no_migration_table';
+      }
       dbReady = true;
       res.json({
         success: true,
@@ -362,6 +393,7 @@ app.get('/api/ready', async (req, res, next) => {
         data: {
           database: 'connected',
           dbReady: true,
+          migrationStatus,
         },
         timestamp: new Date().toISOString(),
       });

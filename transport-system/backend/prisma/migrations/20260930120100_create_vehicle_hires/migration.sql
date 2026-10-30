@@ -65,7 +65,7 @@
 --   and `prisma migrate deploy` gives each migration its own transaction, so the
 --   ordering below is both necessary and sufficient.
 
-CREATE TABLE "vehicle_hires" (
+CREATE TABLE IF NOT EXISTS "vehicle_hires" (
   "hire_id"       SERIAL       NOT NULL,
 
   -- ── The link. A hire always belongs to exactly one trip. ────────────────
@@ -153,10 +153,10 @@ CREATE TABLE "vehicle_hires" (
 -- Accounting asks the same three questions every month: what did we hire, from
 -- whom, and against which vehicle. These make each of them a single index scan
 -- instead of a table scan.
-CREATE INDEX "idx_vehicle_hires_trip"     ON "vehicle_hires" ("trip_id");
-CREATE INDEX "idx_vehicle_hires_vehicle"  ON "vehicle_hires" ("vehicle_id");
-CREATE INDEX "idx_vehicle_hires_vendor"   ON "vehicle_hires" ("vendor_id");
-CREATE INDEX "idx_vehicle_hires_driver"   ON "vehicle_hires" ("driver_id");
-CREATE INDEX "idx_vehicle_hires_created"  ON "vehicle_hires" ("created_at");
-CREATE INDEX "idx_vehicle_hires_billing"  ON "vehicle_hires" ("billing_to");
-CREATE INDEX "idx_vehicle_hires_model"    ON "vehicle_hires" ("business_model");
+CREATE INDEX IF NOT EXISTS "idx_vehicle_hires_trip"     ON "vehicle_hires" ("trip_id");
+CREATE INDEX IF NOT EXISTS "idx_vehicle_hires_vehicle"  ON "vehicle_hires" ("vehicle_id");
+CREATE INDEX IF NOT EXISTS "idx_vehicle_hires_vendor"   ON "vehicle_hires" ("vendor_id");
+CREATE INDEX IF NOT EXISTS "idx_vehicle_hires_driver"   ON "vehicle_hires" ("driver_id");
+CREATE INDEX IF NOT EXISTS "idx_vehicle_hires_created"  ON "vehicle_hires" ("created_at");
+CREATE INDEX IF NOT EXISTS "idx_vehicle_hires_billing"  ON "vehicle_hires" ("billing_to");
+CREATE INDEX IF NOT EXISTS "idx_vehicle_hires_model"    ON "vehicle_hires" ("business_model");

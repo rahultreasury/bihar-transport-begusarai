@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_DATABASE_URL")
 }
 
 model User {
@@ -1653,9 +1654,9 @@ enum ReservationStatus {
 enum InvoiceStatus {
   PENDING
   GENERATED
-  PARTIALLY_PAID
   PAID
   CANCELLED
+  PARTIALLY_PAID
 }
 
 enum EnquiryStatus {

@@ -24,19 +24,44 @@
 -- ── Enums ───────────────────────────────────────────────────────────────────
 
 -- CreateEnum
-CREATE TYPE "QuotationRateType" AS ENUM ('FIXED', 'PER_UNIT');
+DO $$
+BEGIN
+    CREATE TYPE "QuotationRateType" AS ENUM ('FIXED', 'PER_UNIT');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
 -- CreateEnum
-CREATE TYPE "QuotationGstType" AS ENUM ('RCM', 'FORWARD_CHARGE', 'EXEMPT');
+DO $$
+BEGIN
+    CREATE TYPE "QuotationGstType" AS ENUM ('RCM', 'FORWARD_CHARGE', 'EXEMPT');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
 -- CreateEnum
-CREATE TYPE "QuotationStatus" AS ENUM ('DRAFT', 'RATE_QUOTED', 'SENT', 'CONVERTED');
+DO $$
+BEGIN
+    CREATE TYPE "QuotationStatus" AS ENUM ('DRAFT', 'RATE_QUOTED', 'SENT', 'CONVERTED');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
 -- CreateEnum
-CREATE TYPE "QuotationPaymentScheduleType" AS ENUM ('FULL_PAYMENT_IN_ADVANCE', 'BOOKING_ADVANCE_BALANCE', 'CUSTOM');
+DO $$
+BEGIN
+    CREATE TYPE "QuotationPaymentScheduleType" AS ENUM ('FULL_PAYMENT_IN_ADVANCE', 'BOOKING_ADVANCE_BALANCE', 'CUSTOM');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
 -- CreateEnum
-CREATE TYPE "QuotationMilestoneAmountType" AS ENUM ('FIXED', 'PERCENTAGE');
+DO $$
+BEGIN
+    CREATE TYPE "QuotationMilestoneAmountType" AS ENUM ('FIXED', 'PERCENTAGE');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Audit trail event types. Additive — existing history rows are untouched.
 --   QUOTATION_SAVED / QUOTATION_DOWNLOADED / QUOTATION_CONFIRMED
@@ -52,14 +77,14 @@ ALTER TYPE "EnquiryEventType" ADD VALUE IF NOT EXISTS 'QUOTATION_CONFIRMED';
 -- Enquiry.quotation_id is @unique → one Enquiry has at most ONE quotation.
 -- The FK constraint itself is added at the END of this file, once the
 -- "quotations" table exists.
-ALTER TABLE "enquiries" ADD COLUMN "quotation_id" INTEGER;
+ALTER TABLE "enquiries" ADD COLUMN IF NOT EXISTS "quotation_id" INTEGER;
 
-CREATE UNIQUE INDEX "enquiries_quotation_id_key" ON "enquiries"("quotation_id");
+CREATE UNIQUE INDEX IF NOT EXISTS "enquiries_quotation_id_key" ON "enquiries"("quotation_id");
 
 -- ── Quotation ───────────────────────────────────────────────────────────────
 
 -- CreateTable
-CREATE TABLE "quotations" (
+CREATE TABLE IF NOT EXISTS "quotations" (
   "quotation_id" SERIAL NOT NULL,
   "enquiry_id" INTEGER NOT NULL,
   "quotation_number" TEXT NOT NULL,
@@ -96,7 +121,7 @@ CREATE TABLE "quotations" (
 );
 
 -- CreateTable
-CREATE TABLE "quotation_charges" (
+CREATE TABLE IF NOT EXISTS "quotation_charges" (
   "charge_id" SERIAL NOT NULL,
   "quotation_id" INTEGER NOT NULL,
   "charges_name" TEXT NOT NULL,
@@ -112,7 +137,7 @@ CREATE TABLE "quotation_charges" (
 );
 
 -- CreateTable
-CREATE TABLE "quotation_milestones" (
+CREATE TABLE IF NOT EXISTS "quotation_milestones" (
   "milestone_id" SERIAL NOT NULL,
   "quotation_id" INTEGER NOT NULL,
   "due_point" TEXT NOT NULL,
@@ -128,7 +153,7 @@ CREATE TABLE "quotation_milestones" (
 );
 
 -- CreateTable
-CREATE TABLE "quotation_versions" (
+CREATE TABLE IF NOT EXISTS "quotation_versions" (
   "version_id" SERIAL NOT NULL,
   "quotation_id" INTEGER NOT NULL,
   "version_number" INTEGER NOT NULL,
@@ -157,7 +182,7 @@ CREATE TABLE "quotation_versions" (
 );
 
 -- CreateTable
-CREATE TABLE "booking_quotation_snapshots" (
+CREATE TABLE IF NOT EXISTS "booking_quotation_snapshots" (
   "snapshot_id" SERIAL NOT NULL,
   "booking_id" INTEGER NOT NULL,
   "quotation_id" INTEGER,
@@ -183,37 +208,37 @@ CREATE TABLE "booking_quotation_snapshots" (
 -- ── Indexes ─────────────────────────────────────────────────────────────────
 
 -- CreateIndex
-CREATE UNIQUE INDEX "quotations_enquiry_id_key" ON "quotations"("enquiry_id");
+CREATE UNIQUE INDEX IF NOT EXISTS "quotations_enquiry_id_key" ON "quotations"("enquiry_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "quotations_quotation_number_key" ON "quotations"("quotation_number");
+CREATE UNIQUE INDEX IF NOT EXISTS "quotations_quotation_number_key" ON "quotations"("quotation_number");
 
 -- CreateIndex
-CREATE INDEX "idx_quotations_enquiry" ON "quotations"("enquiry_id");
+CREATE INDEX IF NOT EXISTS "idx_quotations_enquiry" ON "quotations"("enquiry_id");
 
 -- CreateIndex
-CREATE INDEX "idx_quotations_status" ON "quotations"("status");
+CREATE INDEX IF NOT EXISTS "idx_quotations_status" ON "quotations"("status");
 
 -- CreateIndex
-CREATE INDEX "idx_quotations_number" ON "quotations"("quotation_number");
+CREATE INDEX IF NOT EXISTS "idx_quotations_number" ON "quotations"("quotation_number");
 
 -- CreateIndex
-CREATE INDEX "idx_quotation_charges_quotation" ON "quotation_charges"("quotation_id");
+CREATE INDEX IF NOT EXISTS "idx_quotation_charges_quotation" ON "quotation_charges"("quotation_id");
 
 -- CreateIndex
-CREATE INDEX "idx_quotation_milestones_quotation" ON "quotation_milestones"("quotation_id");
+CREATE INDEX IF NOT EXISTS "idx_quotation_milestones_quotation" ON "quotation_milestones"("quotation_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "quotation_versions_quotation_id_version_number_key" ON "quotation_versions"("quotation_id", "version_number");
+CREATE UNIQUE INDEX IF NOT EXISTS "quotation_versions_quotation_id_version_number_key" ON "quotation_versions"("quotation_id", "version_number");
 
 -- CreateIndex
-CREATE INDEX "idx_quotation_versions_quotation" ON "quotation_versions"("quotation_id");
+CREATE INDEX IF NOT EXISTS "idx_quotation_versions_quotation" ON "quotation_versions"("quotation_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "booking_quotation_snapshots_booking_id_key" ON "booking_quotation_snapshots"("booking_id");
+CREATE UNIQUE INDEX IF NOT EXISTS "booking_quotation_snapshots_booking_id_key" ON "booking_quotation_snapshots"("booking_id");
 
 -- CreateIndex
-CREATE INDEX "idx_booking_quotation_snapshot_quotation" ON "booking_quotation_snapshots"("quotation_id");
+CREATE INDEX IF NOT EXISTS "idx_booking_quotation_snapshot_quotation" ON "booking_quotation_snapshots"("quotation_id");
 
 -- ── Foreign keys ────────────────────────────────────────────────────────────
 

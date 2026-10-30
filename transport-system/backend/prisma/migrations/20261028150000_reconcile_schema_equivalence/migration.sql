@@ -70,14 +70,30 @@ END $$;
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'VehicleStatus') THEN
-    DROP TYPE "VehicleStatus";
+    -- Data safety: only drop if no column in any schema depends on this type
+    IF NOT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE udt_name = 'VehicleStatus' AND table_schema NOT IN ('pg_catalog', 'information_schema')
+    ) THEN
+      DROP TYPE IF EXISTS "VehicleStatus";
+    ELSE
+      RAISE NOTICE 'Skipping DROP TYPE IF EXISTS "VehicleStatus": columns still depend on it';
+    END IF;
   END IF;
 END $$;
 
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'VehicleType') THEN
-    DROP TYPE "VehicleType";
+    -- Data safety: only drop if no column in any schema depends on this type
+    IF NOT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE udt_name = 'VehicleType' AND table_schema NOT IN ('pg_catalog', 'information_schema')
+    ) THEN
+      DROP TYPE IF EXISTS "VehicleType";
+    ELSE
+      RAISE NOTICE 'Skipping DROP TYPE IF EXISTS "VehicleType": columns still depend on it';
+    END IF;
   END IF;
 END $$;
 
@@ -96,8 +112,34 @@ ALTER TABLE "bookings" ALTER COLUMN "archived_at" SET DATA TYPE TIMESTAMP(3);
 -- drivers
 ALTER TABLE "drivers" ADD COLUMN IF NOT EXISTS "current_vehicle_id" INTEGER;
 ALTER TABLE "drivers" ALTER COLUMN "driver_code" DROP NOT NULL;
-ALTER TABLE "drivers" DROP COLUMN IF EXISTS "vehicle_number";
-ALTER TABLE "drivers" DROP COLUMN IF EXISTS "vehicle_type";
+DO $$
+BEGIN
+  -- Data safety: only drop if all values are NULL (no data loss)
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'drivers' AND column_name = 'vehicle_number'
+  ) THEN
+    IF NOT EXISTS (SELECT 1 FROM drivers WHERE vehicle_number IS NOT NULL) THEN
+      ALTER TABLE "drivers" DROP COLUMN IF EXISTS "vehicle_number";
+    ELSE
+      RAISE NOTICE 'Skipping DROP COLUMN IF EXISTS "drivers"."vehicle_number": contains non-null data';
+    END IF;
+  END IF;
+END $$;
+DO $$
+BEGIN
+  -- Data safety: only drop if all values are NULL (no data loss)
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'drivers' AND column_name = 'vehicle_type'
+  ) THEN
+    IF NOT EXISTS (SELECT 1 FROM drivers WHERE vehicle_type IS NOT NULL) THEN
+      ALTER TABLE "drivers" DROP COLUMN IF EXISTS "vehicle_type";
+    ELSE
+      RAISE NOTICE 'Skipping DROP COLUMN IF EXISTS "drivers"."vehicle_type": contains non-null data';
+    END IF;
+  END IF;
+END $$;
 
 -- eway_bills
 ALTER TABLE "eway_bills" ALTER COLUMN "internal_status" SET DEFAULT 'RECORDED';
@@ -143,12 +185,21 @@ ALTER TABLE "trips" ALTER COLUMN "freight_amount" DROP DEFAULT;
 -- source_type was added earlier as TEXT; schema.prisma declares it as the
 -- TripSourceType enum. Cast existing rows instead of dropping them.
 DO $$
+DECLARE
+  bad_values TEXT;
 BEGIN
   IF EXISTS (
     SELECT 1 FROM information_schema.columns
     WHERE table_name = 'trips' AND column_name = 'source_type'
       AND udt_name <> 'TripSourceType'
   ) AND EXISTS (SELECT 1 FROM pg_type WHERE typname = 'TripSourceType') THEN
+    -- Data safety: verify all existing values can be cast to TripSourceType
+    SELECT string_agg(DISTINCT source_type, ', ') INTO bad_values
+    FROM trips
+    WHERE upper(source_type) NOT IN ('ONLINE_BOOKING', 'OFFLINE_CLIENT', 'DIRECT');
+    IF bad_values IS NOT NULL THEN
+      RAISE EXCEPTION 'Cannot convert trips.source_type to TripSourceType: invalid values found: %', bad_values;
+    END IF;
     -- Drop the TEXT default first; Postgres cannot auto-cast a text default
     -- to an enum type. Re-set the enum-typed default immediately below.
     ALTER TABLE "trips" ALTER COLUMN "source_type" DROP DEFAULT;
@@ -170,13 +221,13 @@ ALTER TABLE "trips" ALTER COLUMN "documents_required" SET DATA TYPE JSONB
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'financial_transactions_client_id_fkey') THEN
-    ALTER TABLE "financial_transactions" DROP CONSTRAINT "financial_transactions_client_id_fkey";
+    ALTER TABLE "financial_transactions" DROP CONSTRAINT IF EXISTS "financial_transactions_client_id_fkey";
   END IF;
 END $$;
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'transport_vehicles_driver_id_fkey') THEN
-    ALTER TABLE "transport_vehicles" DROP CONSTRAINT "transport_vehicles_driver_id_fkey";
+    ALTER TABLE "transport_vehicles" DROP CONSTRAINT IF EXISTS "transport_vehicles_driver_id_fkey";
   END IF;
 END $$;
 
@@ -188,7 +239,7 @@ BEGIN
     WHERE conname = 'trip_timeline_trip_id_fkey'
       AND (confdeltype <> 'c' OR confupdtype <> 'c')
   ) THEN
-    ALTER TABLE "trip_timeline" DROP CONSTRAINT "trip_timeline_trip_id_fkey";
+    ALTER TABLE "trip_timeline" DROP CONSTRAINT IF EXISTS "trip_timeline_trip_id_fkey";
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint WHERE conname = 'trip_timeline_trip_id_fkey'
@@ -373,7 +424,7 @@ DROP INDEX IF EXISTS "idx_trips_source_type";
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'drivers_vehicle_number_key' AND relkind = 'i') THEN
-    DROP INDEX "drivers_vehicle_number_key";
+    DROP INDEX IF EXISTS "drivers_vehicle_number_key";
   END IF;
 END $$;
 
@@ -390,14 +441,14 @@ CREATE INDEX IF NOT EXISTS "idx_trip_expenses_paid_by" ON "trip_expenses"("paid_
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'drivers_current_vehicle_id_key' AND relkind = 'i') THEN
-    CREATE UNIQUE INDEX "drivers_current_vehicle_id_key" ON "drivers"("current_vehicle_id");
+    CREATE UNIQUE INDEX IF NOT EXISTS "drivers_current_vehicle_id_key" ON "drivers"("current_vehicle_id");
   END IF;
 END $$;
 
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'transport_vehicles_vehicle_code_key' AND relkind = 'i') THEN
-    CREATE UNIQUE INDEX "transport_vehicles_vehicle_code_key" ON "transport_vehicles"("vehicle_code");
+    CREATE UNIQUE INDEX IF NOT EXISTS "transport_vehicles_vehicle_code_key" ON "transport_vehicles"("vehicle_code");
   END IF;
 END $$;
 
@@ -411,7 +462,7 @@ BEGIN
     WHERE indexname = 'trip_financials_booking_id_key'
       AND indexdef LIKE '%WHERE %'
   ) THEN
-    DROP INDEX "trip_financials_booking_id_key";
+    DROP INDEX IF EXISTS "trip_financials_booking_id_key";
   END IF;
 END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS "trip_financials_booking_id_key" ON "trip_financials"("booking_id");

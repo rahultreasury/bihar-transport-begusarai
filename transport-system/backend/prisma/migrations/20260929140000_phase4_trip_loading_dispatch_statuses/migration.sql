@@ -38,7 +38,7 @@ BEGIN
         JOIN pg_enum e ON t.oid = e.enumtypid
         WHERE t.typname = 'TripStatus' AND e.enumlabel = 'TO_LOADING_POINT'
     ) THEN
-        ALTER TYPE "TripStatus" ADD VALUE 'TO_LOADING_POINT';
+        ALTER TYPE "TripStatus" ADD VALUE IF NOT EXISTS 'TO_LOADING_POINT';
     END IF;
 
     -- AT LOADING POINT — vehicle has arrived and is waiting.
@@ -47,7 +47,7 @@ BEGIN
         JOIN pg_enum e ON t.oid = e.enumtypid
         WHERE t.typname = 'TripStatus' AND e.enumlabel = 'AT_LOADING_POINT'
     ) THEN
-        ALTER TYPE "TripStatus" ADD VALUE 'AT_LOADING_POINT';
+        ALTER TYPE "TripStatus" ADD VALUE IF NOT EXISTS 'AT_LOADING_POINT';
     END IF;
 
     -- LOADED — loading has actually finished. The operational status and the
@@ -58,7 +58,7 @@ BEGIN
         JOIN pg_enum e ON t.oid = e.enumtypid
         WHERE t.typname = 'TripStatus' AND e.enumlabel = 'LOADED'
     ) THEN
-        ALTER TYPE "TripStatus" ADD VALUE 'LOADED';
+        ALTER TYPE "TripStatus" ADD VALUE IF NOT EXISTS 'LOADED';
     END IF;
 
     -- DISPATCHED — the vehicle has left the loading point. This is the state
@@ -68,6 +68,6 @@ BEGIN
         JOIN pg_enum e ON t.oid = e.enumtypid
         WHERE t.typname = 'TripStatus' AND e.enumlabel = 'DISPATCHED'
     ) THEN
-        ALTER TYPE "TripStatus" ADD VALUE 'DISPATCHED';
+        ALTER TYPE "TripStatus" ADD VALUE IF NOT EXISTS 'DISPATCHED';
     END IF;
 END $$;

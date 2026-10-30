@@ -11,7 +11,9 @@
 -- addition is nullable / additive, so all pre-existing rows stay valid.
 
 -- --- Enums -------------------------------------------------------------
-CREATE TYPE "EnquiryStatus" AS ENUM (
+DO $$
+BEGIN
+    CREATE TYPE "EnquiryStatus" AS ENUM (
     'ENQUIRY_SUBMITTED',
     'ADMIN_REVIEW',
     'ASSIGNMENT_PENDING',
@@ -26,8 +28,13 @@ CREATE TYPE "EnquiryStatus" AS ENUM (
     'COMPLETED',
     'CANCELLED'
 );
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE TYPE "EnquiryPriceStatus" AS ENUM (
+DO $$
+BEGIN
+    CREATE TYPE "EnquiryPriceStatus" AS ENUM (
     'NOT_QUOTED',
     'ESTIMATED',
     'QUOTED',
@@ -36,16 +43,26 @@ CREATE TYPE "EnquiryPriceStatus" AS ENUM (
     'REJECTED',
     'CANCELLED'
 );
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE TYPE "EnquiryActorType" AS ENUM (
+DO $$
+BEGIN
+    CREATE TYPE "EnquiryActorType" AS ENUM (
     'CUSTOMER',
     'ADMIN',
     'DRIVER',
     'PARTNER',
     'SYSTEM'
 );
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE TYPE "EnquiryEventType" AS ENUM (
+DO $$
+BEGIN
+    CREATE TYPE "EnquiryEventType" AS ENUM (
     'ENQUIRY_CREATED',
     'ADMIN_VIEWED',
     'STATUS_CHANGED',
@@ -65,9 +82,12 @@ CREATE TYPE "EnquiryEventType" AS ENUM (
     'TRIP_LINKED',
     'NOTE_ADDED'
 );
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
 -- --- enquiries ---------------------------------------------------------
-CREATE TABLE "enquiries" (
+CREATE TABLE IF NOT EXISTS "enquiries" (
     "enquiry_id"                  SERIAL PRIMARY KEY,
     "enquiry_number"              TEXT NOT NULL,
     "customer_id"                 INTEGER,
@@ -134,7 +154,7 @@ CREATE TABLE "enquiries" (
 );
 
 -- --- enquiry_events ----------------------------------------------------
-CREATE TABLE "enquiry_events" (
+CREATE TABLE IF NOT EXISTS "enquiry_events" (
     "enquiry_event_id"  SERIAL PRIMARY KEY,
     "enquiry_id"        INTEGER NOT NULL,
     "event_type"        "EnquiryEventType" NOT NULL,
@@ -148,24 +168,24 @@ CREATE TABLE "enquiry_events" (
 );
 
 -- --- Indexes -----------------------------------------------------------
-CREATE UNIQUE INDEX "idx_enquiries_number"        ON "enquiries"("enquiry_number");
-CREATE INDEX "idx_enquiries_customer"           ON "enquiries"("customer_id");
-CREATE INDEX "idx_enquiries_booking"            ON "enquiries"("booking_id");
-CREATE INDEX "idx_enquiries_mobile"             ON "enquiries"("customer_mobile");
-CREATE INDEX "idx_enquiries_session"            ON "enquiries"("session_key");
-CREATE INDEX "idx_enquiries_status"             ON "enquiries"("status");
-CREATE INDEX "idx_enquiries_price_status"       ON "enquiries"("price_status");
-CREATE INDEX "idx_enquiries_driver"             ON "enquiries"("assigned_driver_id");
-CREATE INDEX "idx_enquiries_vehicle"            ON "enquiries"("assigned_vehicle_id");
-CREATE INDEX "idx_enquiries_partner"            ON "enquiries"("assigned_partner_id");
-CREATE INDEX "idx_enquiries_pickup_date"        ON "enquiries"("pickup_date");
-CREATE INDEX "idx_enquiries_created"            ON "enquiries"("created_at");
+CREATE UNIQUE INDEX IF NOT EXISTS "idx_enquiries_number"        ON "enquiries"("enquiry_number");
+CREATE INDEX IF NOT EXISTS "idx_enquiries_customer"           ON "enquiries"("customer_id");
+CREATE INDEX IF NOT EXISTS "idx_enquiries_booking"            ON "enquiries"("booking_id");
+CREATE INDEX IF NOT EXISTS "idx_enquiries_mobile"             ON "enquiries"("customer_mobile");
+CREATE INDEX IF NOT EXISTS "idx_enquiries_session"            ON "enquiries"("session_key");
+CREATE INDEX IF NOT EXISTS "idx_enquiries_status"             ON "enquiries"("status");
+CREATE INDEX IF NOT EXISTS "idx_enquiries_price_status"       ON "enquiries"("price_status");
+CREATE INDEX IF NOT EXISTS "idx_enquiries_driver"             ON "enquiries"("assigned_driver_id");
+CREATE INDEX IF NOT EXISTS "idx_enquiries_vehicle"            ON "enquiries"("assigned_vehicle_id");
+CREATE INDEX IF NOT EXISTS "idx_enquiries_partner"            ON "enquiries"("assigned_partner_id");
+CREATE INDEX IF NOT EXISTS "idx_enquiries_pickup_date"        ON "enquiries"("pickup_date");
+CREATE INDEX IF NOT EXISTS "idx_enquiries_created"            ON "enquiries"("created_at");
 
-CREATE UNIQUE INDEX "enquiries_booking_id_key"   ON "enquiries"("booking_id");
+CREATE UNIQUE INDEX IF NOT EXISTS "enquiries_booking_id_key"   ON "enquiries"("booking_id");
 
-CREATE INDEX "idx_enquiry_events_enquiry"        ON "enquiry_events"("enquiry_id", "created_at");
-CREATE INDEX "idx_enquiry_events_type"          ON "enquiry_events"("event_type");
-CREATE INDEX "idx_enquiry_events_created"       ON "enquiry_events"("created_at");
+CREATE INDEX IF NOT EXISTS "idx_enquiry_events_enquiry"        ON "enquiry_events"("enquiry_id", "created_at");
+CREATE INDEX IF NOT EXISTS "idx_enquiry_events_type"          ON "enquiry_events"("event_type");
+CREATE INDEX IF NOT EXISTS "idx_enquiry_events_created"       ON "enquiry_events"("created_at");
 
 -- --- Foreign keys ------------------------------------------------------
 ALTER TABLE "enquiries"

@@ -28,42 +28,42 @@ BEGIN
         JOIN pg_enum e ON t.oid = e.enumtypid
         WHERE t.typname = 'trip_expense_type' AND e.enumlabel = 'LABOUR'
     ) THEN
-        ALTER TYPE "trip_expense_type" ADD VALUE 'LABOUR';
+        ALTER TYPE "trip_expense_type" ADD VALUE IF NOT EXISTS 'LABOUR';
     END IF;
     IF NOT EXISTS (
         SELECT 1 FROM pg_type t
         JOIN pg_enum e ON t.oid = e.enumtypid
         WHERE t.typname = 'trip_expense_type' AND e.enumlabel = 'DOCUMENTATION'
     ) THEN
-        ALTER TYPE "trip_expense_type" ADD VALUE 'DOCUMENTATION';
+        ALTER TYPE "trip_expense_type" ADD VALUE IF NOT EXISTS 'DOCUMENTATION';
     END IF;
     IF NOT EXISTS (
         SELECT 1 FROM pg_type t
         JOIN pg_enum e ON t.oid = e.enumtypid
         WHERE t.typname = 'trip_expense_type' AND e.enumlabel = 'PARKING'
     ) THEN
-        ALTER TYPE "trip_expense_type" ADD VALUE 'PARKING';
+        ALTER TYPE "trip_expense_type" ADD VALUE IF NOT EXISTS 'PARKING';
     END IF;
     IF NOT EXISTS (
         SELECT 1 FROM pg_type t
         JOIN pg_enum e ON t.oid = e.enumtypid
         WHERE t.typname = 'trip_expense_type' AND e.enumlabel = 'LOCAL_TRANSPORT'
     ) THEN
-        ALTER TYPE "trip_expense_type" ADD VALUE 'LOCAL_TRANSPORT';
+        ALTER TYPE "trip_expense_type" ADD VALUE IF NOT EXISTS 'LOCAL_TRANSPORT';
     END IF;
     IF NOT EXISTS (
         SELECT 1 FROM pg_type t
         JOIN pg_enum e ON t.oid = e.enumtypid
         WHERE t.typname = 'trip_expense_type' AND e.enumlabel = 'CUSTOMER_RELATED'
     ) THEN
-        ALTER TYPE "trip_expense_type" ADD VALUE 'CUSTOMER_RELATED';
+        ALTER TYPE "trip_expense_type" ADD VALUE IF NOT EXISTS 'CUSTOMER_RELATED';
     END IF;
     IF NOT EXISTS (
         SELECT 1 FROM pg_type t
         JOIN pg_enum e ON t.oid = e.enumtypid
         WHERE t.typname = 'trip_expense_type' AND e.enumlabel = 'COMMUNICATION'
     ) THEN
-        ALTER TYPE "trip_expense_type" ADD VALUE 'COMMUNICATION';
+        ALTER TYPE "trip_expense_type" ADD VALUE IF NOT EXISTS 'COMMUNICATION';
     END IF;
 END $$;
 

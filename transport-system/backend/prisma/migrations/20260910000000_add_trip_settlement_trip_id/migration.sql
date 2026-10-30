@@ -4,9 +4,16 @@
 
 ALTER TABLE "trip_settlements" ALTER COLUMN "booking_id" DROP NOT NULL;
 
-ALTER TABLE "trip_settlements" ADD COLUMN "trip_id" INTEGER;
+ALTER TABLE "trip_settlements" ADD COLUMN IF NOT EXISTS "trip_id" INTEGER;
 
-ALTER TABLE "trip_settlements" ADD CONSTRAINT "trip_settlements_trip_id_fkey"
-    FOREIGN KEY ("trip_id") REFERENCES "trips"("trip_id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'trip_settlements_trip_id_fkey'
+    ) THEN
+        ALTER TABLE "trip_settlements" ADD CONSTRAINT "trip_settlements_trip_id_fkey"
+            FOREIGN KEY ("trip_id") REFERENCES "trips"("trip_id") ON DELETE CASCADE ON UPDATE CASCADE;
+    END IF;
+END $$;
 
-CREATE INDEX "idx_trip_settlement_trip" ON "trip_settlements"("trip_id");
+CREATE INDEX IF NOT EXISTS "idx_trip_settlement_trip" ON "trip_settlements"("trip_id");

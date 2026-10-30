@@ -31,31 +31,86 @@
 -- ENUM TYPES (referenced by the tables below but not created in earlier migrations)
 -- ============================================================================
 
-CREATE TYPE "TripStatus" AS ENUM ('PENDING', 'ASSIGNED', 'TO_LOADING_POINT', 'AT_LOADING_POINT', 'LOADED', 'DISPATCHED', 'IN_TRANSIT', 'DELIVERED', 'COMPLETED', 'CANCELLED');
+DO $$
+BEGIN
+    CREATE TYPE "TripStatus" AS ENUM ('PENDING', 'ASSIGNED', 'TO_LOADING_POINT', 'AT_LOADING_POINT', 'LOADED', 'DISPATCHED', 'IN_TRANSIT', 'DELIVERED', 'COMPLETED', 'CANCELLED');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE TYPE "TripPaymentType" AS ENUM ('ADVANCE', 'PARTIAL', 'FULL', 'SETTLEMENT', 'OTHER');
+DO $$
+BEGIN
+    CREATE TYPE "TripPaymentType" AS ENUM ('ADVANCE', 'PARTIAL', 'FULL', 'SETTLEMENT', 'OTHER');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE TYPE "TripPaymentCategory" AS ENUM ('CLIENT_PAYMENT', 'OWNER_PAYMENT', 'DRIVER_PAYMENT');
+DO $$
+BEGIN
+    CREATE TYPE "TripPaymentCategory" AS ENUM ('CLIENT_PAYMENT', 'OWNER_PAYMENT', 'DRIVER_PAYMENT');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE TYPE "TripFinancialStatus" AS ENUM ('DRAFT', 'CALCULATED', 'ADJUSTED', 'SETTLED', 'CLOSED');
+DO $$
+BEGIN
+    CREATE TYPE "TripFinancialStatus" AS ENUM ('DRAFT', 'CALCULATED', 'ADJUSTED', 'SETTLED', 'CLOSED');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE TYPE "AdvanceType" AS ENUM ('DRIVER_ADVANCE', 'FUEL_ADVANCE', 'OWNER_ADVANCE', 'OTHER');
+DO $$
+BEGIN
+    CREATE TYPE "AdvanceType" AS ENUM ('DRIVER_ADVANCE', 'FUEL_ADVANCE', 'OWNER_ADVANCE', 'OTHER');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE TYPE "TransactionDirection" AS ENUM ('DEBIT', 'CREDIT');
+DO $$
+BEGIN
+    CREATE TYPE "TransactionDirection" AS ENUM ('DEBIT', 'CREDIT');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE TYPE "PaymentStatus" AS ENUM ('PENDING', 'PARTIAL', 'PAID', 'CANCELLED', 'REFUNDED');
+DO $$
+BEGIN
+    CREATE TYPE "PaymentStatus" AS ENUM ('PENDING', 'PARTIAL', 'PAID', 'CANCELLED', 'REFUNDED');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Note: trip_expense_type is extended by 20260905000000_add_trip_expense_paid_by_receipt
 -- which adds LABOUR, DOCUMENTATION, PARKING, LOCAL_TRANSPORT, CUSTOMER_RELATED, COMMUNICATION.
-CREATE TYPE "trip_expense_type" AS ENUM ('DRIVER', 'DIESEL', 'TOLL', 'LOADING', 'UNLOADING', 'OWNER', 'MAINTENANCE', 'OTHER');
+DO $$
+BEGIN
+    CREATE TYPE "trip_expense_type" AS ENUM ('DRIVER', 'DIESEL', 'TOLL', 'LOADING', 'UNLOADING', 'OWNER', 'MAINTENANCE', 'OTHER');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Note: expense_paid_by is created by 20260905000000_add_trip_expense_paid_by_receipt
 -- but we create it here since trip_expenses.paid_by references it.
-CREATE TYPE "expense_paid_by" AS ENUM ('BIHAR_TRANSPORT', 'TRANSPORT_OWNER');
+DO $$
+BEGIN
+    CREATE TYPE "expense_paid_by" AS ENUM ('BIHAR_TRANSPORT', 'TRANSPORT_OWNER');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE TYPE "FinancialTransactionType" AS ENUM ('CUSTOMER_PAYMENT', 'DRIVER_ADVANCE', 'FUEL_ADVANCE', 'OWNER_ADVANCE', 'DRIVER_SETTLEMENT', 'OWNER_SETTLEMENT', 'COMMISSION', 'ADJUSTMENT', 'REFUND', 'CLIENT_PAYMENT', 'TRIP_EXPENSE', 'EXPENSE_REIMBURSEMENT', 'REVERSAL');
+DO $$
+BEGIN
+    CREATE TYPE "FinancialTransactionType" AS ENUM ('CUSTOMER_PAYMENT', 'DRIVER_ADVANCE', 'FUEL_ADVANCE', 'OWNER_ADVANCE', 'DRIVER_SETTLEMENT', 'OWNER_SETTLEMENT', 'COMMISSION', 'ADJUSTMENT', 'REFUND', 'CLIENT_PAYMENT', 'TRIP_EXPENSE', 'EXPENSE_REIMBURSEMENT', 'REVERSAL');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE TYPE "TransactionParty" AS ENUM ('BIHAR_TRANSPORT', 'CUSTOMER', 'CLIENT', 'TRANSPORT_OWNER', 'DRIVER', 'VENDOR', 'OTHER');
+DO $$
+BEGIN
+    CREATE TYPE "TransactionParty" AS ENUM ('BIHAR_TRANSPORT', 'CUSTOMER', 'CLIENT', 'TRANSPORT_OWNER', 'DRIVER', 'VENDOR', 'OTHER');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ============================================================================
 -- trips — central operational table, referenced by many later migrations
