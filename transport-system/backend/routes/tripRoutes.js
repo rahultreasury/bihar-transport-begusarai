@@ -15,6 +15,7 @@ const TripTimelineService = require('../services/TripTimelineService');
 const TripFinancialCalculationService = require('../services/TripFinancialCalculationService');
 const TripOperationalService = require('../services/TripOperationalService');
 const TripDocumentService = require('../services/TripDocumentService');
+const TripDocumentStorage = require('../services/TripDocumentStorage');
 // Phase 9 — the Dispatch Workspace. `operationalService` is kept for the
 // LOADING step (and for Phase 4's direct-service tests, which still call it).
 // The dispatch READINESS and the dispatch ACT come from TripDispatchService,
@@ -832,7 +833,24 @@ router.post('/:id/pod', protect, adminOnly, async (req, res) => {
   const tripId = readTripId(req, res);
   if (tripId === null) return;
   try {
-    const result = await deliveryService.submitPod(tripId, req.body, req.user);
+    // Handle file upload via base64 content (consistent with dispatch LR/GR flow)
+    let fileUrl = req.body?.file_url || null;
+    let fileName = req.body?.file_name || null;
+    if (req.body?.file_content && req.body?.file_name) {
+      const stored = await TripDocumentStorage.store({
+        tripId,
+        documentType: 'POD',
+        fileName: req.body.file_name,
+        contentBase64: req.body.file_content,
+      });
+      fileUrl = stored.file_url;
+      fileName = stored.file_name;
+    }
+    const result = await deliveryService.submitPod(tripId, {
+      ...req.body,
+      file_url: fileUrl,
+      file_name: fileName,
+    }, req.user);
     res.status(result.already_recorded ? 200 : 201).json({
       success: true,
       message: result.already_recorded ? 'POD already recorded with these details' : 'Proof of delivery supplied',

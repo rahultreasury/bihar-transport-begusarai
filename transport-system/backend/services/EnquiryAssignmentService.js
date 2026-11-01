@@ -58,6 +58,77 @@ const ENQUIRY_HOLD_STATUSES = [
  * @param {string|null|undefined} unit
  * @returns {number|null} kilograms, or null when the value is unusable
  */
+/**
+ * Parse a date value safely (handles string/Date). Returns Date or null.
+ * Rejects impossible calendar dates (e.g., 2026-02-31, 2026-13-01, 31-04-2026).
+ */
+function parseDateSafe(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    return value;
+  }
+  const str = String(value).trim();
+  if (!str) return null;
+
+  // YYYY-MM-DD
+  const iso = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (iso) {
+    const y = Number(iso[1]);
+    const m = Number(iso[2]);
+    const d = Number(iso[3]);
+    if (m < 1 || m > 12) return null;
+    const date = new Date(Date.UTC(y, m - 1, d));
+    if (Number.isNaN(date.getTime())) return null;
+    // Check for calendar rollover (e.g., Feb 31 becomes Mar 3)
+    if (date.getUTCFullYear() !== y || date.getUTCMonth() !== m - 1 || date.getUTCDate() !== d) {
+      return null;
+    }
+    return date;
+  }
+
+  // DD-MM-YYYY or DD/MM/YYYY
+  const dmy = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+  if (dmy) {
+    const d = Number(dmy[1]);
+    const m = Number(dmy[2]);
+    const y = Number(dmy[3]);
+    if (m < 1 || m > 12) return null;
+    const date = new Date(Date.UTC(y, m - 1, d));
+    if (Number.isNaN(date.getTime())) return null;
+    if (date.getUTCFullYear() !== y || date.getUTCMonth() !== m - 1 || date.getUTCDate() !== d) {
+      return null;
+    }
+    return date;
+  }
+
+  const parsed = new Date(str);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed;
+}
+
+/**
+ * Check if a driver license is expired. Throws ValidationError if expired.
+ * Does not block if missing/unknown per requirements.
+ */
+function assertDriverLicenseValid(driver) {
+  if (!driver) return;
+  const expiry = driver.license_expiry || driver.licenseExpiry || driver.license_expiry_date || null;
+  if (!expiry) {
+    return; // do not block on unknown/missing
+  }
+  const expDate = parseDateSafe(expiry);
+  if (!expDate) {
+    throw new ValidationError({ message: 'Invalid driver license expiry date' });
+  }
+  const now = new Date();
+  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const exp = new Date(Date.UTC(expDate.getUTCFullYear(), expDate.getUTCMonth(), expDate.getUTCDate()));
+  if (exp < today) {
+    throw new ValidationError({ message: 'Driver license has expired' });
+  }
+}
+
 function toKilograms(value, unit) {
   if (value === null || value === undefined || value === '') return null;
   const n = Number(value);
@@ -185,6 +256,7 @@ class EnquiryAssignmentService {
         partner_id: true,
         current_vehicle_id: true,
         license_expiry: true,
+        license_number: true,
       },
     });
 
@@ -336,9 +408,10 @@ class EnquiryAssignmentService {
     const { start, end } = pickupWindow(pickupDate, pickupTime);
 
     // (a) Another live ENQUIRY already holds this vehicle.
+    const excludeEnqIdNum = excludeEnquiryId !== undefined && excludeEnquiryId !== null ? Number(excludeEnquiryId) : NaN;
     const otherEnquiry = await client.enquiry.findFirst({
       where: {
-        enquiry_id: excludeEnquiryId ? { not: Number(excludeEnquiryId) } : undefined,
+        ...(Number.isFinite(excludeEnqIdNum) ? { enquiry_id: { not: excludeEnqIdNum } } : {}),
         assigned_vehicle_id: Number(vehicleId),
         status: { in: ENQUIRY_HOLD_STATUSES },
       },
@@ -400,9 +473,10 @@ class EnquiryAssignmentService {
     const { driverId, pickupDate, pickupTime, excludeEnquiryId, excludeTripId } = params;
     const { start, end } = pickupWindow(pickupDate, pickupTime);
 
+    const excludeEnqIdNum2 = excludeEnquiryId !== undefined && excludeEnquiryId !== null ? Number(excludeEnquiryId) : NaN;
     const otherEnquiry = await client.enquiry.findFirst({
       where: {
-        enquiry_id: excludeEnquiryId ? { not: Number(excludeEnquiryId) } : undefined,
+        ...(Number.isFinite(excludeEnqIdNum2) ? { enquiry_id: { not: excludeEnqIdNum2 } } : {}),
         assigned_driver_id: Number(driverId),
         status: { in: ENQUIRY_HOLD_STATUSES },
       },
@@ -518,6 +592,10 @@ class EnquiryAssignmentService {
       this.assertDriverVehicleCoherence(out.driver, out.vehicle, { isReassignment });
     }
 
+    if (out.driver) {
+      assertDriverLicenseValid(out.driver);
+    }
+
     if (out.vehicle) {
       this.assertCapacitySufficient(out.vehicle, enquiry.weight, enquiry.weight_unit);
       await this.assertVehicleFree(
@@ -615,3 +693,4 @@ module.exports.tripWindow = tripWindow;
 module.exports.rangesOverlap = rangesOverlap;
 module.exports.ACTIVE_TRIP_STATUSES = ACTIVE_TRIP_STATUSES;
 module.exports.ENQUIRY_HOLD_STATUSES = ENQUIRY_HOLD_STATUSES;
+module.exports.parseDateSafe = parseDateSafe;

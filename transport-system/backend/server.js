@@ -247,6 +247,10 @@ app.use('/api/admin/drivers', adminLimiter, driverManagementRoutes);
 // and never swallowed by the catch-all admin router.
 app.use('/api/admin/enquiries', adminLimiter, adminEnquiryRoutes);
 
+// Database-backed Finance module (dashboard, receivables, payables, receipts,
+// advances, commission, settlements, petrol pump). Mounted BEFORE the
+// /api/admin catch-all so its paths are never shadowed.
+app.use('/api/admin/finance', adminLimiter, require('./routes/financeRoutes'));
 app.use("/api/admin/financials", adminLimiter, financialRoutes);
 // Backward compatibility: /api/financials/summary for smoke tests and legacy clients
 app.use("/api/financials", adminLimiter, financialRoutes);

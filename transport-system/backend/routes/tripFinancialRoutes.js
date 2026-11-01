@@ -842,6 +842,296 @@ router.post('/:tripId/payments/client', protect, adminOnly, async (req, res) => 
 });
 
 /**
+ * POST /api/trips/:tripId/payments/vendor
+ * Record a vendor transaction (PAY, COLLECT, SETTLEMENT, ADVANCE, FUEL_CREDIT).
+ *
+ * PHASE 2: This is the canonical vendor money movement endpoint. All vendor
+ * payments, advances, settlements and fuel credits flow through here so the
+ * vendor ledger stays consistent.
+ *
+ * BUSINESS RULES:
+ *   - Amount is validated server-side against outstanding (no frontend trust)
+ *   - Idempotent by reference_number (same reference = same payment, replay-safe)
+ *   - Overpayment rejected unless it's an explicit advance/credit
+ *   - Settlement (type SETTLEMENT) never creates cash/bank movement
+ *   - Fuel credit updates vendor ledger AND petrol pump ledger
+ *   - All writes in one Prisma transaction with row lock
+ */
+router.post('/:tripId/payments/vendor', protect, adminOnly, async (req, res) => {
+  try {
+    const tripId = parseInt(req.params.tripId);
+    if (isNaN(tripId)) {
+      return res.status(400).json({ success: false, message: 'Invalid trip ID' });
+    }
+
+    const {
+      transaction_type,
+      amount,
+      payment_method,
+      reference_number,
+      notes,
+      transaction_date,
+      petrol_pump_id,
+      fuel_litres,
+      fuel_rate_per_litre,
+      settlement_reference,
+      from_party,
+      to_party,
+      purpose,
+    } = req.body;
+
+    if (!transaction_type || !amount || amount <= 0) {
+      return res.status(400).json({ success: false, message: 'Valid transaction type and amount are required' });
+    }
+
+    // The API speaks in operator verbs; the ledger speaks in the canonical
+    // FinancialTransactionType enum. Translate once, here, so no route can
+    // ever write a value the database enum does not accept.
+    const TYPE_MAP = {
+      PAY: 'OWNER_SETTLEMENT',
+      COLLECT: 'COMMISSION',
+      SETTLEMENT: 'OWNER_SETTLEMENT',
+      ADVANCE: 'OWNER_ADVANCE',
+      FUEL_CREDIT: 'ADJUSTMENT',
+    };
+    const ledgerType = TYPE_MAP[transaction_type];
+    if (!ledgerType) {
+      return res.status(400).json({ success: false, message: 'Invalid transaction type' });
+    }
+    const isFuelCredit = transaction_type === 'FUEL_CREDIT';
+    const metadataKind = isFuelCredit ? 'VENDOR_FUEL_CREDIT'
+      : transaction_type === 'COLLECT' ? 'COMMISSION_RECEIPT'
+        : null;
+
+    // Validate trip exists and get its position
+    const trip = await prisma.trip.findUnique({
+      where: { trip_id: tripId },
+      select: {
+        trip_id: true, trip_number: true, booking_id: true,
+        transport_owner_id: true, vehicle_id: true, driver_id: true,
+        freight_amount: true, commission_type: true, commission_percentage: true,
+        vehicleHire: {
+          select: {
+            hire_id: true, gross_hire: true, commission_amount: true,
+            commission_type: true, commission_rate: true,
+            net_vendor_payable: true, status: true,
+          },
+        },
+        transportOwner: {
+          select: { owner_id: true, owner_name: true, owner_type: true, mobile: true },
+        },
+      },
+    });
+
+    if (!trip) {
+      return res.status(404).json({ success: false, message: 'Trip not found' });
+    }
+
+    if (!trip.transport_owner_id) {
+      return res.status(400).json({ success: false, message: 'Trip has no transport owner/vendor assigned' });
+    }
+
+    // Compute authoritative vendor position
+    const position = await vendorLedgerService.getOwnerPosition(tripId);
+
+    const amountDecimal = parseFloat(amount);
+    const reference = reference_number ? String(reference_number).trim() || null : null;
+
+    return await prisma.$transaction(async (tx) => {
+      // ── Idempotency ──────────────────────────────────────────────────────
+      if (reference) {
+        const existing = await tx.financialTransaction.findFirst({
+          where: {
+            trip_id: tripId,
+            transaction_type: ledgerType,
+            reference_number: reference,
+            status: { not: 'CANCELLED' },
+          },
+        });
+        if (existing) {
+          return res.status(200).json({
+            success: true,
+            message: 'Vendor transaction already recorded for this reference',
+            data: { ...existing, idempotentReplay: true },
+          });
+        }
+      }
+
+      // ── Concurrency guard: lock trip row ─────────────────────────────────
+      if (typeof tx.$queryRaw === 'function') {
+        await tx.$queryRaw`SELECT trip_id FROM trips WHERE trip_id = ${tripId} FOR UPDATE`;
+      }
+
+      // Re-derive position inside the transaction
+      const lockedPosition = await new VendorLedgerService({ prisma: tx }).getOwnerPosition(tripId);
+
+      // ── Amount validation ────────────────────────────────────────────────
+      const outstanding = lockedPosition.outstanding;
+      if (transaction_type === 'PAY' && amountDecimal > outstanding) {
+        return res.status(400).json({
+          success: false,
+          message: `Payment amount (₹${amountDecimal}) exceeds outstanding vendor payable (₹${outstanding})`,
+        });
+      }
+
+      // ── Determine transaction direction and parties ──────────────────────
+      let direction, txFromParty, txToParty, txPurpose;
+
+      switch (transaction_type) {
+        case 'COLLECT':
+          direction = 'CREDIT';
+          txFromParty = 'TRANSPORT_OWNER';
+          txToParty = 'BIHAR_TRANSPORT';
+          txPurpose = purpose || 'Commission Collection';
+          break;
+        case 'PAY':
+          direction = 'DEBIT';
+          txFromParty = 'BIHAR_TRANSPORT';
+          txToParty = 'TRANSPORT_OWNER';
+          txPurpose = purpose || 'Vendor Payment';
+          break;
+        case 'SETTLEMENT':
+          direction = 'DEBIT';
+          txFromParty = 'BIHAR_TRANSPORT';
+          txToParty = 'TRANSPORT_OWNER';
+          txPurpose = purpose || 'Settlement';
+          break;
+        case 'ADVANCE':
+          direction = 'DEBIT';
+          txFromParty = 'BIHAR_TRANSPORT';
+          txToParty = 'TRANSPORT_OWNER';
+          txPurpose = purpose || 'Vendor Advance';
+          break;
+        case 'FUEL_CREDIT':
+          direction = 'DEBIT';
+          txFromParty = 'BIHAR_TRANSPORT';
+          txToParty = 'TRANSPORT_OWNER';
+          txPurpose = purpose || 'Fuel Credit';
+          break;
+        default:
+          return res.status(400).json({ success: false, message: 'Invalid transaction type' });
+      }
+
+      // ── Find or create TripFinancial ledger row ──────────────────────────
+      let tripFinancial = await tx.tripFinancial.findFirst({
+        where: { trip_id: tripId },
+        select: { trip_financial_id: true },
+      });
+
+      if (!tripFinancial) {
+        tripFinancial = await tx.tripFinancial.create({
+          data: {
+            booking_id: trip.booking_id || null,
+            trip_id: tripId,
+            status: 'CALCULATED',
+            customer_fare: Number(trip.freight_amount) || 0,
+            calculated_at: new Date(),
+          },
+          select: { trip_financial_id: true },
+        });
+      } else if (typeof tx.$queryRaw === 'function') {
+        await tx.$queryRaw`SELECT trip_financial_id FROM trip_financials WHERE trip_financial_id = ${tripFinancial.trip_financial_id} FOR UPDATE`;
+      }
+
+      // ── Create the FinancialTransaction ──────────────────────────────────
+      const created = await tx.financialTransaction.create({
+        data: {
+          trip_financial_id: tripFinancial.trip_financial_id,
+          booking_id: trip.booking_id || null,
+          trip_id: tripId,
+          transaction_type: ledgerType,
+          amount: amountDecimal,
+          direction,
+          from_party: txFromParty,
+          to_party: txToParty,
+          purpose: txPurpose,
+          payment_method: isFuelCredit
+            ? 'FUEL_CREDIT'
+            : (payment_method ? String(payment_method).toUpperCase() : (transaction_type === 'SETTLEMENT' ? 'SETTLEMENT' : 'CASH')),
+          reference_number: reference,
+          transaction_date: transaction_date ? new Date(transaction_date) : new Date(),
+          status: 'PAID',
+          client_id: null,
+          notes: notes || null,
+          created_by: req.user?.user_id || null,
+          metadata: JSON.stringify({
+            kind: metadataKind,
+            requested_type: transaction_type,
+            transaction_type: ledgerType,
+            petrol_pump_id: petrol_pump_id || null,
+            fuel_litres: fuel_litres ? parseFloat(fuel_litres) : null,
+            fuel_rate_per_litre: fuel_rate_per_litre ? parseFloat(fuel_rate_per_litre) : null,
+            settlement_reference: settlement_reference || null,
+            gross_hire: position.grossHire,
+            commission_amount: position.commissionAmount,
+            net_vendor_payable: position.netVendorPayable,
+            previous_outstanding: position.outstanding,
+          }),
+        },
+      });
+
+      // ── Fuel credit: also update petrol pump ledger ──────────────────────
+      if (isFuelCredit && petrol_pump_id) {
+        const fuelAmount = fuel_litres && fuel_rate_per_litre
+          ? parseFloat(fuel_litres) * parseFloat(fuel_rate_per_litre)
+          : amountDecimal;
+
+        const pump = await tx.petrolPump.findUnique({ where: { pump_id: parseInt(petrol_pump_id) } });
+        if (!pump) {
+          throw new Error('Petrol pump not found');
+        }
+
+        await tx.petrolPumpFuelTransaction.create({
+          data: {
+            pump_id: parseInt(petrol_pump_id),
+            trip_id: tripId,
+            vehicle_id: trip.vehicle_id,
+            driver_id: trip.driver_id,
+            fuel_date: transaction_date ? new Date(transaction_date) : new Date(),
+            fuel_type: 'DIESEL',
+            litres: fuel_litres ? parseFloat(fuel_litres) : 0,
+            rate_per_litre: fuel_rate_per_litre ? parseFloat(fuel_rate_per_litre) : 0,
+            total_amount: fuelAmount,
+            invoice_number: reference || null,
+            receipt_number: reference || null,
+            remarks: notes || null,
+            is_billed: false,
+            created_by: req.user?.user_id || null,
+          },
+        });
+
+        // Credit fuel increases the liability to the pump.
+        await tx.petrolPump.update({
+          where: { pump_id: parseInt(petrol_pump_id) },
+          data: { current_balance: { increment: fuelAmount }, updated_at: new Date() },
+        });
+      }
+
+      // ── Return with updated position ─────────────────────────────────────
+      const finalPosition = await new VendorLedgerService({ prisma: tx }).getOwnerPosition(tripId);
+
+      return res.status(201).json({
+        success: true,
+        message: 'Vendor transaction recorded successfully',
+        data: {
+          ...created,
+          position: finalPosition,
+        },
+      });
+    });
+  } catch (error) {
+    console.error('Record vendor transaction error:', error);
+    if (error.message && error.message.includes('exceeds outstanding')) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+    if (error.message && error.message.includes('not found')) {
+      return res.status(404).json({ success: false, message: error.message });
+    }
+    res.status(500).json({ success: false, message: error.message || 'Server error' });
+  }
+});
+
+/**
  * PHASE 3: the /:tripId/advances, /:tripId/settlements/* handlers that used
  * to live here were unreachable — Express matched the identically-shaped
  * /:id/... handlers declared above first, and those now dispatch on whether

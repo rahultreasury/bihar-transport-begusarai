@@ -38,6 +38,7 @@
  */
 
 const { prisma: defaultPrisma } = require('../config/prisma');
+const money = require('./finance/money');
 const { ValidationError, NotFoundError } = require('../utils/AppError');
 const TripTimelineRepository = require('../repositories/TripTimelineRepository');
 const AuditLogRepository = require('../repositories/AuditLogRepository');
@@ -1945,9 +1946,9 @@ class TripDispatchService {
       })
       : [];
 
-    const received = customerPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    const received = money.fromPaise(customerPayments.reduce((sum, p) => sum + money.toPaise(p.amount || 0), 0));
     const invoiceTotal = invoice
-      ? Number(invoice.grand_total ?? invoice.total_amount ?? invoice.final_price ?? 0)
+      ? money.fromPaise(money.toPaise(invoice.grand_total ?? invoice.total_amount ?? invoice.final_price ?? 0))
       : null;
 
     return {
@@ -1963,8 +1964,8 @@ class TripDispatchService {
           // Stated, not implied: this is NOT a government e-invoice.
           is_government_e_invoice: false,
           irn: invoice.irn || null,
-          freight: Number(invoice.goods_amount ?? trip.freight_amount ?? 0),
-          additional_charges: Number(invoice.extra_charges ?? 0),
+          freight: money.fromPaise(money.toPaise(invoice.goods_amount ?? trip.freight_amount ?? 0)),
+          additional_charges: money.fromPaise(money.toPaise(invoice.extra_charges ?? 0)),
           taxable_amount: invoice.taxable_amount ?? null,
           gst_type: invoice.gst_type ?? null,
           gst_percentage: invoice.gst_percentage ?? null,

@@ -401,6 +401,8 @@ class TripDeliveryService {
           status: 'DELIVERED',
           // The pre-existing column. Not a new one.
           trip_delivered_date: now,
+          ...(input.delivered_receiver_name ? { delivered_receiver_name: input.delivered_receiver_name } : {}),
+          ...(input.delivery_remarks ? { delivery_remarks: input.delivery_remarks } : {}),
         },
       });
 
@@ -589,14 +591,19 @@ class TripDeliveryService {
     if (!trip.arrived_at_destination_at) {
       blockers.push(deliveryPolicy.DELIVERY_REQUIREMENTS[0]);
     }
-    if (!deliveryPolicy.isPodSupplied(pod?.document_status)) {
-      blockers.push(deliveryPolicy.DELIVERY_REQUIREMENTS[1]);
-    } else if (!deliveryPolicy.isPodVerified(pod.document_status)) {
-      blockers.push(deliveryPolicy.DELIVERY_REQUIREMENTS[2]);
+
+    // POD is only required when the trip declares it as required.
+    const podRequired = trip.documents_required !== false && trip.pod_required !== false;
+    if (podRequired) {
+      if (!deliveryPolicy.isPodSupplied(pod?.document_status)) {
+        blockers.push(deliveryPolicy.DELIVERY_REQUIREMENTS[1]);
+      } else if (!deliveryPolicy.isPodVerified(pod.document_status)) {
+        blockers.push(deliveryPolicy.DELIVERY_REQUIREMENTS[2]);
+      }
     }
-    if (!trip.delivered_receiver_name) {
-      blockers.push(deliveryPolicy.DELIVERY_REQUIREMENTS[3]);
-    }
+
+    // delivered_receiver_name is set BY markDelivered, not a precondition for it.
+    // Do not block delivery on a field the delivery action itself records.
 
     return {
       trip_id: trip.trip_id,

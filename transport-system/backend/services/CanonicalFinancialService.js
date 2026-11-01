@@ -21,6 +21,7 @@
  */
 
 const { prisma: defaultPrisma } = require('../config/prisma');
+const money = require('./finance/money');
 const CommissionCalculator = require('./CommissionCalculator');
 const TripInvoiceService = require('./TripInvoiceService');
 const { ValidationError, NotFoundError } = require('../utils/AppError');
@@ -284,23 +285,40 @@ class CanonicalFinancialService {
    * @returns {Object} Financial summary
    */
   _computeTripFinancials(trip) {
-    const freightAmount = Number(trip.freight_amount) || 0;
-    const driverAgreedPay = Number(trip.driver_payment) || 0;
+    const freightAmount = money.fromPaise(money.toPaise(trip.freight_amount || 0));
+    const driverAgreedPay = money.fromPaise(money.toPaise(trip.driver_payment || 0));
 
-    // Commission: use VehicleHire.net_vendor_payable as the authoritative
-    // owner share when a hire record exists; otherwise compute from freight.
-    // This prevents the vendor payable from incorrectly falling back to
-    // trip.freight_amount when a VehicleHire record should determine it.
+    // ── BILLING SOURCE (§2) ────────────────────────────────────────────────
+    // Customer billing total comes from the latest non-cancelled invoice
+    // (final_price is the authoritative amount column). When no invoice
+    // exists, the trip's own freight_amount is unbilled revenue — shown
+    // separately so management can identify revenue not yet invoiced.
+    const invoices = (trip.invoices || []).filter(
+      (inv) => inv && inv.status !== 'CANCELLED'
+    );
+    const latestInvoice = invoices.length
+      ? invoices.reduce((a, b) => {
+          const da = a.invoice_date ? new Date(a.invoice_date).getTime() : 0;
+          const db = b.invoice_date ? new Date(b.invoice_date).getTime() : 0;
+          return db > da ? b : a;
+        })
+      : null;
+    const billedAmount = latestInvoice ? money.fromPaise(money.toPaise(latestInvoice.final_price || 0)) : 0;
+    const unbilledFreight = money.max(0, money.sub(freightAmount, billedAmount));
+    const invoiceStatus = latestInvoice ? latestInvoice.payment_status : null;
+    const invoiceNumber = latestInvoice ? latestInvoice.invoice_number : null;
+
+    // Commission: compute net vendor payable as gross hire − commission.
+    // Never trust the stored net_vendor_payable column directly — it may have
+    // been written before commission was applied, or may disagree with the
+    // stored commission amount. The identity gross − commission ≡ net must
+    // hold by construction, not by stored data.
     let btCommission, ownerShare, commissionRate, commissionType;
     const vehicleHire = trip.vehicleHire;
-    if (vehicleHire && vehicleHire.net_vendor_payable != null) {
-      // Use the stored hire terms as the authoritative source
-      ownerShare = Number(vehicleHire.net_vendor_payable) || 0;
-      btCommission = Number(vehicleHire.commission_amount) || 0;
-      // Comment-type exposure for the summary. `commission_rate` on the
-      // VehicleHire row is a percentage only for `percentage` deals and the
-      // literal rupee amount for `fixed` deals — exactly the same convention
-      // deriveCommission uses on the trip columns.
+    if (vehicleHire) {
+      const grossHire = money.fromPaise(money.toPaise(vehicleHire.gross_hire || trip.freight_amount || 0));
+      btCommission = money.fromPaise(money.toPaise(vehicleHire.commission_amount || 0));
+      ownerShare = money.max(0, money.sub(grossHire, btCommission));
       commissionRate = Number(vehicleHire.commission_rate) || 0;
       commissionType = vehicleHire.commission_type;
     } else {
@@ -345,7 +363,7 @@ class CanonicalFinancialService {
       for (const p of trip.payments) {
         const cat = (p.payment_category || '').toUpperCase();
         if (cat === 'CLIENT_PAYMENT' || cat === 'CUSTOMER_PAYMENT' || cat === 'CUSTOMER') {
-          tripPaymentFallback += Number(p.amount) || 0;
+          tripPaymentFallback = money.add(tripPaymentFallback, money.fromPaise(money.toPaise(p.amount || 0)));
         }
       }
     }
@@ -354,6 +372,12 @@ class CanonicalFinancialService {
     const customerCollected = ledgerHasCustomerPayments
       ? txCalc.totalCustomerPayments + txCalc.totalClientPayments
       : tripPaymentFallback;
+
+    // §2 — Customer outstanding is freight minus payments received.
+    // An unbilled trip still creates a receivable (the customer owes the
+    // freight regardless of whether an invoice has been generated); the
+    // unbilled portion is shown separately so management can identify
+    // revenue not yet invoiced.
     const customerDue = Math.max(0, freightAmount - customerCollected);
 
     // Owner payable
@@ -364,7 +388,7 @@ class CanonicalFinancialService {
     const driverPaid = txCalc.totalDriverSettlements + txCalc.totalDriverAdvances + txCalc.totalFuelAdvances;
     const driverDue = Math.max(0, driverAgreedPay - driverPaid);
 
-    // Payment status
+    // Payment status — based on freight vs collected (the actual debt)
     const customerPaymentStatus = this._paymentStatus(freightAmount, customerCollected);
     const ownerPaymentStatus = this._paymentStatus(ownerShare, ownerPaid);
     const driverPaymentStatus = this._paymentStatus(driverAgreedPay, driverPaid);
@@ -381,29 +405,36 @@ class CanonicalFinancialService {
       ownerId: trip.transport_owner_id,
       ownerName: trip.transportOwner?.owner_name || null,
 
-      // 1. Freight / GMV
+      // 1. Freight / GMV — raw trip freight (unbilled basis)
       freight: freightAmount,
-      // 2. BT Commission
+      // 2. Billed amount — from latest non-cancelled invoice final_price
+      billedAmount,
+      // 3. Unbilled freight — freight with no invoice yet
+      unbilledFreight,
+      // 4. BT Commission
       btCommission,
       commissionRate,
       commissionType,
-      // 3. Owner Share
+      // 5. Owner Share
       ownerShare,
-      // 4. Customer Amount Collected
+      // 6. Customer Amount Collected
       customerCollected,
-      // 5. Customer Amount Due
+      // 7. Customer Amount Due (against billed invoices only)
       customerDue,
       customerPaymentStatus,
-      // 6. Owner Amount Paid
+      // Invoice reference
+      invoiceStatus,
+      invoiceNumber,
+      // 8. Owner Amount Paid
       ownerPaid,
-      // 7. Owner Amount Due
+      // 9. Owner Amount Due
       ownerDue,
       ownerPaymentStatus,
-      // 8. Driver Agreed Pay
+      // 10. Driver Agreed Pay
       driverAgreedPay,
-      // 9. Driver Amount Paid
+      // 11. Driver Amount Paid
       driverPaid,
-      // 10. Driver Amount Due
+      // 12. Driver Amount Due
       driverDue,
       driverPaymentStatus,
 
@@ -439,6 +470,7 @@ class CanonicalFinancialService {
         trips: {
           include: {
             financialTransactions: true,
+            invoices: true,
           },
         },
       },
@@ -450,6 +482,8 @@ class CanonicalFinancialService {
 
     const trips = client.trips || [];
     let totalFreight = 0;
+    let totalBilled = 0;
+    let totalUnbilled = 0;
     let totalPaid = 0;
     let totalOutstanding = 0;
     let totalTrips = trips.length;
@@ -460,6 +494,8 @@ class CanonicalFinancialService {
     for (const trip of trips) {
       const tripFinancials = this._computeTripFinancials(trip);
       totalFreight += tripFinancials.freight;
+      totalBilled += tripFinancials.billedAmount;
+      totalUnbilled += tripFinancials.unbilledFreight;
       totalPaid += tripFinancials.customerCollected;
       totalOutstanding += tripFinancials.customerDue;
 
@@ -474,22 +510,29 @@ class CanonicalFinancialService {
         tripNumber: trip.trip_number,
         status: trip.status,
         freight: tripFinancials.freight,
+        billed: tripFinancials.billedAmount,
+        unbilled: tripFinancials.unbilledFreight,
         paid: tripFinancials.customerCollected,
         due: tripFinancials.customerDue,
+        outstanding: tripFinancials.customerDue + tripFinancials.unbilledFreight,
         paymentStatus: tripFinancials.customerPaymentStatus,
+        invoiceStatus: tripFinancials.invoiceStatus,
+        invoiceNumber: tripFinancials.invoiceNumber,
       });
     }
 
     return {
       clientId: client.client_id,
-      companyName: client.company_name,
-      contactPerson: client.contact_person,
+      companyName: client.companyName,
+      contactPerson: client.contactPerson,
       phone: client.phone,
       email: client.email,
       status: client.status,
       totalTrips,
       activeTrips,
       totalFreight,
+      totalBilled,
+      totalUnbilled,
       totalPaid,
       totalOutstanding,
       paymentStatus: this._paymentStatus(totalFreight, totalPaid),
@@ -511,6 +554,7 @@ class CanonicalFinancialService {
       include: {
         financialTransactions: true,
         payments: true,
+        invoices: true,
         vehicleHire: {
           select: {
             hire_id: true,
@@ -531,6 +575,8 @@ class CanonicalFinancialService {
     tomorrow.setDate(tomorrow.getDate() + 1);
 
     let totalFreight = 0;
+    let totalBilledAmount = 0;
+    let totalUnbilledFreight = 0;
     let totalCustomerCollected = 0;
     let totalCustomerDue = 0;
     let totalOwnerShare = 0;
@@ -548,6 +594,8 @@ class CanonicalFinancialService {
     for (const trip of trips) {
       const f = this._computeTripFinancials(trip);
       totalFreight += f.freight;
+      totalBilledAmount += f.billedAmount;
+      totalUnbilledFreight += f.unbilledFreight;
       totalCustomerCollected += f.customerCollected;
       totalCustomerDue += f.customerDue;
       totalOwnerShare += f.ownerShare;
@@ -585,9 +633,12 @@ class CanonicalFinancialService {
     return {
       totalTrips: trips.length,
       totalFreight,
+      totalBilledAmount,
+      totalUnbilledFreight,
       totalBtCommission,
       totalOwnerShare,
       // Receivables (what customers/clients owe BT)
+      //   totalReceivable = freight − collected (includes both billed and unbilled)
       totalReceivable: totalCustomerDue,
       totalReceived: totalCustomerCollected,
       // Payables (what BT owes owners/drivers)
@@ -729,6 +780,8 @@ class CanonicalFinancialService {
             unlinked: true,
             totalTrips: 0,
             totalFreight: 0,
+            totalBilled: 0,
+            totalUnbilled: 0,
             totalPaid: 0,
             outstanding: 0,
             paymentStatus: null,
@@ -738,6 +791,8 @@ class CanonicalFinancialService {
         const entry = byParty.get(key);
         entry.totalTrips += 1;
         entry.totalFreight += f.freight;
+        entry.totalBilled += f.billedAmount;
+        entry.totalUnbilled += f.unbilledFreight;
         entry.totalPaid += f.customerCollected;
         entry.outstanding += f.customerDue;
         entry.paymentStatus = this._paymentStatus(entry.totalFreight, entry.totalPaid);
@@ -1196,9 +1251,9 @@ class CanonicalFinancialService {
         || p.transaction_type === 'OWNER_ADVANCE'
         || p.transaction_type === 'OWNER_SETTLEMENT'
         || String(p.from_party || '').toUpperCase().includes('BHAR');
-      const amount = Number(p.amount) || 0;
+      const amount = money.fromPaise(money.toPaise(p.amount || 0));
       if (!isOutgoing) continue;
-      running -= amount;
+      running = money.sub(running, amount);
       ledger.push({
         date: p.transaction_date,
         particulars: `${p.transaction_type.replace(/_/g, ' ')} · ${p.reference_number || '—'}`,
@@ -1530,7 +1585,7 @@ class CanonicalFinancialService {
         for (const p of tripPayments) {
           const cat = (p.payment_category || '').toUpperCase();
           if (cat === 'CLIENT_PAYMENT' || cat === 'CUSTOMER_PAYMENT' || cat === 'CUSTOMER') {
-            legacyCollected += Number(p.amount) || 0;
+            legacyCollected = money.add(legacyCollected, money.fromPaise(money.toPaise(p.amount || 0)));
           }
         }
       }
@@ -1538,7 +1593,7 @@ class CanonicalFinancialService {
       const collected = ledgerHasCustomerPayments
         ? ledger.totalCustomerPayments + ledger.totalClientPayments
         : legacyCollected;
-      const outstanding = Math.max(0, (Number(trip.freight_amount) || 0) - collected);
+      const outstanding = money.max(0, money.sub(money.fromPaise(money.toPaise(trip.freight_amount || 0)), collected));
 
       if (paymentAmount > outstanding) {
         throw new ValidationError(

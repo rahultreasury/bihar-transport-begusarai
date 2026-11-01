@@ -110,15 +110,10 @@ function parseDocumentDate(value) {
   }
 
   const text = String(value).trim();
+  if (!text) return null;
 
-  // A document expiry is a CALENDAR DATE, not an instant. Date-only values are
-  // therefore anchored at UTC midnight, so the date that comes back out is
-  // exactly the date that went in. Building them at local midnight instead
-  // would shift the day backwards by one in any timezone ahead of UTC — in
-  // IST (UTC+5:30) a stored "2027-04-30" would export as 2027-04-29.
-  //
-  // A value that DOES carry a time ("2027-04-30T18:45:00Z") is a real instant
-  // and is parsed as such, unchanged.
+  // Reject obviously invalid strings early but be strict
+  // A document expiry is a CALENDAR DATE, not an instant.
   //
   // ISO-ish: 2027-04-30 and 2027-04-30T00:00:00(.000)Z
   const iso = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?/.exec(text);
@@ -128,18 +123,24 @@ function parseDocumentDate(value) {
       ? new Date(Date.UTC(Number(y), Number(m) - 1, Number(d)))
       : new Date(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm), Number(ss) || 0);
     if (!Number.isNaN(parsed.getTime())) return parsed;
+    return null;
   }
 
   // Indian convention: 30-04-2027 or 30/04/2027
   const indian = /^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/.exec(text);
   if (indian) {
     const [, d, m, y] = indian;
-    const parsed = new Date(Date.UTC(Number(y), Number(m) - 1, Number(d)));
+    const day = Number(d);
+    const month = Number(m);
+    const year = Number(y);
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    const parsed = new Date(Date.UTC(year, month - 1, day));
     if (!Number.isNaN(parsed.getTime())) return parsed;
+    return null;
   }
 
-  const fallback = new Date(text);
-  return Number.isNaN(fallback.getTime()) ? null : fallback;
+  // Be strict - don't fall back to loose parsing for unrecognized formats
+  return null;
 }
 
 /**

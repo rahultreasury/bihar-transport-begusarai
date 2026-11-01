@@ -42,6 +42,7 @@ import {
 import { Button } from '../ui/AdminUI';
 import { AuthContext } from '../../../contexts/AuthContext';
 import { buildNavGroups, resolveNavPath } from './adminNavigation';
+import GlobalSearch from '../search/GlobalSearch';
 
 export default function AdminTopHeader({
   onMenuClick,
@@ -338,56 +339,26 @@ export default function AdminTopHeader({
             permanentSidebar ? 'flex-1' : workspace ? 'ml-2 flex-1 sm:ml-4' : 'ml-3.5 flex-1'
           }`}
         >
-          <form
-            onSubmit={handleSearch}
-            className={`relative w-full ${
+          <div
+            className={`w-full ${
               permanentSidebar ? 'max-w-[700px]' : workspace ? 'max-w-[460px]' : 'max-w-[508px]'
             }`}
           >
-            <Search
-              className={`pointer-events-none absolute top-1/2 h-4 w-4 -translate-y-1/2 ${
-                permanentSidebar || workspace ? 'left-3.5 text-[#6B7C93]' : 'left-3.5 text-[#6B7C93]'
-              }`}
-              strokeWidth={1.9}
-              aria-hidden="true"
-            />
-            <input
-              ref={searchRef}
-              type="search"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+            <GlobalSearch
               placeholder={
                 workspace
                   ? 'Search orders...'
-                  : 'Search anything... (order, customer, vehicle, route)'
+                  : 'Search anything across Bihar Transport...'
               }
-              className={
+              inputClassName={
                 permanentSidebar || workspace
                   ? `h-10 w-full rounded-[9px] border border-[#E4E9F1] bg-[#EEF2F7] pl-10 pr-16 text-[12.5px] text-[#243B5A] outline-none transition-colors placeholder:text-[#7B8CA3] focus:border-[#B9C9DE] focus:bg-white focus:ring-2 focus:ring-[#1764E8]/10 [&::-webkit-search-cancel-button]:hidden ${
                       workspace ? 'bt-workspace-search' : ''
                     }`
                   : 'h-[38px] w-full rounded-[9px] border border-[#E4E9F1] bg-[#F8FAFD] pl-10 pr-16 text-[13px] text-[#243B5A] outline-none transition-colors placeholder:text-[#7B8CA3] focus:border-[#B9C9DE] focus:bg-white focus:ring-2 focus:ring-[#1764E8]/10 [&::-webkit-search-cancel-button]:hidden'
               }
-              aria-label="Global search"
             />
-
-            {searchQuery ? (
-              <button
-                type="button"
-                onClick={() => setSearchQuery('')}
-                className="absolute right-2.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-lg text-bt-ink-3 transition-colors hover:bg-bt-orange-light hover:text-bt-navy"
-                aria-label="Clear search"
-              >
-                <svg className="h-3.5 w-3.5" strokeWidth={2} fill="none" viewBox="0 0 24 24" aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            ) : (
-              <kbd className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 items-center rounded-[5px] border border-[#DDE4EE] bg-white px-1.5 py-0.5 text-[9.5px] font-semibold text-[#8797AB] sm:flex">
-                ⌘ K
-              </kbd>
-            )}
-          </form>
+          </div>
         </div>
 
         {/* ── Right cluster: quick actions (default), notifications, profile ── */}

@@ -57,6 +57,8 @@ const ResourceAvailabilityService = require('./ResourceAvailabilityService');
 // different owner — payouts route on `owner_id`, and that must stay untouched.
 const { presentOwner } = require('../utils/vehicleOwnerPlaceholder');
 
+
+
 /**
  * Trip statuses at which a vehicle may still be (re)assigned.
  *
@@ -311,42 +313,122 @@ class TripVehicleAssignmentService {
    * @param {object} [tx]
    */
   async _assertResourcesAvailable(trip, vehicleId, driverId, tx = null) {
-    const enquiryId = trip?.enquiry_id ?? null;
-    if (!enquiryId) return null;
     if (vehicleId == null && driverId == null) return null;
 
     const client = tx || this.prisma;
-    // The load facts the capacity rule needs, plus the consignment's own id —
-    // which is how the conflict scan excludes THIS consignment from itself.
-    const enquiry = await client.enquiry.findUnique({
-      where: { enquiry_id: enquiryId },
-      select: {
-        enquiry_id: true,
-        pickup_date: true,
-        pickup_time: true,
-        weight: true,
-        weight_unit: true,
-      },
-    });
-    if (!enquiry) return null;
+    let enquiry = null;
+    let enquiryId = trip?.enquiry_id ?? null;
 
-    await this.availability.validateAssignment(
-      {
-        enquiry,
-        vehicleId,
-        driverId,
-        partnerId: null,
-        ownerId: trip.transport_owner_id ?? null,
-        // A REPLACEMENT is judged against the consignment's own current pick,
-        // which `validateAssignment` already excludes via `enquiry_id`.
-        isReassignment: true,
-        // And against every trip EXCEPT this one. Without this a re-assignment
-        // that carries a resource forward would report the consignment's own
-        // trip as the conflict — the consignment blocking itself.
-        excludeTripId: trip.trip_id,
-      },
-      tx,
-    );
+    // Try to load from enquiry first (existing behavior)
+    if (enquiryId) {
+      enquiry = await client.enquiry.findUnique({
+        where: { enquiry_id: enquiryId },
+        select: {
+          enquiry_id: true,
+          pickup_date: true,
+          pickup_time: true,
+          weight: true,
+          weight_unit: true,
+        },
+      });
+    }
+
+    // If no enquiry link, try to construct from booking/trip for validation
+    if (!enquiry) {
+      if (trip.booking_id) {
+        const booking = await client.booking.findUnique({
+          where: { booking_id: trip.booking_id },
+          select: {
+            booking_id: true,
+            pickup_date: true,
+            pickup_time: true,
+            goods_weight_kg: true,
+          },
+        });
+        if (booking?.pickup_date) {
+          // EnquiryAssignmentService expects Date/string for pickup_date and string for pickup_time
+          enquiry = {
+            enquiry_id: enquiryId || `trip-${trip.trip_id}`, // synthetic id for exclusion logic
+            pickup_date: booking.pickup_date,
+            pickup_time: booking.pickup_time || '00:00',
+            weight: booking.goods_weight_kg,
+            weight_unit: booking.goods_weight_kg ? 'KG' : null,
+          };
+        }
+      }
+    }
+
+    // If still no enquiry context but trip has trip_date, construct minimal enquiry
+    if (!enquiry && trip.trip_date) {
+      enquiry = {
+        enquiry_id: enquiryId || `trip-${trip.trip_id}`,
+        pickup_date: trip.trip_date,
+        pickup_time: '00:00',
+        weight: null,
+        weight_unit: null,
+      };
+    }
+
+    if (!enquiry) {
+      // Missing scheduling information - fail-safe: skip conflict validation but still check licenses
+      // This is an explicit safe outcome per test expectations
+    } else {
+      await this.availability.validateAssignment(
+        {
+          enquiry,
+          vehicleId,
+          driverId,
+          partnerId: null,
+          ownerId: trip.transport_owner_id ?? null,
+          isReassignment: true,
+          excludeTripId: trip.trip_id,
+        },
+        tx,
+      );
+    }
+
+    // Also validate driver license directly if driver loaded
+    if (driverId) {
+      try {
+        const driver = await client.driver.findUnique({
+          where: { driver_id: Number(driverId) },
+          select: { driver_id: true, license_expiry: true },
+        });
+        if (driver) {
+          const parseDateSafe = (value) => {
+            if (value === null || value === undefined || value === '') return null;
+            if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+            const str = String(value).trim();
+            if (!str) return null;
+            const iso = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+            if (iso) {
+              const d = new Date(Date.UTC(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3])));
+              if (Number.isNaN(d.getTime())) return null;
+              return d;
+            }
+            const dmy = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+            if (dmy) {
+              const d = new Date(Date.UTC(Number(dmy[3]), Number(dmy[2]) - 1, Number(dmy[1])));
+              if (Number.isNaN(d.getTime())) return null;
+              return d;
+            }
+            const parsed = new Date(str);
+            return Number.isNaN(parsed.getTime()) ? null : parsed;
+          };
+          const expiry = driver.license_expiry;
+          if (expiry) {
+            const expDate = parseDateSafe(expiry);
+            if (!expDate) throw new (require('../utils/AppError').ValidationError)({ message: 'Invalid driver license expiry date' });
+            const now = new Date();
+            const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+            const exp = new Date(Date.UTC(expDate.getUTCFullYear(), expDate.getUTCMonth(), expDate.getUTCDate()));
+            if (exp < today) throw new (require('../utils/AppError').ValidationError)({ message: 'Driver license has expired' });
+          }
+        }
+      } catch (e) {
+        if (e instanceof require('../utils/AppError').ValidationError) throw e;
+      }
+    }
 
     return true;
   }
@@ -509,6 +591,33 @@ class TripVehicleAssignmentService {
     await this._assertResourcesAvailable(trip, vehicleId, driverId);
 
     await this.prisma.$transaction(async (tx) => {
+      // Lock the target trip to prevent concurrent modifications
+      await tx.$queryRaw`SELECT trip_id FROM trips WHERE trip_id = ${trip.trip_id} FOR UPDATE`;
+
+      // Lock resource rows with consistent ordering to prevent deadlocks
+      const lockIds = [];
+      if (vehicleId) lockIds.push({ type: 'vehicle', id: vehicleId });
+      if (driverId) lockIds.push({ type: 'driver', id: driverId });
+      lockIds.sort((a,b) => {
+        if (a.type !== b.type) return a.type.localeCompare(b.type);
+        return a.id - b.id;
+      });
+      for (const lock of lockIds) {
+        if (lock.type === 'vehicle') {
+          await tx.$queryRaw`SELECT vehicle_id FROM transport_vehicles WHERE vehicle_id = ${lock.id} FOR UPDATE`;
+        } else if (lock.type === 'driver') {
+          await tx.$queryRaw`SELECT driver_id FROM drivers WHERE driver_id = ${lock.id} FOR UPDATE`;
+        }
+      }
+
+      // Lock any trips that currently use the target vehicle/driver to serialize conflicts
+      if (vehicleId) {
+        await tx.$queryRaw`SELECT trip_id FROM trips WHERE vehicle_id = ${vehicleId} AND trip_id != ${trip.trip_id} AND status IN ('PENDING','ASSIGNED','TO_LOADING_POINT','AT_LOADING_POINT','LOADED','DISPATCHED','IN_TRANSIT','DELIVERED') FOR UPDATE`;
+      }
+      if (driverId) {
+        await tx.$queryRaw`SELECT trip_id FROM trips WHERE driver_id = ${driverId} AND trip_id != ${trip.trip_id} AND status IN ('PENDING','ASSIGNED','TO_LOADING_POINT','AT_LOADING_POINT','LOADED','DISPATCHED','IN_TRANSIT','DELIVERED') FOR UPDATE`;
+      }
+
       // 1. THE canonical write — update the existing Trip row. Never insert a
       //    second assignment: `trips.trip_id` is the primary key, so a second
       //    "current assignment" row is not even representable.
@@ -634,7 +743,7 @@ class TripVehicleAssignmentService {
     // Mark new resources as busy if the trip is in active state
     const finalTrip = await this.prisma.trip.findUnique({ where: { trip_id: trip.trip_id } });
     const isActiveTrip = finalTrip && tripStateMachine.ACTIVE_TRIP_STATUSES.includes(finalTrip.status);
-    
+
     // Release old resources if they changed
     if (vehicleChanged && previousVehicleId) {
       await this.resourceAvailability.releaseVehicleIfNoActiveTrip(previousVehicleId, trip.trip_id);
@@ -642,7 +751,7 @@ class TripVehicleAssignmentService {
     if (driverChanged && previousDriverId) {
       await this.resourceAvailability.releaseDriverIfNoActiveTrip(previousDriverId, trip.trip_id);
     }
-    
+
     // Mark new resources as busy if trip is active
     if (isActiveTrip) {
       if (vehicleId) {

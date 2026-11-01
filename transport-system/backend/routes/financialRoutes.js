@@ -53,6 +53,8 @@ router.get('/overview', protect, adminOnly, async (req, res) => {
       ...summary,
       receivables: {
         totalFreight: summary.totalFreight,
+        totalBilled: summary.totalBilledAmount,
+        totalUnbilled: summary.totalUnbilledFreight,
         totalReceived: summary.totalReceived,
         totalOutstanding: summary.totalReceivable
       },
@@ -233,6 +235,27 @@ router.get('/settlements', protect, adminOnly, async (req, res) => {
     res.json({ success: true, data: { settlements: rows, summary, pagination: transactions.pagination } });
   } catch (error) {
     console.error('Get settlements error:', error);
+    res.status(error.statusCode || 500).json({ success: false, message: error.message || 'Server error' });
+  }
+});
+
+/**
+ * GET /api/admin/financials/transactions
+ * All financial transactions
+ */
+router.get('/transactions', protect, adminOnly, async (req, res) => {
+  try {
+    const transactions = await canonicalFinancialService.getTransactions(req.query || {});
+    const rows = Array.isArray(transactions) ? transactions : (transactions.rows || []);
+    
+    res.json({ 
+      success: true, 
+      data: rows,
+      rows: rows,
+      pagination: transactions.pagination 
+    });
+  } catch (error) {
+    console.error('Get transactions error:', error);
     res.status(error.statusCode || 500).json({ success: false, message: error.message || 'Server error' });
   }
 });

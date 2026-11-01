@@ -225,6 +225,12 @@ export function describeProcessState({ processKey, tripStatus, stages = [] }) {
   const current = TRIP_PROCESSES.find((p) => locateStage(stages, p.key)?.state === STAGE_STATE.CURRENT);
   const waitingFor = current && current.key !== key ? current.label : null;
 
+  // POD-specific: if the trip is IN_TRANSIT or beyond, POD is actionable —
+  // do not show "Waiting for Transit" when the truck is already on the road.
+  if (key === 'pod' && ['IN_TRANSIT', 'AT_LOADING_POINT', 'LOADED', 'DISPATCHED', 'DELIVERED', 'COMPLETED'].some((s) => String(tripStatus).toUpperCase() === s)) {
+    return { started: false, headline: 'POD NOT STARTED', waitingFor: null };
+  }
+
   return {
     started: false,
     headline: `${label.toUpperCase()} NOT STARTED`,

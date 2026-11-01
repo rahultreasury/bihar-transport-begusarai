@@ -41,6 +41,7 @@
  */
 
 const { prisma: defaultPrisma } = require('../config/prisma');
+const money = require('./finance/money');
 const { ValidationError, NotFoundError, ConflictError } = require('../utils/AppError');
 const TripTimelineRepository = require('../repositories/TripTimelineRepository');
 const AuditLogRepository = require('../repositories/AuditLogRepository');
@@ -140,17 +141,15 @@ class TripInvoiceService {
       select: { amount: true },
     });
 
-    const received = Math.round(
-      receipts.reduce((sum, r) => sum + Number(r.amount || 0), 0) * 100,
-    ) / 100;
-    const total = Number(invoice.grand_total ?? invoice.total_amount ?? invoice.final_price ?? 0);
+    const receivedPaise = receipts.reduce((sum, r) => sum + money.toPaise(r.amount || 0), 0);
+    const totalPaise = money.toPaise(invoice.grand_total ?? invoice.total_amount ?? invoice.final_price ?? 0);
     // An OVER-payment is a fully settled invoice with a change due — never a
     // negative "balance owed" advertised to an operator.
-    const balance = Math.max(0, Math.round((total - received) * 100) / 100);
+    const balancePaise = Math.max(0, totalPaise - receivedPaise);
 
-    const paymentStatus = balance <= 0 && total > 0
+    const paymentStatus = balancePaise <= 0 && totalPaise > 0
       ? 'PAID'
-      : received > 0 ? 'PARTIALLY_PAID' : 'UNPAID';
+      : receivedPaise > 0 ? 'PARTIALLY_PAID' : 'UNPAID';
 
     // THE ENUM MAPPING THE SCHEMA DECLARES:
     //   PAID           → 'PAID'            (+ paid_at stamped once)
@@ -179,6 +178,10 @@ class TripInvoiceService {
     const updated = Object.keys(data).length
       ? await db.invoice.update({ where: { invoice_id: invoiceId }, data })
       : invoice;
+
+    const received = money.fromPaise(receivedPaise);
+    const total = money.fromPaise(totalPaise);
+    const balance = money.fromPaise(balancePaise);
 
     return {
       invoice: updated,
@@ -253,15 +256,15 @@ class TripInvoiceService {
       orderBy: [{ transaction_date: 'desc' }],
     });
 
-    const received = payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
-    const total = Number(invoice.grand_total ?? invoice.total_amount ?? invoice.final_price ?? 0);
-    const balance = Math.round((total - received) * 100) / 100;
+    const receivedPaise = payments.reduce((sum, p) => sum + money.toPaise(p.amount || 0), 0);
+    const totalPaise = money.toPaise(invoice.grand_total ?? invoice.total_amount ?? invoice.final_price ?? 0);
+    const balancePaise = totalPaise - receivedPaise;
 
     return {
-      total,
-      received: Math.round(received * 100) / 100,
-      balance,
-      status: balance <= 0 ? 'PAID' : received > 0 ? 'PARTIALLY_PAID' : 'UNPAID',
+      total: money.fromPaise(totalPaise),
+      received: money.fromPaise(receivedPaise),
+      balance: money.fromPaise(balancePaise),
+      status: balancePaise <= 0 ? 'PAID' : receivedPaise > 0 ? 'PARTIALLY_PAID' : 'UNPAID',
       payments: payments.map((p) => ({
         transaction_id: p.transaction_id,
         amount: p.amount,
@@ -479,8 +482,13 @@ class TripInvoiceService {
     const id = Number(tripId);
     if (!Number.isInteger(id) || id <= 0) throw new NotFoundError({ message: 'Trip not found' });
 
-    const amount = Number(input.amount);
-    if (!Number.isFinite(amount) || amount <= 0) {
+    let amount;
+    try {
+      amount = money.fromPaise(money.toPaiseStrict(input.amount));
+    } catch (e) {
+      throw new ValidationError(`A customer payment needs an amount greater than zero (received "${input.amount}")`);
+    }
+    if (amount <= 0) {
       throw new ValidationError(`A customer payment needs an amount greater than zero (received "${input.amount}")`);
     }
 
@@ -655,13 +663,13 @@ class TripInvoiceService {
       return {
         kind: 'QUOTATION_SNAPSHOT',
         quotation_id: snapshot.quotation_id,
-        freight: Number(snapshot.total_freight ?? trip.freight_amount ?? 0),
-        additional_charges: Number(snapshot.total_additional_charges ?? 0),
-        additional_charges_tax: Number(snapshot.additional_charges_tax ?? 0),
+        freight: money.fromPaise(money.toPaise(snapshot.total_freight ?? trip.freight_amount ?? 0)),
+        additional_charges: money.fromPaise(money.toPaise(snapshot.total_additional_charges ?? 0)),
+        additional_charges_tax: money.fromPaise(money.toPaise(snapshot.additional_charges_tax ?? 0)),
         gst_type: snapshot.gst_type ?? null,
         gst_percentage: snapshot.gst_percentage ?? null,
         gst_amount: snapshot.gst_amount ?? null,
-        total_billing_amount: Number(snapshot.total_billing_amount ?? 0),
+        total_billing_amount: money.fromPaise(money.toPaise(snapshot.total_billing_amount ?? 0)),
         // There is no CGST/SGST/IGST split on a Quotation or its snapshot, so
         // none is produced. See the note in the file header.
         gst_split: null,
@@ -671,13 +679,13 @@ class TripInvoiceService {
     return {
       kind: 'TRIP_FREIGHT',
       quotation_id: null,
-      freight: Number(trip.freight_amount ?? 0),
+      freight: money.fromPaise(money.toPaise(trip.freight_amount ?? 0)),
       additional_charges: 0,
       additional_charges_tax: 0,
       gst_type: null,
       gst_percentage: null,
       gst_amount: null,
-      total_billing_amount: Number(trip.freight_amount ?? 0),
+      total_billing_amount: money.fromPaise(money.toPaise(trip.freight_amount ?? 0)),
       gst_split: null,
     };
   }
@@ -695,27 +703,33 @@ class TripInvoiceService {
    * @private
    */
   _computeTotals(source, overrides = {}) {
-    const freight = overrides.freight !== undefined
-      ? Number(overrides.freight)
-      : Number(source.freight || 0);
-    const additionalCharges = overrides.additional_charges !== undefined
-      ? Number(overrides.additional_charges)
-      : Number(source.additional_charges || 0);
+    let freight;
+    let additionalCharges;
+    try {
+      freight = overrides.freight !== undefined
+        ? money.fromPaise(money.toPaiseStrict(overrides.freight))
+        : money.fromPaise(money.toPaise(source.freight || 0));
+      additionalCharges = overrides.additional_charges !== undefined
+        ? money.fromPaise(money.toPaiseStrict(overrides.additional_charges))
+        : money.fromPaise(money.toPaise(source.additional_charges || 0));
+    } catch (e) {
+      throw new ValidationError(`Invalid amount "${overrides.freight ?? overrides.additional_charges}"`);
+    }
 
     for (const [label, value] of [['freight', freight], ['additional_charges', additionalCharges]]) {
-      if (!Number.isFinite(value) || value < 0) {
+      if (value < 0) {
         throw new ValidationError(`Invalid ${label} amount "${overrides[label]}"`);
       }
     }
 
-    const taxable = Math.round((freight + additionalCharges) * 100) / 100;
+    const taxable = money.add(freight, additionalCharges);
     const gstAmount = source.gst_amount === null || source.gst_amount === undefined
       ? null
-      : Number(source.gst_amount);
+      : money.fromPaise(money.toPaise(source.gst_amount));
 
     return {
-      freight: Math.round(freight * 100) / 100,
-      additional_charges: Math.round(additionalCharges * 100) / 100,
+      freight,
+      additional_charges: additionalCharges,
       taxable_amount: taxable,
       tax_total: gstAmount,
       grand_total: taxable,
@@ -785,7 +799,7 @@ class TripInvoiceService {
         // services. Creating the row here with the trip's own freight keeps
         // the ledger's own invariant (customer_fare is NOT NULL) satisfied
         // without inventing a second revenue figure.
-        customer_fare: Number(trip.freight_amount ?? 0),
+        customer_fare: money.fromPaise(money.toPaise(trip.freight_amount ?? 0)),
         created_at: new Date(),
         updated_at: new Date(),
       },

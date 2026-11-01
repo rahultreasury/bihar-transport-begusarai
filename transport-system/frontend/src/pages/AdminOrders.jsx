@@ -41,6 +41,7 @@ import { adminAPI } from '../services/api';
 import AdminShell from '../components/admin-premium/layout/AdminShell';
 import { DEFAULT_NAV_ITEMS } from '../components/admin-premium/layout/AdminSidebar';
 import PremiumKpiCard from '../components/admin-premium/booking/PremiumKpiCard';
+import TotalOrdersKpiCard from '../components/admin-premium/orders/TotalOrdersKpiCard';
 import { resolveOrder, ORDER_STAGE_FILTERS, summariseOrders } from '../utils/orderStatus';
 import { customerName, formatDate, inr, inrCompact, na } from '../utils/orderFormat';
 
@@ -498,13 +499,8 @@ export default function AdminOrders() {
           {/* ── KPI CARDS ──────────────────────────────────────────────────
               Four across on large desktop, two on tablet, one on phones. */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4 xl:[grid-auto-rows:152px]">
-            <PremiumKpiCard
-              compact
-              label="Total Orders"
-              subtitle="All shipment orders"
+            <TotalOrdersKpiCard
               value={summary.total}
-              icon={ClipboardList}
-              tone="blue"
               onClick={() => navigate('/admin/bookings/overview')}
               ariaLabel="View all orders"
             />

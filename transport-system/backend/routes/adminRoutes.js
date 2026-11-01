@@ -2801,6 +2801,438 @@ router.post('/bookings/:id/assign-vehicle', protect, async (req, res) => {
   }
 });
 
+
+// @route   GET /api/admin/global-search
+// @desc    Centralized global search across admin modules
+// @access  Private (Admin)
+router.get('/global-search', protect, adminOnly, async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (!q) {
+      return res.status(400).json({ success: false, message: 'Search query is required' });
+    }
+    if (q.length > 100) {
+      return res.status(400).json({ success: false, message: 'Search query is too long' });
+    }
+
+    const page = parsePositiveInt(req.query.page, 1) || 1;
+    const limit = Math.min(parsePositiveInt(req.query.limit, 10) || 10, 25);
+    const skip = (page - 1) * limit;
+    const term = q;
+    const numeric = /^\d+(\.\d+)?$/.test(term) ? Number(term) : null;
+    const ci = (value) => ({ contains: value, mode: 'insensitive' });
+
+    const driverWhere = {
+      OR: [
+        { driver_name: ci(term) },
+        { mobile: ci(term) },
+        { alternate_mobile: ci(term) },
+        { driver_code: ci(term) },
+        { city: ci(term) },
+        { license_number: ci(term) },
+        ...(numeric !== null && numeric <= 2147483647 ? [{ driver_id: numeric }] : []),
+      ],
+    };
+
+    const vehicleOwnerWhere = {
+      OR: [
+        { owner_name: ci(term) },
+        { company_name: ci(term) },
+        { mobile: ci(term) },
+        { alternate_mobile: ci(term) },
+        { owner_code: ci(term) },
+        { city: ci(term) },
+        { email: ci(term) },
+        { gst_number: ci(term) },
+        { pan_number: ci(term) },
+        ...(numeric !== null && numeric <= 2147483647 ? [{ owner_id: numeric }] : []),
+      ],
+    };
+
+    const vehicleWhere = {
+      OR: [
+        { vehicle_number: ci(term) },
+        { vehicle_type: ci(term) },
+        { vehicle_name: ci(term) },
+        { vehicle_make: ci(term) },
+        { vehicle_model: ci(term) },
+        { vehicle_code: ci(term) },
+        { base_location: ci(term) },
+        { driver: { driver_name: ci(term) } },
+        { owner: { owner_name: ci(term) } },
+        ...(numeric !== null && numeric <= 2147483647 ? [{ vehicle_id: numeric }] : []),
+      ],
+    };
+
+    const clientWhere = {
+      OR: [
+        { company_name: ci(term) },
+        { contact_person: ci(term) },
+        { phone: ci(term) },
+        { email: ci(term) },
+        { city: ci(term) },
+        { client_code: ci(term) },
+        { gst_number: ci(term) },
+        ...(numeric !== null && numeric <= 2147483647 ? [{ client_id: numeric }] : []),
+      ],
+    };
+
+    const userWhere = {
+      role: 'customer',
+      OR: [
+        { first_name: ci(term) },
+        { last_name: ci(term) },
+        { email: ci(term) },
+        { phone: ci(term) },
+        { city: ci(term) },
+        ...(numeric !== null && numeric <= 2147483647 ? [{ user_id: numeric }] : []),
+      ],
+    };
+
+    const bookingWhere = {
+      OR: [
+        { booking_number: ci(term) },
+        { booking_reference: ci(term) },
+        { pickup_city: ci(term) },
+        { drop_city: ci(term) },
+        { pickup_location: ci(term) },
+        { drop_location: ci(term) },
+        { goods_description: ci(term) },
+        { status: ci(term) },
+        { mobile_snapshot: ci(term) },
+        { driver_name_snapshot: ci(term) },
+        { truck_number_snapshot: ci(term) },
+        { partner_name_snapshot: ci(term) },
+        { user: { OR: [{ first_name: ci(term) }, { last_name: ci(term) }, { phone: ci(term) }] } },
+        { vehicle: { vehicle_number: ci(term) } },
+        ...(numeric !== null && numeric <= 2147483647 ? [{ booking_id: numeric }] : []),
+      ],
+    };
+
+    const enquiryWhere = {
+      OR: [
+        { enquiry_number: ci(term) },
+        { customer_name: ci(term) },
+        { customer_mobile: ci(term) },
+        { customer_email: ci(term) },
+        { pickup_location: ci(term) },
+        { drop_location: ci(term) },
+        { assigned_driver_name: ci(term) },
+        { assigned_vehicle_number: ci(term) },
+        ...(numeric !== null && numeric <= 2147483647 ? [{ enquiry_id: numeric }] : []),
+      ],
+    };
+
+    const partnerWhere = {
+      OR: [
+        { partner_name: ci(term) },
+        { owner_name: ci(term) },
+        { company_name: ci(term) },
+        { mobile: ci(term) },
+        { alternate_mobile: ci(term) },
+        { partner_code: ci(term) },
+        { city: ci(term) },
+        { email: ci(term) },
+        { gst_number: ci(term) },
+        ...(numeric !== null && numeric <= 2147483647 ? [{ partner_id: numeric }] : []),
+      ],
+    };
+
+    const tripWhere = {
+      OR: [
+        { trip_number: ci(term) },
+        { pickup_city: ci(term) },
+        { drop_city: ci(term) },
+        { pickup_location: ci(term) },
+        { drop_location: ci(term) },
+        { driver: { driver_name: ci(term) } },
+        { vehicle: { vehicle_number: ci(term) } },
+        ...(numeric !== null && numeric <= 2147483647 ? [{ trip_id: numeric }] : []),
+      ],
+    };
+
+    const financialWhere = {
+      OR: [
+        { reference_number: ci(term) },
+        { notes: ci(term) },
+        { purpose: ci(term) },
+        { payment_method: ci(term) },
+        ...(numeric !== null && numeric <= 2147483647 ? [{ transaction_id: numeric }] : []),
+        ...(numeric !== null ? [{ amount: numeric }] : []),
+      ],
+    };
+
+    const invoiceWhere = {
+      OR: [
+        { invoice_number: ci(term) },
+        { billing_to: ci(term) },
+        { gst_number: ci(term) },
+        { payment_status: ci(term) },
+        ...(numeric !== null && numeric <= 2147483647 ? [{ invoice_id: numeric }] : []),
+        ...(numeric !== null ? [{ grand_total: numeric }, { total_amount: numeric }] : []),
+      ],
+    };
+
+    const settlementWhere = {
+      OR: [
+        { settlement_number: ci(term) },
+        { notes: ci(term) },
+        ...(numeric !== null && numeric <= 2147483647 ? [{ settlement_id: numeric }] : []),
+        ...(numeric !== null ? [{ net_payable: numeric }] : []),
+      ],
+    };
+
+    const expenseWhere = {
+      OR: [
+        { description: ci(term) },
+        { reference_number: ci(term) },
+        ...(numeric !== null && numeric <= 2147483647 ? [{ expense_id: numeric }] : []),
+        ...(numeric !== null ? [{ amount: numeric }] : []),
+      ],
+    };
+
+    const adminWhere = {
+      OR: [
+        { username: ci(term) },
+        { full_name: ci(term) },
+        { email: ci(term) },
+        { phone: ci(term) },
+        { role: ci(term) },
+        ...(numeric !== null && numeric <= 2147483647 ? [{ admin_id: numeric }] : []),
+      ],
+    };
+
+    const run = async (model, where, orderBy, select, include) => {
+      const [count, rows] = await Promise.all([
+        prisma[model].count({ where }),
+        prisma[model].findMany({
+          where,
+          orderBy,
+          skip,
+          take: limit,
+          ...(include ? { include } : (select ? { select } : {})),
+        }),
+      ]);
+      return { count, rows };
+    };
+
+    const [
+      drivers, vehicleOwners, vehicles, clients, customers, bookings, enquiries, partners, trips,
+      financials, invoices, settlements, expenses, admins,
+    ] = await Promise.all([
+      run('driver', driverWhere, { driver_id: 'desc' }, {
+        driver_id: true, driver_name: true, mobile: true, driver_code: true, city: true, status: true, is_available: true,
+      }, null),
+      run('vehicleOwner', vehicleOwnerWhere, { owner_id: 'desc' }, {
+        owner_id: true, owner_name: true, company_name: true, mobile: true, owner_code: true, city: true, status: true, owner_type: true,
+      }, null),
+      run('transportVehicle', vehicleWhere, { vehicle_id: 'desc' }, {
+        vehicle_id: true, vehicle_number: true, vehicle_type: true, vehicle_name: true, current_status: true, is_available: true, owner_id: true,
+      }, { driver: { select: { driver_name: true, mobile: true } }, owner: { select: { owner_name: true } } }),
+      run('client', clientWhere, { client_id: 'desc' }, {
+        client_id: true, company_name: true, contact_person: true, phone: true, email: true, city: true, client_code: true, status: true,
+      }, null),
+      run('user', userWhere, { user_id: 'desc' }, {
+        user_id: true, first_name: true, last_name: true, phone: true, email: true, city: true,
+      }, null),
+      run('booking', bookingWhere, { booking_id: 'desc' }, {
+        booking_id: true, booking_number: true, booking_reference: true, pickup_city: true, drop_city: true, status: true, final_price: true, created_at: true,
+      }, { user: { select: { first_name: true, last_name: true, phone: true } }, vehicle: { select: { vehicle_number: true } }, driver: { select: { driver_name: true } } }),
+      run('enquiry', enquiryWhere, { enquiry_id: 'desc' }, {
+        enquiry_id: true, enquiry_number: true, customer_name: true, customer_mobile: true, pickup_location: true, drop_location: true, status: true, price_status: true, final_quoted_price: true,
+      }, null),
+      run('partner', partnerWhere, { partner_id: 'desc' }, {
+        partner_id: true, partner_name: true, owner_name: true, mobile: true, partner_code: true, city: true, status: true, company_name: true,
+      }, null),
+      run('trip', tripWhere, { trip_id: 'desc' }, {
+        trip_id: true, trip_number: true, pickup_city: true, drop_city: true, status: true, freight_amount: true, trip_date: true, booking_id: true,
+      }, { driver: { select: { driver_name: true } }, vehicle: { select: { vehicle_number: true } } }),
+      run('financialTransaction', financialWhere, { transaction_id: 'desc' }, {
+        transaction_id: true, amount: true, status: true, payment_method: true, reference_number: true, purpose: true, booking_id: true, trip_id: true, invoice_id: true, created_at: true,
+      }, { booking: { select: { booking_number: true } }, invoices: { select: { invoice_number: true } }, trip: { select: { trip_number: true } } }),
+      run('invoice', invoiceWhere, { invoice_id: 'desc' }, {
+        invoice_id: true, invoice_number: true, status: true, payment_status: true, grand_total: true, total_amount: true, booking_id: true, trip_id: true,
+      }, { booking: { select: { booking_number: true } }, trips: { select: { trip_number: true, trip_id: true } } }),
+      run('settlement', settlementWhere, { settlement_id: 'desc' }, {
+        settlement_id: true, settlement_number: true, status: true, net_payable: true, partner_id: true, created_at: true,
+      }, null),
+      run('tripExpense', expenseWhere, { expense_id: 'desc' }, {
+        expense_id: true, expense_type: true, amount: true, description: true, trip_id: true, created_at: true,
+      }, { trip: { select: { trip_number: true, trip_id: true } } }),
+      run('admin', adminWhere, { admin_id: 'desc' }, {
+        admin_id: true, full_name: true, username: true, email: true, role: true,
+      }, null),
+    ]);
+
+    const categories = [];
+
+    const pushCategory = (module, group, label, count, rows, mapFn) => {
+      if (!count) return;
+      categories.push({
+        module,
+        group,
+        label,
+        count,
+        results: rows.map(mapFn),
+      });
+    };
+
+    pushCategory('drivers', 'People', 'Drivers', drivers.count, drivers.rows, (r) => ({
+      id: r.driver_id,
+      type: 'driver',
+      title: r.driver_name,
+      subtitle: [r.mobile, r.city].filter(Boolean).join(' · '),
+      badge: r.status || (r.is_available ? 'available' : 'unavailable'),
+      meta: r.driver_code ? `ID: ${r.driver_code}` : `ID: ${r.driver_id}`,
+      route: `/admin/drivers/${r.driver_id}`,
+    }));
+
+    pushCategory('vehicle_owners', 'People', 'Vehicle Owners', vehicleOwners.count, vehicleOwners.rows, (r) => ({
+      id: r.owner_id,
+      type: 'vehicle_owner',
+      title: r.owner_name,
+      subtitle: [r.mobile, r.city, r.company_name].filter(Boolean).join(' · '),
+      badge: r.status || 'active',
+      meta: r.owner_code ? `ID: ${r.owner_code}` : `ID: ${r.owner_id}`,
+      route: `/admin/vehicle-owners/${r.owner_id}`,
+    }));
+
+    pushCategory('vehicles', 'Fleet', 'Vehicles', vehicles.count, vehicles.rows, (r) => ({
+      id: r.vehicle_id,
+      type: 'vehicle',
+      title: r.vehicle_number,
+      subtitle: [r.vehicle_type, r.owner?.owner_name, r.driver?.driver_name].filter(Boolean).join(' · '),
+      badge: r.current_status || (r.is_available ? 'available' : 'unavailable'),
+      meta: r.vehicle_name || `ID: ${r.vehicle_id}`,
+      route: `/admin/vehicles/${r.vehicle_id}`,
+    }));
+
+    pushCategory('clients', 'People', 'Clients', clients.count, clients.rows, (r) => ({
+      id: r.client_id,
+      type: 'client',
+      title: r.company_name,
+      subtitle: [r.contact_person, r.phone, r.city].filter(Boolean).join(' · '),
+      badge: r.status || 'active',
+      meta: r.client_code ? `ID: ${r.client_code}` : `ID: ${r.client_id}`,
+      route: `/admin/clients/${r.client_id}`,
+    }));
+
+    pushCategory('customers', 'People', 'Customers', customers.count, customers.rows, (r) => ({
+      id: r.user_id,
+      type: 'customer',
+      title: `${r.first_name} ${r.last_name}`.trim(),
+      subtitle: [r.phone, r.email, r.city].filter(Boolean).join(' · '),
+      badge: 'customer',
+      meta: `ID: ${r.user_id}`,
+      route: `/admin/bookings?search=${encodeURIComponent(r.phone || r.first_name || '')}`,
+    }));
+
+    pushCategory('bookings', 'Operations', 'Bookings', bookings.count, bookings.rows, (r) => ({
+      id: r.booking_id,
+      type: 'booking',
+      title: r.booking_number || r.booking_reference || `Booking #${r.booking_id}`,
+      subtitle: [r.user ? `${r.user.first_name || ''} ${r.user.last_name || ''}`.trim() : null, `${r.pickup_city} → ${r.drop_city}`, r.vehicle?.vehicle_number].filter(Boolean).join(' · '),
+      badge: r.status || 'pending',
+      meta: r.booking_reference ? `Ref: ${r.booking_reference}` : `ID: ${r.booking_id}`,
+      route: `/admin/bookings/${encodeURIComponent(r.booking_number || r.booking_reference || r.booking_id)}`,
+    }));
+
+    pushCategory('enquiries', 'Operations', 'Enquiries', enquiries.count, enquiries.rows, (r) => ({
+      id: r.enquiry_id,
+      type: 'enquiry',
+      title: r.enquiry_number || `Enquiry #${r.enquiry_id}`,
+      subtitle: [r.customer_name, r.customer_mobile, `${r.pickup_location} → ${r.drop_location}`].filter(Boolean).join(' · '),
+      badge: r.status || 'pending',
+      meta: r.price_status ? `Price: ${r.price_status}` : `ID: ${r.enquiry_id}`,
+      route: `/admin/enquiries/${r.enquiry_id}`,
+    }));
+
+    pushCategory('partners', 'People', 'Transport Owners / Partners', partners.count, partners.rows, (r) => ({
+      id: r.partner_id,
+      type: 'partner',
+      title: r.partner_name || r.owner_name || r.company_name,
+      subtitle: [r.mobile, r.city, r.company_name].filter(Boolean).join(' · '),
+      badge: r.status || 'active',
+      meta: r.partner_code ? `ID: ${r.partner_code}` : `ID: ${r.partner_id}`,
+      route: `/admin/owners/${r.partner_id}`,
+    }));
+
+    pushCategory('trips', 'Operations', 'Trips', trips.count, trips.rows, (r) => ({
+      id: r.trip_id,
+      type: 'trip',
+      title: r.trip_number || `Trip #${r.trip_id}`,
+      subtitle: [r.driver?.driver_name, r.vehicle?.vehicle_number, `${r.pickup_city} → ${r.drop_city}`].filter(Boolean).join(' · '),
+      badge: r.status || 'pending',
+      meta: r.freight_amount != null ? `Freight: ${r.freight_amount}` : `ID: ${r.trip_id}`,
+      route: `/admin/trips/${r.trip_id}`,
+    }));
+
+    pushCategory('financial_transactions', 'Financials', 'Financial Transactions', financials.count, financials.rows, (r) => ({
+      id: r.transaction_id,
+      type: 'financial_transaction',
+      title: `Transaction #${r.transaction_id}`,
+      subtitle: [r.booking?.booking_number, r.invoices?.invoice_number, r.trip?.trip_number].filter(Boolean).join(' · '),
+      badge: r.status || 'paid',
+      meta: r.amount != null ? `Amount: ${r.amount}` : `ID: ${r.transaction_id}`,
+      route: r.trip_id ? `/admin/trips/${r.trip_id}/finance` : '/admin/financials/payments',
+    }));
+
+    pushCategory('invoices', 'Financials', 'Invoices', invoices.count, invoices.rows, (r) => ({
+      id: r.invoice_id,
+      type: 'invoice',
+      title: r.invoice_number || `Invoice #${r.invoice_id}`,
+      subtitle: [r.booking?.booking_number, r.trips?.trip_number].filter(Boolean).join(' · '),
+      badge: r.payment_status || r.status || 'unpaid',
+      meta: r.grand_total != null ? `Amount: ${r.grand_total}` : `ID: ${r.invoice_id}`,
+      route: (r.trips?.trip_id || r.trip_id) ? `/admin/trips/${r.trips?.trip_id || r.trip_id}/finance` : '/admin/financials/payments',
+    }));
+
+    pushCategory('settlements', 'Financials', 'Settlements', settlements.count, settlements.rows, (r) => ({
+      id: r.settlement_id,
+      type: 'settlement',
+      title: r.settlement_number || `Settlement #${r.settlement_id}`,
+      subtitle: r.net_payable != null ? `Net payable: ${r.net_payable}` : '',
+      badge: r.status || 'pending',
+      meta: `ID: ${r.settlement_id}`,
+      route: '/admin/settlements',
+    }));
+
+    pushCategory('expenses', 'Financials', 'Expenses', expenses.count, expenses.rows, (r) => ({
+      id: r.expense_id,
+      type: 'expense',
+      title: r.description || r.expense_type || `Expense #${r.expense_id}`,
+      subtitle: [r.trip?.trip_number, r.amount != null ? `Amount: ${r.amount}` : null].filter(Boolean).join(' · '),
+      badge: 'expense',
+      meta: `ID: ${r.expense_id}`,
+      route: r.trip?.trip_id ? `/admin/trips/${r.trip.trip_id}` : '/admin/financials/advances',
+    }));
+
+    pushCategory('admins', 'Other', 'Admin Users', admins.count, admins.rows, (r) => ({
+      id: r.admin_id,
+      type: 'admin',
+      title: r.full_name || r.username,
+      subtitle: [r.email, r.role].filter(Boolean).join(' · '),
+      badge: r.role || 'admin',
+      meta: `ID: ${r.admin_id}`,
+      route: '/admin',
+    }));
+
+    const totalResults = categories.reduce((sum, c) => sum + (c.count || 0), 0);
+
+    return res.json({
+      success: true,
+      query: term,
+      page,
+      limit,
+      totalResults,
+      categories,
+    });
+  } catch (err) {
+    console.error('Global search error:', err);
+    return res.status(500).json({ success: false, message: 'Global search failed' });
+  }
+});
+
 module.exports = router;
 
 

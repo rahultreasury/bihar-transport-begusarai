@@ -579,6 +579,54 @@ export const financialAPI = {
     api.get(`/admin/financials/driver-ledger/${encodeURIComponent(driverId)}`, { params }),
 };
 
+// Database-backed Finance module.
+//
+// Every endpoint below is served by FinanceReportingService (read) or
+// FinancePostingService (write); the browser never calculates a rupee. The
+// dashboard tabs, their KPI tiles and their detail tables all call these, so a
+// figure and the list that justifies it cannot disagree.
+export const financeAPI = {
+  getOverview: (params) => api.get('/admin/finance/overview', { params }),
+  getBranches: () => api.get('/admin/finance/branches'),
+  getShipmentSummary: (params) => api.get('/admin/finance/shipment-summary', { params }),
+  getLookups: () => api.get('/admin/finance/lookups'),
+
+  getReceivables: (params) => api.get('/admin/finance/receivables', { params }),
+  getClientDue: (params) => api.get('/admin/finance/client-due', { params }),
+
+  getPayables: (params) => api.get('/admin/finance/payables', { params }),
+  getVendorLedger: (vendorId, params) =>
+    api.get(`/admin/finance/vendor-ledger/${encodeURIComponent(vendorId)}`, { params }),
+
+  getPaymentsReceived: (params) => api.get('/admin/finance/payments-received', { params }),
+  getAdvances: (params) => api.get('/admin/finance/advances', { params }),
+  getCommission: (params) => api.get('/admin/finance/commission', { params }),
+  getSettlements: (params) => api.get('/admin/finance/settlements', { params }),
+
+  getPetrolPumps: (params) => api.get('/admin/finance/petrol-pumps', { params }),
+  getPumpLedger: (pumpId, params) =>
+    api.get(`/admin/finance/petrol-pumps/${encodeURIComponent(pumpId)}/ledger`, { params }),
+
+  getTransactions: (params) => api.get('/admin/finance/transactions', { params }),
+  getTransactionDetail: (id, kind) => api.get(`/admin/finance/transactions/${id}`, { params: { kind } }),
+  getOpeningBalances: (params) => api.get('/admin/finance/opening-balances', { params }),
+  exportSection: (section, params) => api.get(`/admin/finance/export/${section}`, { params }),
+
+  /* Posting */
+  postReceipt: (data) => api.post('/admin/finance/receipts', data),
+  postVendorPayment: (data) => api.post('/admin/finance/vendor-payments', data),
+  postCommissionReceipt: (data) => api.post('/admin/finance/commission-receipts', data),
+  postAdvance: (data) => api.post('/admin/finance/advances', data),
+  adjustAdvance: (advanceId, data) => api.post(`/admin/finance/advances/${advanceId}/adjust`, data),
+  postSettlement: (data) => api.post('/admin/finance/settlements', data),
+  createPump: (data) => api.post('/admin/finance/petrol-pumps', data),
+  postFuel: (data) => api.post('/admin/finance/petrol-pumps/fuel', data),
+  createPumpBill: (data) => api.post('/admin/finance/petrol-pumps/bills', data),
+  payPump: (data) => api.post('/admin/finance/petrol-pumps/payments', data),
+  setOpeningBalance: (data) => api.post('/admin/finance/opening-balances', data),
+  reverseTransaction: (id, data) => api.post(`/admin/finance/transactions/${id}/reverse`, data),
+};
+
 // Client APIs (with financial summary)
 export const clientAPI = {
   getAll: (params) => api.get('/admin/clients', { params }),
@@ -597,10 +645,24 @@ export const tripFinancialAPI = {
   getTripFinancials: (tripId) => api.get(`/trips/${tripId}/financials`),
   getTripTransactions: (tripId) => api.get(`/trips/${tripId}/transactions`),
   recordClientPayment: (tripId, payload) => api.post(`/trips/${tripId}/payments/client`, payload),
+  recordVendorTransaction: (tripId, payload) => api.post(`/trips/${tripId}/payments/vendor`, payload),
   recordTransaction: (tripId, payload) => api.post(`/trips/${tripId}/transactions`, payload),
   reverseTransaction: (tripId, transactionId) =>
     api.post(`/trips/${tripId}/transactions/${transactionId}/reverse`),
+  getReceipt: (tripId, transactionId) =>
+    api.get(`/trips/${tripId}/payments/${transactionId}/RECEIPT.pdf`, {
+      responseType: 'blob',
+    }),
+  getVoucher: (tripId, transactionId) =>
+    api.get(`/trips/${tripId}/payments/${transactionId}/VOUCHER.pdf`, {
+      responseType: 'blob',
+    }),
 };
 
 export default api;
 
+
+export const globalSearchAPI = {
+  search: (query, config = {}) =>
+    api.get('/admin/global-search', { params: { q: query, page: 1, limit: 10 }, ...config }),
+};

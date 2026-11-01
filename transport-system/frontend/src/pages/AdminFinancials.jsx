@@ -1,49 +1,32 @@
-/**
- * AdminFinancials.jsx
- * ---------------------------------------------------------------------------
- * THE FINANCIAL CONTROL CENTER — every figure is a way in.
- *
- * WHAT CHANGED AND WHY IT IS NOT A COSMETIC CHANGE
- *   The dashboard previously rendered eleven rupee figures and nothing else, so
- *   the two questions an operator actually opens this page to answer —
- *
- *       "WHO DO I HAVE TO COLLECT FROM?"
- *       "WHO DO I HAVE TO PAY?"
- *
- *   — could not be answered from it at all. Each card now navigates to the
- *   section that justifies it, each row opens the party behind it, and each
- *   party opens the trips and payments behind them.
- *
- * EVERY FIGURE HAS A URL
- *   /admin/financials/:section — so a card navigates, the back button works,
- *   and a view can be linked to. The dashboard is section "overview".
- *
- * NO MONEY IS COMPUTED HERE
- *   Every number is read from `financialAPI`, which is served by the single
- *   backend aggregation service. The browser sums nothing: a card's figure and
- *   the detail page it opens are the same aggregation, so they cannot disagree.
- *
- * DRILL-DOWN PATH
- *   Card → party → trip → transaction history, and back out again at every step.
- */
-
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import {
-  ArrowRight,
-  ArrowUpRight,
-  ChevronLeft,
-  ChevronRight,
-  Search,
-  X,
+  LayoutDashboard,
+  Receipt,
+  Clock,
+  Truck,
+  Banknote,
+  Layers,
+  Percent,
+  Handshake,
+  Fuel,
 } from 'lucide-react';
 
-import { financialAPI } from '../services/api';
 import AdminShell from '../components/admin-premium/layout/AdminShell';
-import { LoadingSkeleton } from '../components/admin-premium/ui/LoadingSkeleton';
-import PremiumTable from '../components/admin-premium/ui/PremiumTable';
-import KpiCard from '../components/admin-premium/ui/KpiCard';
-import ClientLedgerModal from '../components/admin-premium/financials/ClientLedgerModal';
+import FinanceFilters, { presetRange } from '../components/admin-premium/financials/FinanceFilters';
+import OverviewTab from '../components/admin-premium/financials/OverviewTab';
+import ReceivablesTab from '../components/admin-premium/financials/ReceivablesTab';
+import PayablesTab from '../components/admin-premium/financials/PayablesTab';
+import PaymentsTab from '../components/admin-premium/financials/PaymentsTab';
+import AdvancesTab from '../components/admin-premium/financials/AdvancesTab';
+import CommissionTab from '../components/admin-premium/financials/CommissionTab';
+import SettlementsTab from '../components/admin-premium/financials/SettlementsTab';
+import PetrolPumpTab from '../components/admin-premium/financials/PetrolPumpTab';
+import FinancePostingModal from '../components/admin-premium/financials/FinancePostingModal';
+import TransactionDetailModal from '../components/admin-premium/financials/TransactionDetailModal';
+import { useApiData } from '../components/admin-premium/financials/useApiData';
+import { financeAPI } from '../services/api';
+import { Button } from '../components/admin-premium/ui/AdminUI';
 
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: '▦', path: '/admin' },
@@ -57,832 +40,126 @@ const NAV_ITEMS = [
   { key: 'reports', label: 'Reports', icon: '☰', path: '/admin/reports' },
 ];
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   SECTIONS — the URL segment, the tab label, and the question it answers
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-const SECTIONS = [
-  { key: 'overview', label: 'Overview', tab: 'overview', answers: 'Where we stand overall' },
-  { key: 'client-receivables', label: 'Client Receivables', tab: 'receivables', answers: 'Who owes us money' },
-  { key: 'client-due', label: 'Client Due', tab: 'receivables', answers: 'Who still owes us money' },
-  { key: 'provider-payables', label: 'Provider Payables', tab: 'payables', answers: 'Who we owe money' },
-  { key: 'payments', label: 'Payments Received', tab: 'transactions', answers: 'Money actually received' },
-  { key: 'advances', label: 'Advances', tab: 'advances', answers: 'Money paid out early' },
-  { key: 'commission', label: 'Commission Earned', tab: 'commission', answers: 'What we earned per trip' },
-  { key: 'settlements', label: 'Settlements', tab: 'settlements', answers: 'Balances adjusted without cash' },
+const TABS = [
+  { key: 'overview', label: 'Overview', icon: LayoutDashboard },
+  { key: 'receivables', label: 'Receivables', icon: Receipt },
+  { key: 'due', label: 'Client Due', icon: Clock },
+  { key: 'payables', label: 'Payables', icon: Truck },
+  { key: 'payments', label: 'Payments', icon: Banknote },
+  { key: 'advances', label: 'Advances', icon: Layers },
+  { key: 'commission', label: 'Commission', icon: Percent },
+  { key: 'settlements', label: 'Settlements', icon: Handshake },
+  { key: 'petrol-pump', label: 'Petrol Pump', icon: Fuel },
 ];
 
-const sectionOf = (key) => SECTIONS.find((s) => s.key === key) || SECTIONS[0];
+const mapSection = (section) => {
+  if (!section) return 'overview';
+  if (section === 'client-receivables' || section === 'receivables') return 'receivables';
+  if (section === 'client-due' || section === 'due') return 'due';
+  if (section === 'provider-payables' || section === 'payables') return 'payables';
+  if (section === 'payments' || section === 'transactions') return 'payments';
+  if (section === 'advances') return 'advances';
+  if (section === 'commission') return 'commission';
+  if (section === 'settlements') return 'settlements';
+  if (section === 'petrol-pump') return 'petrol-pump';
+  return 'overview';
+};
 
-/** Receivable status chips (§2). */
-const RECEIVABLE_STATUSES = [
-  { key: 'DUE', label: 'Due' },
-  { key: 'OVERDUE', label: 'Overdue' },
-  { key: 'DUE_SOON', label: 'Due Soon' },
-  { key: 'PARTIALLY_PAID', label: 'Partially Paid' },
-  { key: 'UNPAID', label: 'Unpaid' },
-  { key: 'ALL', label: 'All' },
-];
-
-const SORTS = [
-  { key: 'OUTSTANDING_DESC', label: 'Highest outstanding' },
-  { key: 'OUTSTANDING_ASC', label: 'Lowest outstanding' },
-  { key: 'OLDEST_DUE', label: 'Oldest due' },
-  { key: 'NEWEST', label: 'Newest' },
-];
-
-/* ── Small presentational atoms ───────────────────────────────────────────── */
-
-const inr = (n) =>
-  new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency: 'INR',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(Number(n) || 0);
-
-const day = (v) => (v ? new Date(v).toLocaleDateString('en-IN') : '—');
-
-function Panel({ title, subtitle, children, action }) {
-  return (
-    <section className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-      <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h3 className="text-lg font-semibold">{title}</h3>
-          {subtitle ? <p className="text-sm text-gray-500">{subtitle}</p> : null}
-        </div>
-        {action}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function Toolbar({ search, onSearch, searchPlaceholder, children }) {
-  return (
-    <div className="flex flex-wrap items-center gap-3 p-4 border-b border-gray-200 dark:border-gray-700">
-      <div className="relative flex-1 min-w-[220px]">
-        <Search
-          size={15}
-          className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
-          aria-hidden="true"
-        />
-        <input
-          value={search}
-          onChange={(e) => onSearch(e.target.value)}
-          placeholder={searchPlaceholder}
-          aria-label={searchPlaceholder}
-          className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 pl-9 pr-3 py-2 text-[13px] outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
-        />
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function Chip({ active, children, onClick }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={`rounded-full border px-3 py-1 text-[12px] font-semibold transition ${
-        active
-          ? 'border-amber-500 bg-amber-50 text-amber-700'
-          : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-amber-400'
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
-
-function Pagination({ page, totalPages, onPage }) {
-  if (!totalPages || totalPages <= 1) return null;
-  return (
-    <div className="flex items-center justify-between gap-3 p-3 border-t border-gray-200 dark:border-gray-700">
-      <button
-        type="button"
-        onClick={() => onPage(page - 1)}
-        disabled={page <= 1}
-        className="inline-flex items-center gap-1 rounded-lg border border-gray-300 dark:border-gray-600 px-2.5 py-1.5 text-[12px] font-semibold disabled:opacity-40"
-      >
-        <ChevronLeft size={14} /> Previous
-      </button>
-      <span className="text-[12px] text-gray-500">
-        Page {page} of {totalPages}
-      </span>
-      <button
-        type="button"
-        onClick={() => onPage(page + 1)}
-        disabled={page >= totalPages}
-        className="inline-flex items-center gap-1 rounded-lg border border-gray-300 dark:border-gray-600 px-2.5 py-1.5 text-[12px] font-semibold disabled:opacity-40"
-      >
-        Next <ChevronRight size={14} />
-      </button>
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   THE PAGE
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-function AdminFinancials() {
+export default function AdminFinancials() {
   const navigate = useNavigate();
   const { section: sectionParam } = useParams();
-  const [searchParams, setSearchParams] = useSearchParams();
 
-  const section = sectionOf(sectionParam || 'overview');
+  const [activeTab, setActiveTab] = useState(mapSection(sectionParam));
+  useEffect(() => {
+    setActiveTab(mapSection(sectionParam));
+  }, [sectionParam]);
 
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [filters, setFilters] = useState(() => {
+    const r = presetRange('THIS_MONTH');
+    return { from: r.from, to: r.to, branch: '' };
+  });
 
-  const [summary, setSummary] = useState(null);
-  const [receivables, setReceivables] = useState([]);
-  const [payables, setPayables] = useState(null);
-  const [transactions, setTransactions] = useState([]);
-  const [advances, setAdvances] = useState(null);
-  const [settlements, setSettlements] = useState(null);
-  const [commission, setCommission] = useState(null);
+  const [branches, setBranches] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    financeAPI
+      .getBranches()
+      .then((res) => {
+        if (!alive) return;
+        const data = res?.data?.data || res?.data;
+        setBranches(Array.isArray(data) ? data : []);
+      })
+      .catch(() => {
+        if (alive) setBranches([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
-  // Ledger drill-down: which party, and its statement.
-  const [ledgerModalOpen, setLedgerModalOpen] = useState(false);
-  const [ledgerClientId, setLedgerClientId] = useState(null);
-  const [ledgerPartyType, setLedgerPartyType] = useState('CLIENT');
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  // Filter state lives in the URL, so a filtered view can be shared and the
-  // back button steps through filters the way an operator expects.
-  const [status, setStatus] = useState('DUE');
-  const [sort, setSort] = useState('OUTSTANDING_DESC');
-  const [search, setSearch] = useState('');
-  const [page, setPage] = useState(1);
+  const [posting, setPosting] = useState({ open: false, mode: 'receipt', preset: {} });
+  const openPosting = useCallback((mode, preset = {}) => {
+    setPosting({ open: true, mode, preset });
+  }, []);
+  const closePosting = useCallback(() => {
+    setPosting((p) => ({ ...p, open: false }));
+  }, []);
 
-  const go = useCallback(
-    (key) => navigate(key === 'overview' ? '/admin/financials' : `/admin/financials/${key}`),
+  const [txDetail, setTxDetail] = useState(null);
+
+  const { data: overviewData, loading: overviewLoading, error: overviewError } = useApiData(async () => {
+    const res = await financeAPI.getOverview({
+      date_from: filters.from,
+      date_to: filters.to,
+      branch: filters.branch || undefined,
+    });
+    return res?.data?.data || res?.data || null;
+  }, [filters.from, filters.to, filters.branch, refreshKey]);
+
+  const onGoTab = useCallback(
+    (key) => {
+      const mapped = mapSection(key);
+      setActiveTab(mapped);
+      navigate(mapped === 'overview' ? '/admin/financials' : `/admin/financials/${mapped}`);
+    },
     [navigate],
   );
 
-  // Reset page whenever the filter set changes, or page 3 of a 1-page list shows
-  // an empty table and looks broken.
-  useEffect(() => {
-    setPage(1);
-  }, [search, status, sort, sectionParam]);
+  const handleTabClick = useCallback(
+    (key) => {
+      setActiveTab(key);
+      navigate(key === 'overview' ? '/admin/financials' : `/admin/financials/${key}`);
+    },
+    [navigate],
+  );
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const handleExport = useCallback(async () => {
     try {
-      // The summary backs the cards on EVERY section, so a number is never
-      // missing just because the operator drilled in.
-      const summaryRes = await financialAPI.getSummary();
-
-      if (section.tab === 'receivables') {
-        const res = await financialAPI.getReceivables({
-          search: search || undefined,
-          status,
-          sort,
-        });
-        setReceivables(res?.data?.receivables || []);
-      }
-      if (section.tab === 'payables') {
-        const res = await financialAPI.getPayables();
-        setPayables(res?.data || null);
-      }
-      if (section.tab === 'transactions') {
-        const res = await financialAPI.getTransactions({
-          page,
-          limit: 25,
-          search: search || undefined,
-        });
-        setTransactions(res?.data?.rows || res?.data || []);
-      }
-      if (section.tab === 'advances') {
-        const res = await financialAPI.getAdvances();
-        setAdvances(res?.data || null);
-      }
-      if (section.tab === 'commission') {
-        const res = await financialAPI.getCommission({ search: search || undefined });
-        setCommission(res?.data || null);
-      }
-      if (section.tab === 'settlements') {
-        const res = await financialAPI.getSettlements();
-        setSettlements(res?.data || null);
-      }
-
-      setSummary(summaryRes?.data || null);
-    } catch (err) {
-      setError(err?.response?.data?.message || 'Unable to load the financial figures.');
-    } finally {
-      setLoading(false);
+      const res = await financeAPI.exportSection(activeTab, {
+        date_from: filters.from,
+        date_to: filters.to,
+      });
+      const blob = new Blob([JSON.stringify(res?.data?.data || res?.data || {}, null, 2)], {
+        type: 'application/json',
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `financials-${activeTab}-${filters.from}-${filters.to}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('Export failed', e);
     }
-  }, [section.tab, search, status, sort, page]);
+  }, [activeTab, filters.from, filters.to]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  // ── Ledger drill-down ────────────────────────────────────────────────────
-  const openClientLedger = useCallback((row) => {
-    if (!row.clientId) return; // an un-attributed party has no master record
-    setLedgerClientId(row.clientId);
-    setLedgerPartyType('CLIENT');
-    setLedgerModalOpen(true);
+  const handleReset = useCallback(() => {
+    const r = presetRange('THIS_MONTH');
+    setFilters({ from: r.from, to: r.to, branch: '' });
   }, []);
-
-  const openVendorLedger = useCallback((ownerId) => {
-    if (!ownerId) return;
-    setLedgerClientId(ownerId);
-    setLedgerPartyType('VEHICLE_OWNER');
-    setLedgerModalOpen(true);
-  }, []);
-
-  const closeLedger = useCallback(() => {
-    setLedgerModalOpen(false);
-    setLedgerClientId(null);
-  }, []);
-
-  /* ── Header ────────────────────────────────────────────────────────────── */
-
-  const Header = () => (
-    <div className="flex flex-wrap items-start justify-between gap-3">
-      <div>
-        <button
-          type="button"
-          onClick={() => go('overview')}
-          className="mb-1 inline-flex items-center gap-1 text-[12px] font-semibold uppercase tracking-wider text-gray-500 hover:text-amber-600"
-        >
-          <ChevronLeft size={13} /> Financials
-        </button>
-        <h1 className="bt-page-title">{section.label}</h1>
-        <p className="text-gray-500">{section.answers}</p>
-      </div>
-    </div>
-  );
-
-  /* ── The clickable cards (overview only) ────────────────────────────────── */
-
-  const DashboardCards = () => (
-    <>
-      {/* MONEY COMING IN */}
-      <div>
-        <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-600">
-          Money coming in
-        </p>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <KpiCard
-            title="Client Receivable"
-            value={inr(summary?.totalReceivable)}
-            subtitle="Money customers owe"
-            accent={summary?.totalReceivable > 0 ? 'orange' : 'green'}
-            onClick={() => go('client-receivables')}
-            action={<span className="text-[11px] font-semibold text-amber-600">View customers →</span>}
-          />
-          <KpiCard
-            title="Client Due"
-            value={inr(summary?.receivables?.totalOutstanding)}
-            subtitle="Still pending"
-            accent="orange"
-            onClick={() => go('client-due')}
-            action={<span className="text-[11px] font-semibold text-amber-600">View due →</span>}
-          />
-          <KpiCard
-            title="Total Received"
-            value={inr(summary?.totalReceived)}
-            subtitle="Customer payments received"
-            accent="green"
-            onClick={() => go('payments')}
-            action={<span className="text-[11px] font-semibold text-amber-600">View payments →</span>}
-          />
-        </div>
-      </div>
-
-      {/* MONEY GOING OUT */}
-      <div>
-        <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.16em] text-amber-600">
-          Money going out
-        </p>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <KpiCard
-            title="Provider Payable"
-            value={inr(summary?.totalPayable)}
-            subtitle="Money we owe owners/drivers"
-            accent="orange"
-            onClick={() => go('provider-payables')}
-            action={<span className="text-[11px] font-semibold text-amber-600">View providers →</span>}
-          />
-          <KpiCard
-            title="Advances"
-            value={inr(summary?.totalAdvances)}
-            subtitle="Advances given"
-            accent="amber"
-            onClick={() => go('advances')}
-            action={<span className="text-[11px] font-semibold text-amber-600">View advances →</span>}
-          />
-        </div>
-      </div>
-
-      {/* INCOME */}
-      <div>
-        <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.16em] text-violet-600">
-          Income
-        </p>
-        <div className="grid grid-cols-1 md:grid-cols-1 gap-4">
-          <KpiCard
-            title="Commission"
-            value={inr(summary?.commission?.total)}
-            subtitle="BT commission earned"
-            accent="warning"
-            onClick={() => go('commission')}
-            action={<span className="text-[11px] font-semibold text-amber-600">View commission →</span>}
-          />
-        </div>
-      </div>
-
-      {/* OVERALL */}
-      <div>
-        <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.16em] text-gray-500">
-          Overall
-        </p>
-        <div className="grid grid-cols-1 gap-4">
-          <KpiCard
-            title="Net Position"
-            value={inr(summary?.netPosition)}
-            subtitle="Receivable − Payable"
-            accent={summary?.netPosition >= 0 ? 'green' : 'orange'}
-            onClick={() => go('overview')}
-            action={<span className="text-[11px] font-semibold text-amber-600">Financial position →</span>}
-          />
-        </div>
-      </div>
-    </>
-  );
-
-  /* ── Detail sections ───────────────────────────────────────────────────── */
-
-  const receivablesTable = (rows, dueOnly) => (
-    <PremiumTable
-      columns={[
-        { key: 'companyName', label: dueOnly ? 'Customer (due)' : 'Customer' },
-        { key: 'totalTrips', label: 'Trips' },
-        { key: 'totalFreight', label: 'Billed', format: inr },
-        { key: 'totalPaid', label: 'Received', format: inr },
-        { key: 'outstanding', label: 'Outstanding', format: inr, highlight: true },
-        {
-          key: 'paymentStatus',
-          label: 'Status',
-          render: (row) => (
-            <span className="inline-flex flex-wrap items-center gap-1">
-              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold">
-                {row.paymentStatus || '—'}
-              </span>
-              {/* A party owing money is shown even when their master record is
-                  deactivated or missing — the balance must never vanish. */}
-              {row.is_active === false ? (
-                <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700">
-                  Inactive
-                </span>
-              ) : null}
-              {row.unlinked ? (
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">
-                  No client record
-                </span>
-              ) : null}
-            </span>
-          ),
-        },
-      ]}
-      rows={rows}
-      onRowClick={(row) => openClientLedger(row)}
-    />
-  );
-
-  const renderSection = () => {
-    if (section.tab === 'receivables') {
-      const dueOnly = section.key === 'client-due';
-      return (
-        <Panel
-          title={dueOnly ? 'Money we still need to collect' : 'Customer Receivables'}
-          subtitle={`${receivables.length} ${receivables.length === 1 ? 'party' : 'parties'} · ${inr(
-            receivables.reduce((s, r) => s + (Number(r.outstanding) || 0), 0),
-          )} outstanding`}
-        >
-          <Toolbar
-            search={search}
-            onSearch={setSearch}
-            searchPlaceholder="Search customer, code or mobile…"
-          >
-            <div className="flex flex-wrap items-center gap-2">
-              {RECEIVABLE_STATUSES.map((s) => (
-                <Chip key={s.key} active={status === s.key} onClick={() => setStatus(s.key)}>
-                  {s.label}
-                </Chip>
-              ))}
-              <select
-                value={sort}
-                onChange={(e) => setSort(e.target.value)}
-                aria-label="Sort receivables"
-                className="rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-2.5 py-1.5 text-[12px] font-semibold"
-              >
-                {SORTS.map((s) => (
-                  <option key={s.key} value={s.key}>
-                    {s.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </Toolbar>
-          {receivablesTable(receivables, dueOnly)}
-        </Panel>
-      );
-    }
-
-    if (section.tab === 'payables') {
-      return (
-        <div className="space-y-6">
-          <Panel
-            title="Who we owe money to"
-            subtitle={`${inr(
-              (payables?.totalPayable || 0),
-            )} payable across ${(payables?.owners?.length || 0) + (payables?.drivers?.length || 0)} parties`}
-          >
-            <PremiumTable
-              columns={[
-                { key: 'ownerName', label: 'Vehicle Owner' },
-                { key: 'tripCount', label: 'Trips' },
-                { key: 'totalShare', label: 'Gross Hire', format: inr },
-                { key: 'totalPaid', label: 'Paid', format: inr },
-                { key: 'totalDue', label: 'Payable', format: inr, highlight: true },
-              ]}
-              data={payables?.owners || []}
-              onRowClick={(row) => openVendorLedger(row.ownerId)}
-            />
-          </Panel>
-
-          <Panel title="Driver Payables" subtitle="Money owed to drivers">
-            <PremiumTable
-              columns={[
-                { key: 'driverName', label: 'Driver' },
-                { key: 'tripCount', label: 'Trips' },
-                { key: 'totalAgreedPay', label: 'Agreed Pay', format: inr },
-                { key: 'totalPaid', label: 'Paid', format: inr },
-                { key: 'totalDue', label: 'Due', format: inr, highlight: true },
-              ]}
-              data={payables?.drivers || []}
-            />
-          </Panel>
-        </div>
-      );
-    }
-
-    if (section.tab === 'transactions') {
-      return (
-        <Panel
-          title="Payments Received History"
-          subtitle="Every customer payment actually recorded"
-        >
-          <Toolbar
-            search={search}
-            onSearch={setSearch}
-            searchPlaceholder="Search receipt no., customer, trip or order…"
-          />
-          <PremiumTable
-            columns={[
-              { key: 'transaction_date', label: 'Date', format: day },
-              { key: 'reference_number', label: 'Receipt No.' },
-              { key: 'from_party', label: 'Customer' },
-              { key: 'trip', label: 'Trip', render: (row) => (row.trip?.trip_number || '—') },
-              { key: 'payment_method', label: 'Mode' },
-              { key: 'amount', label: 'Amount', format: inr, highlight: true },
-              { key: 'status', label: 'Status' },
-            ]}
-            data={transactions}
-            onRowClick={(row) => row.trip?.trip_id && navigate(`/admin/trips/${row.trip.trip_id}`)}
-          />
-          <Pagination page={page} totalPages={Math.ceil((transactions.length || 0) / 25) || 1} onPage={setPage} />
-        </Panel>
-      );
-    }
-
-    if (section.tab === 'advances') {
-      return (
-        <Panel
-          title="Advance History"
-          subtitle="An advance is money already paid — it never settles a trip on its own"
-        >
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 p-4 border-b border-gray-200 dark:border-gray-700">
-            {[
-              ['Driver', advances?.summary?.totalDriverAdvance],
-              ['Fuel', advances?.summary?.totalFuelAdvance],
-              ['Owner', advances?.summary?.totalOwnerAdvance],
-              ['Total', advances?.summary?.totalAll],
-            ].map(([label, value]) => (
-              <div key={label}>
-                <div className="text-sm text-gray-500">{label} Advances</div>
-                <div className="text-xl font-bold">{inr(value)}</div>
-              </div>
-            ))}
-          </div>
-          <PremiumTable
-            columns={[
-              { key: 'transaction_date', label: 'Date', format: day },
-              { key: 'trip', label: 'Trip', render: (row) => row.trip?.trip_number || '—' },
-              { key: 'transaction_type', label: 'Type' },
-              { key: 'to_party', label: 'Paid To' },
-              { key: 'amount', label: 'Amount', format: inr, highlight: true },
-              { key: 'payment_method', label: 'Mode' },
-              { key: 'status', label: 'Status' },
-            ]}
-            data={advances?.advances || []}
-            onRowClick={(row) => row.trip?.trip_id && navigate(`/admin/trips/${row.trip.trip_id}`)}
-          />
-        </Panel>
-      );
-    }
-
-    if (section.tab === 'commission') {
-      return (
-        <Panel
-          title="Commission Earned"
-          subtitle="Gross hire, commission and net payable stay three separate figures — net = gross − commission"
-        >
-          <Toolbar
-            search={search}
-            onSearch={setSearch}
-            searchPlaceholder="Search trip, vehicle or vendor…"
-          />
-          <PremiumTable
-            columns={[
-              { key: 'trip_number', label: 'Trip' },
-              { key: 'vehicle_number', label: 'Vehicle' },
-              { key: 'vendor_name', label: 'Vendor' },
-              { key: 'gross_vehicle_hire', label: 'Gross Hire', format: inr },
-              { key: 'commission_rate', label: 'Rate', format: (v) => (v == null ? '—' : `${v}%`) },
-              { key: 'commission', label: 'Commission', format: inr, highlight: true },
-              { key: 'net_vendor_payable', label: 'Net Vendor Payable', format: inr },
-              { key: 'status', label: 'Status' },
-            ]}
-            data={commission?.commission || []}
-            onRowClick={(row) => row.trip_id && navigate(`/admin/trips/${row.trip_id}`)}
-          />
-        </Panel>
-      );
-    }
-
-    if (section.tab === 'settlements') {
-      return (
-        <Panel
-          title="Settlements"
-          subtitle="Balances adjusted against each other — no cash moves"
-        >
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-4 border-b border-gray-200 dark:border-gray-700">
-            {[
-              ['Driver Settlements', settlements?.summary?.totalDriverSettlement],
-              ['Owner Settlements', settlements?.summary?.totalOwnerSettlement],
-              ['Total', settlements?.summary?.totalAll],
-            ].map(([label, value]) => (
-              <div key={label}>
-                <div className="text-sm text-gray-500">{label}</div>
-                <div className="text-xl font-bold">{inr(value)}</div>
-              </div>
-            ))}
-          </div>
-          <PremiumTable
-            columns={[
-              { key: 'transaction_date', label: 'Date', format: day },
-              { key: 'reference_number', label: 'Settlement No.' },
-              { key: 'trip', label: 'Trip', render: (row) => row.trip?.trip_number || '—' },
-              { key: 'from_party', label: 'From' },
-              { key: 'to_party', label: 'To' },
-              { key: 'amount', label: 'Amount', format: inr, highlight: true },
-              { key: 'payment_method', label: 'Method' },
-            ]}
-            data={settlements?.settlements || []}
-            onRowClick={(row) => row.trip?.trip_id && navigate(`/admin/trips/${row.trip.trip_id}`)}
-          />
-        </Panel>
-      );
-    }
-
-    // Overview
-    return (
-      <div className="space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Panel title="Receivables Breakdown" subtitle="What customers have been billed and collected">
-            <div className="grid grid-cols-3 gap-4 p-4">
-              <div>
-                <div className="text-sm text-gray-500">Total Freight</div>
-                <div className="text-xl font-bold">{inr(summary?.receivables?.totalFreight)}</div>
-              </div>
-              <div>
-                <div className="text-sm text-gray-500">Total Received</div>
-                <div className="text-xl font-bold text-green-600">
-                  {inr(summary?.receivables?.totalReceived)}
-                </div>
-              </div>
-              <div>
-                <div className="text-sm text-gray-500">Total Outstanding</div>
-                <div className="text-xl font-bold text-red-600">
-                  {inr(summary?.receivables?.totalOutstanding)}
-                </div>
-              </div>
-            </div>
-          </Panel>
-          <Panel title="Payables Breakdown" subtitle="Owners and drivers">
-            <div className="grid grid-cols-2 gap-6 p-4">
-              <div>
-                <h4 className="text-sm font-medium text-gray-500 mb-2">Owners</h4>
-                <div className="space-y-2">
-                  {[
-                    ['Total Share', summary?.payables?.owner?.totalShare],
-                    ['Total Paid', summary?.payables?.owner?.totalPaid],
-                    ['Total Due', summary?.payables?.owner?.totalDue],
-                  ].map(([l, v]) => (
-                    <div key={l} className="flex justify-between">
-                      <span>{l}</span>
-                      <span className="font-medium">{inr(v)}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <h4 className="text-sm font-medium text-gray-500 mb-2">Drivers</h4>
-                <div className="space-y-2">
-                  {[
-                    ['Agreed Pay', summary?.payables?.driver?.totalAgreedPay],
-                    ['Total Paid', summary?.payables?.driver?.totalPaid],
-                    ['Total Due', summary?.payables?.driver?.totalDue],
-                  ].map(([l, v]) => (
-                    <div key={l} className="flex justify-between">
-                      <span>{l}</span>
-                      <span className="font-medium">{inr(v)}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </Panel>
-        </div>
-
-        <Panel title="Quick answers" subtitle="Every card above opens the list behind it">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 p-4">
-            {SECTIONS.filter((s) => s.key !== 'overview').map((s) => (
-              <button
-                key={s.key}
-                type="button"
-                onClick={() => go(s.key)}
-                className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 dark:border-gray-700 px-3.5 py-3 text-left transition hover:border-amber-400 hover:bg-amber-50/40"
-              >
-                <span className="min-w-0">
-                  <span className="block text-[13px] font-semibold text-gray-900 dark:text-gray-100">
-                    {s.label}
-                  </span>
-                  <span className="block text-[11.5px] text-gray-500">{s.answers}</span>
-                </span>
-                <ArrowRight size={15} className="shrink-0 text-amber-600" aria-hidden="true" />
-              </button>
-            ))}
-          </div>
-        </Panel>
-      </div>
-    );
-  };
-
-  /* ── The party ledger drill-down ───────────────────────────────────────── */
-
-  const LedgerPanel = () => {
-    if (!ledgerLoading && !ledger) return null;
-
-    if (ledgerLoading) {
-      return (
-        <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-5">
-          <LoadingSkeleton />
-        </div>
-      );
-    }
-
-    const isClient = ledger.party.party_type === 'CLIENT';
-    const totals = ledger.totals || {};
-
-    return (
-      <Panel
-        title={isClient ? 'Customer Ledger' : 'Vendor Ledger'}
-        subtitle={`${ledger.party.name}${ledger.party.party_type === 'VEHICLE_OWNER' ? ` · Owner #${ledger.party.owner_id}` : ` · Customer #${ledger.party.client_id}`}`}
-        action={
-          <button
-            type="button"
-            onClick={closeLedger}
-            className="inline-flex items-center gap-1 rounded-lg border border-gray-300 dark:border-gray-600 px-2.5 py-1.5 text-[12px] font-semibold"
-          >
-            <X size={13} /> Close
-          </button>
-        }
-      >
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-4 border-b border-gray-200 dark:border-gray-700">
-          {isClient ? (
-            <>
-              <Stat label="Billed" value={inr(totals.billed)} />
-              <Stat label="Received" value={inr(totals.received)} tone="text-green-600" />
-              <Stat label="Outstanding" value={inr(totals.currentReceivable)} tone="text-red-600" />
-              <Stat label="Trips" value={totals.tripCount ?? 0} />
-            </>
-          ) : (
-            <>
-              <Stat label="Gross Hire" value={inr(totals.gross_hire)} />
-              <Stat label="Commission" value={inr(totals.commission)} tone="text-amber-600" />
-              <Stat label="Net Payable" value={inr(totals.net_vendor_payable)} tone="text-red-600" />
-              <Stat label="Paid" value={inr(totals.paid)} tone="text-green-600" />
-            </>
-          )}
-        </div>
-
-        {/* Quick actions (§14), contextual to the party type. */}
-        <div className="flex flex-wrap items-center gap-2 p-4 border-b border-gray-200 dark:border-gray-700">
-          <span className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1.5 text-[12px] font-semibold text-gray-700">
-            {isClient ? 'Collect Payment' : 'Pay Vendor'}
-          </span>
-          {isClient ? (
-            <span className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1.5 text-[12px] font-semibold text-gray-700">
-              View Customer Ledger
-            </span>
-          ) : (
-            <>
-              <span className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1.5 text-[12px] font-semibold text-gray-700">
-                Make Settlement
-              </span>
-              <span className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1.5 text-[12px] font-semibold text-gray-700">
-                View Vendor Ledger
-              </span>
-            </>
-          )}
-          {isClient && ledger.party.mobile ? (
-            <a
-              href={`tel:${ledger.party.mobile}`}
-              className="inline-flex items-center gap-1 rounded-lg border border-gray-300 dark:border-gray-600 px-2.5 py-1.5 text-[12px] font-semibold"
-            >
-              Call Customer
-            </a>
-          ) : null}
-        </div>
-
-        <div className="p-4">
-          <h4 className="text-sm font-semibold mb-2">
-            Trips contributing to this balance
-          </h4>
-        </div>
-        <PremiumTable
-          columns={
-            isClient
-              ? [
-                  { key: 'trip_number', label: 'Trip' },
-                  { key: 'vehicle_number', label: 'Vehicle' },
-                  { key: 'billed', label: 'Billed', format: inr },
-                  { key: 'received', label: 'Received', format: inr },
-                  { key: 'due', label: 'Remaining', format: inr, highlight: true },
-                  { key: 'status', label: 'Status' },
-                ]
-              : [
-                  { key: 'trip_number', label: 'Trip' },
-                  { key: 'vehicle_number', label: 'Vehicle' },
-                  { key: 'gross_hire', label: 'Gross Hire', format: inr },
-                  { key: 'commission', label: 'Commission', format: inr },
-                  { key: 'net_payable', label: 'Net Payable', format: inr },
-                  { key: 'paid', label: 'Paid', format: inr },
-                  { key: 'balance', label: 'Remaining', format: inr, highlight: true },
-                ]
-          }
-          data={ledger.trips || []}
-          onRowClick={(row) => row.trip_id && navigate(`/admin/trips/${row.trip_id}`)}
-        />
-
-        <div className="p-4 border-t border-gray-200 dark:border-gray-700">
-          <h4 className="text-sm font-semibold mb-2">Transaction history</h4>
-          <p className="text-[12px] text-gray-500 mb-3">
-            Running balance — each hire increases what is owed, each payment reduces it.
-          </p>
-        </div>
-        <PremiumTable
-          columns={[
-            { key: 'date', label: 'Date', format: day },
-            { key: 'particulars', label: 'Particular' },
-            { key: 'trip_number', label: 'Trip' },
-            {
-              key: 'debit',
-              label: 'Debit',
-              format: (v) => (v ? inr(v) : '—'),
-            },
-            {
-              key: 'credit',
-              label: 'Credit',
-              format: (v) => (v ? inr(v) : '—'),
-            },
-            { key: 'balance', label: 'Balance', format: inr, highlight: true },
-          ]}
-          data={ledger.ledger || []}
-        />
-      </Panel>
-    );
-  };
 
   return (
     <AdminShell
@@ -893,62 +170,149 @@ function AdminFinancials() {
         else if (key === 'dashboard') navigate('/admin');
       }}
     >
-      <div className="space-y-6">
-        <Header />
-
-        {/* Tabs navigate to real URLs. */}
-        <div className="border-b border-gray-200 dark:border-gray-700">
-          <nav className="flex flex-wrap gap-4">
-            {SECTIONS.map((s) => (
-              <button
-                key={s.key}
-                onClick={() => go(s.key)}
-                className={`pb-3 px-1 text-sm font-medium border-b-2 transition-colors ${
-                  section.key === s.key
-                    ? 'border-amber-500 text-amber-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                {s.label}
-              </button>
-            ))}
-          </nav>
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-xl font-bold text-bt-navy">Financials Overview</h1>
+            <p className="text-[12.5px] text-bt-ink-2">
+              Complete financial position, collections, obligations and transport business cash movement.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" onClick={handleExport}>Export</Button>
+            <Button variant="primary" onClick={() => openPosting('receipt')}>Record Receipt</Button>
+          </div>
         </div>
 
-        {loading ? (
-          <LoadingSkeleton />
-        ) : error ? (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
-            {error}
-          </div>
-        ) : (
-          <>
-            {section.key === 'overview' && summary ? (
-              <div className="space-y-6">
-                <DashboardCards />
-              </div>
-            ) : null}
-            {renderSection()}
-            <ClientLedgerModal
-              isOpen={ledgerModalOpen}
-              onClose={closeLedger}
-              clientId={ledgerClientId}
-              partyType={ledgerPartyType}
-            />
-          </>
-        )}
+        <FinanceFilters
+          filters={filters}
+          branches={branches}
+          onApply={setFilters}
+          onReset={handleReset}
+          onRefresh={() => setRefreshKey((k) => k + 1)}
+          refreshing={overviewLoading}
+          search={undefined}
+          onSearch={undefined}
+        />
+
+        <div className="flex flex-wrap gap-2 border-b border-bt-border pb-2">
+          {TABS.map((tab) => {
+            const Icon = tab.icon;
+            return (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => handleTabClick(tab.key)}
+                className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-[12.5px] font-semibold transition-colors ${
+                  activeTab === tab.key
+                    ? 'bg-bt-orange text-white'
+                    : 'text-bt-navy hover:bg-slate-100'
+                }`}
+              >
+                <Icon className="h-4 w-4" strokeWidth={2.2} />
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {activeTab === 'overview' ? (
+          <OverviewTab
+            data={overviewData}
+            loading={overviewLoading}
+            error={overviewError}
+            onRetry={() => setRefreshKey((k) => k + 1)}
+            onOpenPosting={openPosting}
+            onGoTab={onGoTab}
+            onOpenTransaction={setTxDetail}
+          />
+        ) : null}
+
+        {activeTab === 'receivables' ? (
+          <ReceivablesTab
+            mode="receivables"
+            filters={filters}
+            refreshKey={refreshKey}
+            onPostReceipt={() => openPosting('receipt')}
+          />
+        ) : null}
+
+        {activeTab === 'due' ? (
+          <ReceivablesTab
+            mode="due"
+            filters={filters}
+            refreshKey={refreshKey}
+            onPostReceipt={() => openPosting('receipt')}
+          />
+        ) : null}
+
+        {activeTab === 'payables' ? (
+          <PayablesTab
+            filters={filters}
+            refreshKey={refreshKey}
+            onPostVendorPayment={() => openPosting('vendor-payment')}
+            onPostSettlement={() => openPosting('settlement')}
+          />
+        ) : null}
+
+        {activeTab === 'payments' ? (
+          <PaymentsTab
+            filters={filters}
+            refreshKey={refreshKey}
+            onPostReceipt={() => openPosting('receipt')}
+          />
+        ) : null}
+
+        {activeTab === 'advances' ? (
+          <AdvancesTab
+            filters={filters}
+            refreshKey={refreshKey}
+            onPostAdvance={() => openPosting('advance')}
+            onAdjustAdvance={() => openPosting('advance-adjust')}
+          />
+        ) : null}
+
+        {activeTab === 'commission' ? (
+          <CommissionTab filters={filters} refreshKey={refreshKey} />
+        ) : null}
+
+        {activeTab === 'settlements' ? (
+          <SettlementsTab
+            filters={filters}
+            refreshKey={refreshKey}
+            onPostSettlement={() => openPosting('settlement')}
+          />
+        ) : null}
+
+        {activeTab === 'petrol-pump' ? (
+          <PetrolPumpTab
+            filters={filters}
+            refreshKey={refreshKey}
+            onOpenPosting={openPosting}
+          />
+        ) : null}
       </div>
+
+      <FinancePostingModal
+        open={posting.open}
+        mode={posting.mode}
+        preset={posting.preset}
+        onClose={closePosting}
+        onSuccess={() => {
+          setRefreshKey((k) => k + 1);
+          closePosting();
+        }}
+      />
+
+      <TransactionDetailModal
+        open={!!txDetail}
+        transaction={txDetail}
+        onClose={() => setTxDetail(null)}
+        onReverse={(tx) => {
+          setTxDetail(null);
+          openPosting('reverse', { transaction_id: tx?.transaction_id || tx?.id });
+        }}
+      />
     </AdminShell>
   );
 }
-
-function Stat({ label, value, tone = '' }) {
-  return (
-    <div>
-      <div className="text-sm text-gray-500">{label}</div>
-      <div className={`text-xl font-bold ${tone}`}>{value}</div>
-    </div>
-  );
-}
-
-export default AdminFinancials;

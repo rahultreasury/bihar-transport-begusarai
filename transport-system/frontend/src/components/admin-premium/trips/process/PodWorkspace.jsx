@@ -63,6 +63,38 @@ export default function PodWorkspace({
 
   const [remarks, setRemarks] = useState('');
   const [reference, setReference] = useState('');
+  const [podFile, setPodFile] = useState(null);
+  const [podUploadProgress, setPodUploadProgress] = useState(0);
+  const [podUploadError, setPodUploadError] = useState(null);
+
+  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+  const ALLOWED_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg'];
+
+  const convertFileToBase64 = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = (error) => reject(error);
+    });
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!ALLOWED_TYPES.includes(file.type)) {
+      setPodUploadError('Only PDF, JPG, and PNG files are allowed.');
+      setPodFile(null);
+      return;
+    }
+    if (file.size > MAX_FILE_SIZE) {
+      setPodUploadError('File size must be under 10 MB.');
+      setPodFile(null);
+      return;
+    }
+    setPodFile(file);
+    setPodUploadError(null);
+  };
 
   return (
     <>
@@ -297,23 +329,63 @@ export default function PodWorkspace({
                 className="mt-1 w-full rounded-lg border border-border px-2.5 py-2 text-[13px] font-normal"
               />
             </label>
+            <label className="block text-[12px] font-semibold text-text">
+              POD Document (PDF / JPG / PNG)
+              <input
+                type="file"
+                accept=".pdf,.jpg,.jpeg,.png"
+                onChange={handleFileChange}
+                value=""
+                className="mt-1 w-full rounded-lg border border-border px-2.5 py-2 text-[13px] font-normal"
+              />
+              {podUploadError && (
+                <p className="mt-1 text-[11px] text-red-600">{podUploadError}</p>
+              )}
+              {podFile && (
+                <p className="mt-1 text-[11px] text-emerald-600">
+                  {podFile.name} ({Math.round(podFile.size / 1024)} KB)
+                </p>
+              )}
+            </label>
           </div>
 
           <div className="mt-4 flex flex-wrap gap-2">
-            <Action
-              disabled={!delivered}
-              busy={busy === 'pod'}
-              onClick={() =>
-                onRun('pod', () =>
-                  ops.submitPod(trip.trip_id, {
-                    reference_number: reference || undefined,
-                    remarks: remarks || undefined,
-                  }),
-                )
-              }
-            >
-              Upload POD
-            </Action>
+            {podFile && !podUploadError && podUploadProgress < 100 ? (
+              <Action disabled busy>
+                <div className="flex items-center gap-2">
+                  <div className="w-16 h-2 bg-slate-200 rounded-full overflow-hidden">
+                    <div className={`h-full bg-amber-600`} style={{ width: `${podUploadProgress}%` }} />
+                  </div>
+                  <span className="text-xs font-semibold">Uploading…</span>
+                </div>
+              </Action>
+            ) : (
+              <Action
+                disabled={!delivered || !podFile || podUploadError}
+                busy={busy === 'pod'}
+                onClick={async () => {
+                  setPodUploadError(null);
+                  setPodUploadProgress(0);
+                  try {
+                    setPodUploadProgress(25);
+                    const fileContent = await convertFileToBase64(podFile);
+                    setPodUploadProgress(50);
+                    const result = await ops.submitPod(trip.trip_id, {
+                      reference_number: reference || undefined,
+                      remarks: remarks || undefined,
+                      file_content: fileContent,
+                      file_name: podFile.name,
+                    });
+                    setPodUploadProgress(100);
+                  } catch (err) {
+                    setPodUploadError(err?.message || 'POD upload failed.');
+                    setPodUploadProgress(0);
+                  }
+                }}
+              >
+                Upload POD
+              </Action>
+            )}
             {podDocs.map((d) => (
               <Action
                 key={d.document_id}
