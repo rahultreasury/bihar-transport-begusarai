@@ -13,6 +13,10 @@ on:
 jobs:
   migration-check:
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://test:test@localhost:5432/testdb
+      DIRECT_DATABASE_URL: postgresql://test:test@localhost:5432/testdb
+      SHADOW_DATABASE_URL: postgresql://test:test@localhost:5432/shadowdb
     services:
       postgres:
         image: postgres:16
@@ -40,28 +44,27 @@ jobs:
       - name: Install dependencies
         run: cd transport-system/backend && npm ci
 
+      - name: Create shadow database
+        run: PGPASSWORD=test psql -h localhost -U test -d postgres -c "CREATE DATABASE shadowdb;"
+
       - name: Lint migrations
         run: cd transport-system/backend && npm run lint:migrations
 
       - name: Deploy migrations (first run)
-        run: cd transport-system/backend && DATABASE_URL="postgresql://test:test@localhost:5432/testdb" npx prisma migrate deploy
-        env:
-          DATABASE_URL: postgresql://test:test@localhost:5432/testdb
+        run: cd transport-system/backend && npx prisma migrate deploy
 
       - name: Check schema diff (must be empty)
         run: |
           cd transport-system/backend
-          DIFF=$(DATABASE_URL="postgresql://test:test@localhost:5432/testdb" npx prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url "postgresql://test:test@localhost:5432/testdb" 2>&1)
+          DIFF=$(npx prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url "$SHADOW_DATABASE_URL" 2>&1)
           echo "$DIFF"
-          if echo "$DIFF" | grep -q "difference\|Difference\|diff"; then
+          if ! echo "$DIFF" | grep -q "No difference detected."; then
             echo "ERROR: Schema diff is not empty"
             exit 1
           fi
 
       - name: Deploy migrations (idempotency check)
-        run: cd transport-system/backend && DATABASE_URL="postgresql://test:test@localhost:5432/testdb" npx prisma migrate deploy
-        env:
-          DATABASE_URL: postgresql://test:test@localhost:5432/testdb
+        run: cd transport-system/backend && npx prisma migrate deploy
 
       - name: Validate Prisma schema
         run: cd transport-system/backend && npx prisma validate
