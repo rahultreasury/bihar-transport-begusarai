@@ -1,13 +1,19 @@
 name: Migration CI
 
 on:
+  workflow_dispatch:
+
   pull_request:
     paths:
+      - '.github/workflows/migrations.yml'
       - 'transport-system/backend/prisma/**'
       - 'transport-system/backend/scripts/lint-migrations.js'
+
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
+      - '.github/workflows/migrations.yml'
       - 'transport-system/backend/prisma/**'
 
 jobs:
