@@ -921,33 +921,36 @@ const drivers = result.drivers.map((d) => {
     const { getDriverWithOperationalActiveTripsWhere } = require('../utils/operationalTripStatus');
     const operationalActiveTripWhere = getDriverWithOperationalActiveTripsWhere();
 
-    const [total, available, onTrip, inactive] = await Promise.all([
-      db().driver.count(),
-      db().driver.count({
-        where: {
-          status: 'available',
-          trips: {
-            none: operationalActiveTripWhere.trips.some,
-          },
-        }
-      }),
-      db().driver.count({
-        where: operationalActiveTripWhere,
-      }),
-      db().driver.count({ where: { status: 'inactive' } }),
-    ]);
+    // Run each count independently so a transient failure on one query
+    // does not break the entire dashboard stats endpoint.
+    const total = await db().driver.count().catch(() => 0);
+
+    const available = await db().driver.count({
+      where: {
+        status: 'available',
+        trips: {
+          none: operationalActiveTripWhere.trips.some,
+        },
+      },
+    }).catch(() => null);
+
+    const onTrip = await db().driver.count({
+      where: operationalActiveTripWhere,
+    }).catch(() => null);
+
+    const inactive = await db().driver.count({ where: { status: 'inactive' } }).catch(() => 0);
 
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     const todayEnd = new Date();
     todayEnd.setHours(23, 59, 59, 999);
 
-    const todaysTrips = await prisma.booking.count({
+    const todaysTrips = await db().booking.count({
       where: {
         driver_id: { not: null },
         created_at: { gte: todayStart, lte: todayEnd },
       },
-    });
+    }).catch(() => 0);
 
     return {
       total,
