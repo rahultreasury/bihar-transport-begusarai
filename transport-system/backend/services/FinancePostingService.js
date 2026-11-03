@@ -82,6 +82,21 @@ class FinancePostingService {
     this.journalService = deps.journalService || new JournalService({ prisma: this.prisma });
   }
 
+  /**
+   * Run a callback inside a Prisma interactive transaction with a longer
+   * timeout than the default 5000ms. Finance postings perform multiple
+   * queries, raw SQL, and cross-service calls against a remote Neon database;
+   * the default timeout is too short and causes spurious
+   * "Transaction already closed" errors.
+   */
+  async _tx(fn, options = {}) {
+    return this.prisma.$transaction(fn, {
+      max_wait: 15000,
+      timeout: 15000,
+      ...options,
+    });
+  }
+
   // =========================================================================
   // VALIDATION
   // =========================================================================
@@ -327,7 +342,7 @@ class FinancePostingService {
     const trip = await this._resolveTrip({ tripId: input.trip_id, invoice });
     const bookingId = invoice.booking_id || trip?.booking_id || input.booking_id || null;
 
-    const run = async () => this.prisma.$transaction(async (tx) => {
+    const run = async () => this._tx(async (tx) => {
       const existing = await this._existingByIdempotency(tx, idempotencyKey);
       if (existing) {
         // Idempotency payload conflict: the same key may not be reused with a
@@ -526,7 +541,7 @@ class FinancePostingService {
       if (!pump) throw new NotFoundError({ message: 'Petrol pump not found' });
     }
 
-    const result = await this.prisma.$transaction(async (tx) => {
+    const result = await this._tx(async (tx) => {
       const existing = await this._existingByIdempotency(tx, idempotencyKey);
       if (existing) {
         const expectedAmount = cashAmount > 0 ? cashAmount : fuelAmount;
@@ -740,7 +755,7 @@ class FinancePostingService {
     const vendor = await this.prisma.vehicleOwner.findUnique({ where: { owner_id: vendorId } });
     if (!vendor) throw new NotFoundError({ message: 'Vendor not found' });
 
-    return this.prisma.$transaction(async (tx) => {
+    return this._tx(async (tx) => {
       const existing = await this._existingByIdempotency(tx, idempotencyKey);
       if (existing) return { transaction: existing, voucher_number: existing.voucher_number, already_recorded: true };
 
@@ -840,7 +855,7 @@ class FinancePostingService {
 
     if (partyType === 'CUSTOMER') {
       if (!bookingId && !trip) throw new ValidationError('A customer advance requires a trip or booking');
-      return this.prisma.$transaction(async (tx) => {
+      return this._tx(async (tx) => {
         const existing = await this._existingByIdempotency(tx, idempotencyKey);
         if (existing) return { transaction: existing, voucher_number: existing.voucher_number, already_recorded: true };
 
@@ -978,7 +993,7 @@ class FinancePostingService {
     this._actor(actor);
     const amount = this._positive(input.amount, 'adjustment amount');
 
-    return this.prisma.$transaction(async (tx) => {
+    return this._tx(async (tx) => {
       await tx.$queryRawUnsafe('SELECT advance_id FROM trip_advances WHERE advance_id = $1 FOR UPDATE', Number(advanceId));
       const advance = await tx.tripAdvance.findUnique({ where: { advance_id: Number(advanceId) } });
       if (!advance) throw new NotFoundError({ message: 'Advance not found' });
@@ -1063,7 +1078,7 @@ class FinancePostingService {
     const vendor = await this.prisma.vehicleOwner.findUnique({ where: { owner_id: vendorId } });
     if (!vendor) throw new NotFoundError({ message: 'Vendor not found' });
 
-    return this.prisma.$transaction(async (tx) => {
+    return this._tx(async (tx) => {
       const existing = await this._existingByIdempotency(tx, idempotencyKey);
       if (existing) return { transaction: existing, voucher_number: existing.voucher_number, already_recorded: true };
 
@@ -1179,7 +1194,7 @@ class FinancePostingService {
       : null;
     if (input.trip_id && !trip) throw new NotFoundError({ message: 'Trip not found' });
 
-    const result = await this.prisma.$transaction(async (tx) => {
+    const result = await this._tx(async (tx) => {
       if (idempotencyKey) {
         const existing = await tx.petrolPumpFuelTransaction.findFirst({
           where: { receipt_number: input.receipt_number || idempotencyKey },
@@ -1440,7 +1455,7 @@ class FinancePostingService {
       throw new ValidationError('A reason of at least 5 characters is required to reverse a posted transaction');
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    return this._tx(async (tx) => {
       await tx.$queryRawUnsafe('SELECT transaction_id FROM financial_transactions WHERE transaction_id = $1 FOR UPDATE', Number(transactionId));
       const original = await tx.financialTransaction.findUnique({ where: { transaction_id: Number(transactionId) } });
       if (!original) throw new NotFoundError({ message: 'Transaction not found' });

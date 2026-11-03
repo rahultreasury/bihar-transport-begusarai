@@ -106,7 +106,10 @@ class JournalService {
     if (tx) {
       return runner(tx);
     }
-    return this.prisma.$transaction(async (db) => runner(db));
+    return this.prisma.$transaction(async (db) => runner(db), {
+      max_wait: 15000,
+      timeout: 15000,
+    });
   }
 
   async isBalanced(journalId) {
