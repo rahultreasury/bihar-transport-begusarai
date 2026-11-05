@@ -1,6 +1,6 @@
 import { useState, useContext } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { AuthContext } from '../App';
+import { AuthContext } from '../contexts/AuthContext';
 import { authAPI } from '../services/api';
 
 function Login() {
@@ -10,13 +10,13 @@ function Login() {
   
   const from = location.state?.from || '/dashboard';
 
+  const [loginType, setLoginType] = useState('customer'); // 'customer' | 'admin' | 'partner'
   const [formData, setFormData] = useState({
     email: '',
     password: ''
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [showAdminLogin, setShowAdminLogin] = useState(false);
 
   const handleChange = (e) => {
     setFormData(prev => ({
@@ -26,30 +26,65 @@ function Login() {
   };
 
   const handleSubmit = async (e) => {
+    console.log('[Login] handleSubmit CALLED');
+    console.log('[Login] Calling e.preventDefault()...');
     e.preventDefault();
+    console.log('[Login] e.preventDefault() EXECUTED');
     setError('');
     setLoading(true);
 
     try {
-      const endpoint = showAdminLogin ? '/auth/admin-login' : '/auth/login';
-      const response = await authAPI.login(formData);
-      
-      if (response.data.success) {
-        login(response.data.data, response.data.token);
-        
-        // Redirect based on role
-        if (response.data.data.role === 'admin' || response.data.data.role === 'super_admin') {
+      console.log('[Login] loginType:', loginType);
+      if (loginType === 'admin') {
+        console.log('[Login] Calling authAPI.adminLogin()...');
+        const response = await authAPI.adminLogin(formData);
+        console.log('[Login] Admin login response:', response?.data);
+        if (response.data.success) {
+          console.log('[Login] Admin login SUCCESS, navigating to /admin');
+          login(response.data.data, response.data.token);
           navigate('/admin');
-        } else if (response.data.data.role === 'driver') {
-          navigate('/driver-dashboard');
         } else {
-          navigate(from);
+          throw new Error(response.data.message || 'Admin login failed');
+        }
+      } else if (loginType === 'partner') {
+        console.log('[Login] Calling authAPI.partnerLogin()...');
+        const response = await authAPI.partnerLogin(formData);
+        console.log('[Login] Partner login response:', response?.data);
+        if (response.data.success) {
+          console.log('[Login] Partner login SUCCESS');
+          login(response.data.data, response.data.token);
+          navigate('/partner/dashboard');
+        } else {
+          throw new Error(response.data.message || 'Partner login failed');
+        }
+      } else {
+        console.log('[Login] Calling authAPI.login()...');
+        const response = await authAPI.login(formData);
+        console.log('[Login] Customer login response:', response?.data);
+        if (response.data.success) {
+          console.log('[Login] Customer login SUCCESS');
+          login(response.data.data, response.data.token);
+          if (response.data.data.role === 'admin' || response.data.data.role === 'super_admin') {
+            navigate('/admin');
+          } else if (response.data.data.role === 'driver') {
+            navigate('/driver-dashboard');
+          } else {
+            navigate(from);
+          }
         }
       }
     } catch (err) {
-      setError(err.response?.data?.message || 'Login failed');
+      console.log('[Login] CATCH block, error:', err?.message, 'status:', err?.response?.status);
+      if (err._isTimeout) {
+        setError('The server is taking too long to respond. Please try again.');
+      } else if (err._isNetworkError) {
+        setError('Unable to connect to the server. Please try again.');
+      } else {
+        setError(err.response?.data?.message || 'Login failed');
+      }
     } finally {
       setLoading(false);
+      console.log('[Login] handleSubmit COMPLETE');
     }
   };
 
@@ -61,8 +96,7 @@ function Login() {
           <Link to="/" className="inline-flex items-center space-x-3 mb-4">
             <div className="bg-amber-500 p-2 rounded-lg">
               <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0zM13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0" />
               </svg>
             </div>
             <div className="text-left">
@@ -78,17 +112,24 @@ function Login() {
         <div className="flex justify-center mb-6">
           <button
             type="button"
-            onClick={() => setShowAdminLogin(false)}
-            className={`px-4 py-2 rounded-l-lg ${!showAdminLogin ? 'bg-amber-500 text-white' : 'bg-gray-200 text-gray-700'}`}
+            onClick={() => setLoginType('customer')}
+            className={`px-4 py-2 rounded-l-lg ${loginType === 'customer' ? 'bg-amber-500 text-white' : 'bg-gray-200 text-gray-700'}`}
           >
             Customer Login
           </button>
           <button
             type="button"
-            onClick={() => setShowAdminLogin(true)}
-            className={`px-4 py-2 rounded-r-lg ${showAdminLogin ? 'bg-amber-500 text-white' : 'bg-gray-200 text-gray-700'}`}
+            onClick={() => setLoginType('admin')}
+            className={`px-4 py-2 ${loginType === 'admin' ? 'bg-amber-500 text-white' : 'bg-gray-200 text-gray-700'}`}
           >
             Admin Login
+          </button>
+          <button
+            type="button"
+            onClick={() => setLoginType('partner')}
+            className={`px-4 py-2 rounded-r-lg ${loginType === 'partner' ? 'bg-amber-500 text-white' : 'bg-gray-200 text-gray-700'}`}
+          >
+            Partner Login
           </button>
         </div>
 
@@ -126,6 +167,13 @@ function Login() {
             </div>
           </div>
 
+          {/* Forgot Password Link */}
+          <p className="text-right mt-2">
+            <Link to="/forgot-password" className="text-sm text-amber-500 hover:underline">
+              Forgot password?
+            </Link>
+          </p>
+
           <button
             type="submit"
             disabled={loading}
@@ -134,7 +182,7 @@ function Login() {
             {loading ? 'Signing in...' : 'Sign In'}
           </button>
 
-          {!showAdminLogin && (
+          {loginType === 'customer' && (
             <p className="text-center text-gray-600 mt-4">
               Don't have an account?{' '}
               <Link to="/signup" className="text-amber-500 hover:underline font-medium">
@@ -142,19 +190,19 @@ function Login() {
               </Link>
             </p>
           )}
+          {loginType === 'partner' && (
+            <p className="text-center text-gray-600 mt-4">
+              Not registered yet?{' '}
+              <Link to="/partner" className="text-amber-500 hover:underline font-medium">
+                Become a Partner
+              </Link>
+            </p>
+          )}
         </form>
 
-        {/* Demo Credentials */}
-        <div className="mt-6 p-4 bg-blue-50 rounded-lg">
-          <p className="text-sm font-semibold text-blue-800 mb-2">Demo Credentials:</p>
-          <p className="text-sm text-blue-700">Customer: rahul.kumar@email.com</p>
-          <p className="text-sm text-blue-700">Admin: admin@bihartransport.com</p>
-          <p className="text-xs text-blue-600 mt-1">Password for all: password123</p>
-        </div>
       </div>
     </div>
   );
 }
 
 export default Login;
-

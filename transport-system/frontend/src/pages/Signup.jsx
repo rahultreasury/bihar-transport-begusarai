@@ -17,11 +17,7 @@ function Signup() {
     city: 'Begusarai',
     // Driver specific fields
     license_number: '',
-    license_expiry: '',
-    aadhar_number: '',
-    date_of_birth: '',
-    gender: 'male',
-    experience_years: ''
+    license_expiry: ''
   });
 
   const [loading, setLoading] = useState(false);
@@ -242,59 +238,6 @@ function Signup() {
                       onChange={handleChange}
                       className="input-field"
                       required={userType === 'driver'}
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="label">Aadhar Number *</label>
-                    <input
-                      type="text"
-                      name="aadhar_number"
-                      value={formData.aadhar_number}
-                      onChange={handleChange}
-                      className="input-field"
-                      maxLength={12}
-                      placeholder="123456789012"
-                      required={userType === 'driver'}
-                    />
-                  </div>
-                  <div>
-                    <label className="label">Date of Birth *</label>
-                    <input
-                      type="date"
-                      name="date_of_birth"
-                      value={formData.date_of_birth}
-                      onChange={handleChange}
-                      className="input-field"
-                      required={userType === 'driver'}
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="label">Gender *</label>
-                    <select
-                      name="gender"
-                      value={formData.gender}
-                      onChange={handleChange}
-                      className="input-field"
-                      required={userType === 'driver'}
-                    >
-                      <option value="male">Male</option>
-                      <option value="female">Female</option>
-                      <option value="other">Other</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="label">Experience (Years)</label>
-                    <input
-                      type="number"
-                      name="experience_years"
-                      value={formData.experience_years}
-                      onChange={handleChange}
-                      className="input-field"
-                      min={0}
                     />
                   </div>
                 </div>

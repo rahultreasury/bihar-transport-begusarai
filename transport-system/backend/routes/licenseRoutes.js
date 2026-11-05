@@ -1,46 +1,26 @@
 const express = require('express');
 const router = express.Router();
-const { db } = require('../config/database');
+const { prisma } = require('../config/prisma');
 
 // Search license by license number
-router.get('/search/:licenseNumber', (req, res) => {
-  const { licenseNumber } = req.params;
-  
-  // First check in drivers table (our registered drivers)
-  const sql = `
-    SELECT 
-      d.driver_id,
-      d.license_number,
-      d.license_expiry,
-      d.aadhar_number,
-      d.date_of_birth,
-      d.gender,
-      d.is_verified,
-      d.rating,
-      d.total_deliveries,
-      u.first_name || ' ' || u.last_name as holder_name,
-      u.email,
-      u.phone,
-      'permanent' as license_type,
-      'Bihar' as state,
-      'RTO Begusarai' as issuing_authority,
-      CASE 
-        WHEN d.license_expiry > date('now') THEN 'active'
-        ELSE 'expired'
-      END as status
-    FROM drivers d
-    LEFT JOIN users u ON d.user_id = u.user_id
-    WHERE d.license_number = ?
-  `;
-  
-  db.get(sql, [licenseNumber], (err, license) => {
-    if (err) {
-      console.error('Database error:', err);
-      return res.status(500).json({
-        success: false,
-        message: 'Database error'
-      });
-    }
+router.get('/search/:licenseNumber', async (req, res) => {
+  try {
+    const { licenseNumber } = req.params;
+    
+    // First check in drivers table (our registered drivers)
+    const license = await prisma.driver.findFirst({
+      where: { license_number: licenseNumber },
+      include: {
+        user: {
+          select: {
+            first_name: true,
+            last_name: true,
+            email: true,
+            phone: true,
+          },
+        },
+      },
+    });
     
     if (license) {
       const today = new Date();
@@ -54,16 +34,27 @@ router.get('/search/:licenseNumber', (req, res) => {
       return res.json({
         success: true,
         data: {
-          ...license,
+          driver_id: license.driver_id,
+          license_number: license.license_number,
+          license_expiry: license.license_expiry,
+          is_verified: license.is_verified,
+          rating: license.rating,
+          total_deliveries: license.total_deliveries,
+          holder_name: `${license.user.first_name} ${license.user.last_name}`,
+          email: license.user.email,
+          phone: license.user.phone,
+          license_type: 'permanent',
+          state: 'Bihar',
+          issuing_authority: 'RTO Begusarai',
+          status: license.license_expiry > new Date().toISOString().split('T')[0] ? 'active' : 'expired',
           issue_date: '2020-01-15',
           expiry_date: license.license_expiry,
           expiry_status,
-          blood_group: 'O+',
           contact: {
-            email: license.email,
-            phone: license.phone
-          }
-        }
+            email: license.user.email,
+            phone: license.user.phone,
+          },
+        },
       });
     }
     
@@ -75,8 +66,6 @@ router.get('/search/:licenseNumber', (req, res) => {
         state: 'Bihar',
         issuing_authority: 'RTO Begusarai',
         holder_name: 'Rahul Kumar',
-        date_of_birth: '1990-05-15',
-        gender: 'male',
         blood_group: 'O+',
         issue_date: '2020-01-15',
         expiry_date: '2030-06-15',
@@ -89,8 +78,6 @@ router.get('/search/:licenseNumber', (req, res) => {
         state: 'Bihar',
         issuing_authority: 'RTO Patna',
         holder_name: 'Priya Singh',
-        date_of_birth: '1992-08-22',
-        gender: 'female',
         blood_group: 'A+',
         issue_date: '2021-03-20',
         expiry_date: '2031-03-20',
@@ -103,8 +90,6 @@ router.get('/search/:licenseNumber', (req, res) => {
         state: 'Bihar',
         issuing_authority: 'RTO Muzaffarpur',
         holder_name: 'Amit Pandey',
-        date_of_birth: '1988-12-01',
-        gender: 'male',
         blood_group: 'B+',
         issue_date: '2019-11-10',
         expiry_date: '2029-11-10',
@@ -117,8 +102,6 @@ router.get('/search/:licenseNumber', (req, res) => {
         state: 'Bihar',
         issuing_authority: 'RTO Bhagalpur',
         holder_name: 'Sanjay Kumar',
-        date_of_birth: '1995-03-10',
-        gender: 'male',
         blood_group: 'AB+',
         issue_date: '2023-06-01',
         expiry_date: '2024-06-01',
@@ -139,23 +122,55 @@ router.get('/search/:licenseNumber', (req, res) => {
       success: false,
       message: 'License not found'
     });
-  });
+  } catch (error) {
+    console.error('Database error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Database error',
+    });
+  }
 });
 
 // Get all licenses (admin)
-router.get('/', (req, res) => {
-  const sql = `
-    SELECT d.*, u.first_name, u.last_name, u.email, u.phone
-    FROM drivers d
-    LEFT JOIN users u ON d.user_id = u.user_id
-  `;
-  
-  db.all(sql, [], (err, licenses) => {
-    if (err) {
-      return res.status(500).json({ success: false, message: 'Database error' });
-    }
-    res.json({ success: true, data: licenses });
-  });
+router.get('/', async (req, res) => {
+  try {
+    const licenses = await prisma.driver.findMany({
+      include: {
+        user: {
+          select: {
+            first_name: true,
+            last_name: true,
+            email: true,
+            phone: true,
+          },
+        },
+      },
+    });
+
+    // Flatten to match original SQL response format
+    const flattened = licenses.map((d) => ({
+      driver_id: d.driver_id,
+      user_id: d.user_id,
+      license_number: d.license_number,
+      license_expiry: d.license_expiry,
+      profile_image: d.profile_image,
+      is_available: d.is_available,
+      is_verified: d.is_verified,
+      rating: d.rating,
+      total_deliveries: d.total_deliveries,
+      created_at: d.created_at,
+      updated_at: d.updated_at,
+      first_name: d.user.first_name,
+      last_name: d.user.last_name,
+      email: d.user.email,
+      phone: d.user.phone,
+    }));
+
+    res.json({ success: true, data: flattened });
+  } catch (error) {
+    console.error('Database error:', error);
+    res.status(500).json({ success: false, message: 'Database error' });
+  }
 });
 
 module.exports = router;

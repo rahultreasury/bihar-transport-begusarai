@@ -1,53 +1,92 @@
 const jwt = require('jsonwebtoken');
-const { get } = require('../config/database');
+const { prisma } = require('../config/prisma');
 
 // Protect routes - verify JWT token (for users and drivers)
 const protect = async (req, res, next) => {
   let token;
 
+  console.log('[AUTH] protect middleware entered');
+
   if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
     try {
       token = req.headers.authorization.split(' ')[1];
       
+      console.log('[AUTH] Token extracted, verifying...');
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      console.log('[AUTH] Token decoded, type:', decoded.type, 'id:', decoded.id);
       
       // Check if it's an admin token (has type: 'admin') or user token
       if (decoded.type === 'admin') {
-        // Get admin from token
-        const admin = await get(
-          'SELECT admin_id as user_id, full_name as first_name, email, role FROM admins WHERE admin_id = ?',
-          [decoded.id]
-        );
+        console.log('[AUTH] Looking up admin by id:', decoded.id);
+        // Get admin from token via Prisma
+        const admin = await prisma.admin.findUnique({
+          where: { admin_id: decoded.id },
+          select: {
+            admin_id: true,
+            full_name: true,
+            email: true,
+            role: true,
+          },
+        });
 
         if (!admin) {
+          console.log('[AUTH] Admin not found for id:', decoded.id);
           return res.status(401).json({
             success: false,
             message: 'Admin not found'
           });
         }
 
-        req.user = admin;
-        req.user.role = admin.role; // Use the admin role (super_admin, admin, operator)
+        console.log('[AUTH] Admin found:', admin.full_name, 'role:', admin.role);
+        req.user = {
+          kind: 'admin',
+          user_id: admin.admin_id,
+          first_name: admin.full_name,
+          email: admin.email,
+          role: admin.role,
+        };
+        console.log('[AUTH] Calling next() for admin');
         next();
+        return;
       } else {
-        // Get user from token
-        const user = await get(
-          'SELECT user_id, first_name, last_name, email, phone, role FROM users WHERE user_id = ?',
-          [decoded.id]
-        );
+        console.log('[AUTH] Looking up user by id:', decoded.id);
+        // Get user from token via Prisma
+        const user = await prisma.user.findUnique({
+          where: { user_id: decoded.id },
+          select: {
+            user_id: true,
+            first_name: true,
+            last_name: true,
+            email: true,
+            phone: true,
+            role: true,
+          },
+        });
 
         if (!user) {
+          console.log('[AUTH] User not found for id:', decoded.id);
           return res.status(401).json({
             success: false,
             message: 'User not found'
           });
         }
 
-        req.user = user;
+        console.log('[AUTH] User found:', user.first_name, 'role:', user.role);
+        req.user = {
+          kind: 'user',
+          user_id: user.user_id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          email: user.email,
+          phone: user.phone,
+          role: user.role,
+        };
+        console.log('[AUTH] Calling next() for user');
         next();
+        return;
       }
     } catch (error) {
-      console.error('Auth middleware error:', error.message);
+      console.error('[AUTH] Auth middleware error:', error.message);
       return res.status(401).json({
         success: false,
         message: 'Not authorized, token failed'
@@ -56,6 +95,7 @@ const protect = async (req, res, next) => {
   }
 
   if (!token) {
+    console.log('[AUTH] No token provided');
     return res.status(401).json({
       success: false,
       message: 'Not authorized, no token'

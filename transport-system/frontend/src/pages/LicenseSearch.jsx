@@ -190,14 +190,6 @@ function LicenseSearch() {
                     <p className="font-semibold">{license.holder_name}</p>
                   </div>
                   <div>
-                    <p className="text-sm text-gray-500">Date of Birth</p>
-                    <p className="font-semibold">{new Date(license.date_of_birth).toLocaleDateString('en-IN')}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-500">Gender</p>
-                    <p className="font-semibold capitalize">{license.gender}</p>
-                  </div>
-                  <div>
                     <p className="text-sm text-gray-500">Blood Group</p>
                     <p className="font-semibold">{license.blood_group || 'N/A'}</p>
                   </div>

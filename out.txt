@@ -1,0 +1,1829 @@
+Bihar Transport — Complete Transport Software Workflow
+
+Recommended workflow
+       ENQUIRY
+             ↓
+       GIVE RATE
+              ↓
+ORDER CONFIRMED
+               ↓
+WAITING FOR VEHICLE
+                ↓
+     VEHICLE HIRED
+                 ↓
+SENT TO LOADING POINT
+                  ↓
+LOADED / WAITING FOR DISPATCH
+                   ↓
+            DISPATCHED
+                     ↓
+              IN TRANSIT
+                      ↓
+REACHED DELIVERY POINT
+                      ↓
+                DELIVERED
+    ┌──────── ┴ ─────────┐
+    │                                             │
+  POD NOT REQUIRED    POD REQUIRED
+              │                                  │
+              ↓                               ↓
+          COMPLETED          POD PENDING
+                                                 ↓
+                                         POD RECEIVED
+                                  ↓
+                             COMPLETED
+
+1. ENQUIRY
+The first stage is an enquiry.
+Enquiry screen
+Enquiry No.       ENQ-2026-00125
+Date :- 22-09-26
+Party:- Aasan OPD
+Contact Person:- Kaushal
+Mobile:- 9798203741
+
+Pickup City:- Begusarai
+Drop City:- Khagaria
+
+Pickup Location:- full address
+Drop Location:- full address
+
+Goods:- Pipe 20ft
+Quantity:- 100pcs
+Weight:- 7 tons
+
+Trip Type:- One Way/Two Way
+Distance:- 60 Km
+
+Vehicle Type:-DCM
+Vehicle Size:-22ft
+
+Trip Date :- 22-09-26
+Expected Delivery :-22-09-26
+Remarks:- Need all original documents for gate pass 
+
+[Save] [Quote Rate]
+Status
+At this point, there is no confirmed business.
+Plan for changes: Consider an enquiry status such as Open, Quoted, On Hold, Lost, or Converted to Order. “No confirmed business” is a useful rule; retaining lost or unconverted enquiries helps with follow-up and reporting.
+  Assigned To: the staff member responsible for handling the enquiry.
+  Enquiry Source: how it came in, such as a phone call, WhatsApp, or referral.
+
+2. QUOTATION / RATE
+From the enquiry, click:
+Give Rate
+Rate Type :- FIXED
+Rate:-
+Freight:- 6000
+GST Type:- RCM
+GST%:- 5%
+Total Freight:- 6000
+Validity:-15 Days
+Payment Schedule
+  Under Payment Schedule, choose one option:
+	•	Full Payment in Advance
+	•	Booking Amount + Advance After Loading + Balance at Unloading
+	•	Custom Schedule
+  Enter the schedule:
+	•	For the second option, enter Booking Amount: ₹2,000 and Advance After Loading: 80% of freight, including the booking amount. The balance is calculated automatically.
+	•	For Custom Schedule, add milestones, choose when each is due, and enter a fixed amount or percentage. The software shows the remaining balance.
+
+Additional charges 
+Charges Name:- Ditention 
+Rate :- 1500
+Quantity:- 2 Days
+Total :- 3000
+Total Aditional Charges :- 3000
+Additional charges Tax
+Total billing Amount:-9000
+[Save Quotation] [Download Quotation] [Send Quotation] [Confirm Order]
+A simple flow would be:
+	•	Save Quotation — saves the rate.
+	•	If the customer wants time, use Send Quotation and leave the enquiry open.
+	•	If the customer confirms on the call, select Confirm Order right there on the quotation screen.
+
+Status
+RATE QUOTED
+
+3. PARTY CONFIRMS
+When the party accepts:
+CONFIRM ORDER
+The system converts the enquiry into an Order/Trip.
+Example:
+Order No.: BT-2026-00125
+Status
+ORDER CONFIRMED
+The enquiry and order remain linked.
+
+4. ORDER / TRIP MASTER
+The Order page becomes the central page for the entire shipment.
+It should show:
+ORDER #BT-2026-00125
+Date
+Party
+Contact Person
+Mobile
+
+Pickup Location
+Drop Location
+
+Goods
+Quantity
+Weight
+
+Trip Type
+Distance
+
+Vehicle Type
+Vehicle Size
+
+Trip Date
+Expected Delivery 
+Remarks
+Payment Terms
+Rate As Per
+Rate
+Freight
+GST Type
+GST%
+Total Freight
+Remarks
+Additional charges
+Charges Name
+Rate
+Quantity
+Total
+Total Aditional Charges
+Additional charges Tax
+Total billing Amount
+
+
+
+Vehicle Status
+Loading Status
+Dispatch Status
+Delivery Status
+POD Status
+Payment Status
+And a progress bar:
+Enquiry → Quotation Rate →Order Confirmed → Vehicle HIred → Loading → Dispatch → Transit → Delivery → POD → Completed
+
+5. VEHICLE HIRING
+After confirmation:
+Status
+WAITING FOR VEHICLE
+The operator opens:
+Hire Vehicle
+There should be one universal Vehicle Hire page.
+Do NOT create separate Contract Hire and Commission Hire pages.
+
+6. VEHICLE HIRE PAGE
+Vehicle information
+Vehicle Number
+Vehicle Type
+Vehicle Size
+Vehicle Vendor
+Vendor Mobile
+Driver
+Driver Mobile
+(beside this there will be a note of important date like Tax Expiry,Insurance Expiry, PUCC Expiry, Fitness Expiry,Permit Expiry,National Permit Expiry and if it is about to expiry within 7 days)
+🟢 Valid 🟠 Expiring soon 🔴 Expired
+
+Billing arrangement
+Billing To:
+
+○ Consignor
+○ Consignee
+○ Third Party
+○ Vehicle Vendor
+Your agreed logic:
+Billing To
+Automatically determined Business Model
+Consignor
+Contract
+Consignee
+Contract
+Third Party
+Contract
+Vehicle Vendor
+Commission
+The software should automatically show:
+Business Model: CONTRACT
+or
+Business Model: COMMISSION
+Keep this field visible.
+For exceptional cases, an authorized user can change it.
+
+8. RATE AS PER
+Vehicle hire must have:
+Rate As Per:
+Rate
+Freight
+Transport Commision
+Net Freight
+Remarks
+
+Example: Rate As Per
+Per Trip
+Vehicle Hire Rate: ₹42,000
+Per Ton
+Rate: ₹5,000
+Quantity: 8 Ton
+
+Gross Hire = ₹40,000
+
+9. COMMISSION
+Commission should be part of the same Vehicle Hire page.
+No separate commission page.
+Commission Type
+Percentage
+Fixed Amount
+No Commission
+Default can be 5%, but the user can change it.
+Example — 5%
+Gross Vehicle Hire: ₹42,000
+Commission: 5%
+Commission Amount: ₹2,100
+Example — fixed
+Gross Vehicle Hire: ₹42,000
+Commission: ₹2,000
+Example — zero
+Gross Vehicle Hire: ₹42,000
+Commission: ₹0
+
+10. NET VEHICLE VENDOR PAYABLE
+This is extremely important.
+The calculation is:
+Gross Vehicle Hire − Commission = Net Payable to Vehicle Vendor
+Example:
+Gross Vehicle Hire       ₹42,000
+Less: Commission          ₹2,000
+────────────────────────────────
+Net Vendor Payable       ₹40,000
+The system must store all three separately.
+Do not replace ₹42,000 with ₹40,000.
+This allows your reports to show how much commission Bihar Transport earned.
+
+11. VEHICLE HIRED
+Once saved:
+Status
+VEHICLE HIRED
+And download challan /share challan
+The system records:
+Vehicle
+Vendor
+Driver
+Gross Hire
+Commission
+Net Vendor Payable
+And the trip moves to:
+WAITING FOR LOADING / TO LOADING POINT
+
+12. VEHICLE PAYMENT
+On every Hired Vehicle / Trip page, show:
+Make Transaction
+Also available through:
+Accounts → Vendor Ledger → Select Vendor → Make Transcation→Show Ledger
+Click on Make Transaction
+If Billing to is Consignor/Consignee/Third Party
+Vendor information
+Vendor: Rakesh Kumar (V-00341)
+Mobile: 98XXXXXX44
+Vehicle: BR04EF9012
+The system should automatically show the selected vendor's current ledger balance.
+Step 1 — Calculate amount due for this trip
+If previous balance is PAYABLE
+Particular	                            Amount
+Vehicle Hire — BT-2026-0012	₹10,000
+Transport Commission	                   -₹500
+Current Trip Payable        	   ₹9,500
+Previous Balance —                	   ₹1,500 Payable
+Net Balance        	                ₹11,000 Payable
+
+[ PAY ]   [ Collect ]
+
+Formula:
+Net Payable + Previous Payable = Total Payable
+If previous balance is RECEIVABLE
+Particular	                            Amount
+Vehicle Hire — BT-2026-0012	₹10,000
+Transport Commission	-                   ₹500
+Current Trip Payable                        ₹9,500
+Previous Balance —         	       ₹10,000 Receivable
+Net Balance                      	       ₹500 Receivable
+
+[ PAY ]   [ Collect ]
+
+
+Formula:
+Previous Receivable − Current Net Payable = Receivable
+Therefore:
+- Previous receivable > current payable → remaining Receivable
+- Previous receivable < current payable → remaining Payable
+Important
+The system should not force the user to pay the entire ₹11,000.
+For example:
+Total outstanding = ₹11,000 Payable
+User pays only ₹2,000 today.
+
+The voucher records:
+Actual payment = ₹2,000
+and the ledger becomes:
+Remaining Payable = ₹9,000
+This is important because you may pay the vendor in multiple advances/installments.
+
+
+PAYMENT ENTRY
+After clicking [ PAY VENDOR ]  
+Current Trip Payable: ₹9,500 Previous Balance: ₹10,000 Receivable Net Balance: ₹500 Receivable
+
+Payment Voucher No.: PV-2026-001
+Payment Date: [Date]
+Amount Paid: ₹2,000
+Load/Trip:
+[ BT-2026-00125 ▼ ]
+Payment Mode:
+[ Bank ▼ ]
+Options:
+- Bank
+- Cash
+- Settlement
+If Bank is selected
+Bank: [ HDFC Bank ▼ ]
+UTR: [________]
+If Cash is selected
+Show:
+Cash Account: Cash
+If Settlement is selected
+Show appropriate settlement reference/details.
+FUEL PAYMENT
+On the left side, show a separate payment component:
+Fuel / Pump Payment
+Petrol Pump: ABC Petrol Pump
+Date: [Date]
+Fuel Slip No.: [________]
+Fuel Type: [Diesel ▼]
+Default:
+Diesel
+Options:
+- Diesel
+- Petrol
+- CNG
+Amount: ₹2,000
+The system should treat this as value paid on behalf of the vendor, but the voucher should clearly identify it as fuel rather than cash/bank payment.
+So a single payment voucher can contain:
+Cash/Bank — Right Side
+₹1,000
+Fuel — Left Side
+₹2,000
+Total Vendor Payment = ₹3,000
+SAVE PAYMENT
+When the user clicks:
+[ SAVE ]
+the system should:
+1. Generate a unique Payment Voucher number.
+2. Record the actual amount paid.
+3. Link the payment to the selected Vendor.
+4. Link it to the Vehicle.
+5. Link it to the Load/Trip.
+6. Update the Vendor Ledger.
+7. Update the relevant Cash/Bank account.
+8. Update the Petrol Pump ledger for fuel payment.
+9. Generate the Payment Voucher PDF automatically.
+PAYMENT VOUCHER
+The generated document should look like:
+BIHAR TRANSPORT
+converting loads into trust since 1998
+PAYMENT VOUCHER
+Voucher No.: PV-2026-00452
+Date: 22 Sep 2026
+Paid To: Vendor A
+Vendor ID: V-00125
+Mobile: 98XXXXXX44
+Vehicle: BR01XX1234
+Payment Details
+Particular	                                   Amount
+Cash	                                                   ₹1,000
+Fuel Credit — ABC Petrol Pump	        ₹2,000
+TOTAL AMOUNT	                      ₹3,000
+
+
+Against Load/Trip: BT-2026-00125
+Amount in Words:
+Rupees Three Thousand Only
+Buttons after saving
+[ View Voucher ] [ Download PDF ] [ Share on WhatsApp ] [ Print ]
+When Share on WhatsApp is clicked, the generated PDF should be shared with the vendor.
+The vendor can therefore see exactly:
+₹1,000 Cash
+₹2,000 Fuel
+Total ₹3,000
+
+Click on Make Transaction
+If Billing to is Vehicle Vendor
+show:
+Vendor: Rakesh Kumar (V-00341)
+Mobile: 98XXXXXX44
+Vehicle: BR04EF9012
+Commission calculation
+Criteria 3 — Previous balance is RECEIVABLE
+Particular	                                                                Amount
+Current Trip Commission — BT-2026-0012	        ₹500
+(Gross Freight ₹10000)	                            
+Previous Balance —                                                         ₹1,500 Receivable	
+Net Balance       	                         ₹2,000 Receivable
+
+[ PAY ]   [ Collect ]
+
+
+Formula:
+Previous Receivable + Current Commission = Total Receivable
+Criteria 4 — Previous balance is PAYABLE
+Particular	                                                                 Amount
+Previous Balance —                                                          ₹1,500 Payable
+Less: Current Trip Commission — BT-2026-0012	        ₹500
+(Gross Freight ₹10000)	                            
+Net Balance	                                                                  ₹1,000 Payable
+
+[ PAY ]   [ Collect ]
+
+Formula:
+Previous Payable − Current Commission = Remaining Payable
+If commission is greater than previous payable:
+Commission − Previous Payable = Receivable
+Example:
+Previous Payable = ₹300
+Commission = ₹500
+₹500 − ₹300 = ₹200 Receivable
+COMMISSION RECEIPT ENTRY
+
+PAYMENT ENTRY
+After clicking [ RECEIVE COMMISSION ]
+Current Commission: ₹500 Receivable  Previous Balance: ₹1,500 Payable Net Balance: ₹1,000 Payable
+
+Receipt No.: MR-2026-001
+Receipt Date: [Date]
+Amount Received: ₹2,000
+Load/Trip:
+[ BT-2026-00125 ▼ ]
+Receipt Mode:
+[ Cash ▼ ]
+Options:
+- Bank
+- Cash
+- Settlement
+If Bank:
+Bank: [ HDFC Bank ▼ ]
+UTR: [________]
+Remarks: [________]
+MONEY RECEIPT
+Generated automatically after SAVE.
+BIHAR TRANSPORT
+MONEY RECEIPT
+Receipt No.: MR-2026-00452
+Date: 22 Sep 2026
+Received From: Vendor A
+Vendor ID: V-00125
+Mobile: 98XXXXXX44
+Vehicle: BR01XX1234
+Receipt Details
+Particular	Amount
+Cash	              ₹1,000
+TOTAL AMOUNT	₹1,000
+
+
+Against Load/Trip: BT-2026-00125
+Amount in Words:
+Rupees One Thousand Only
+Buttons
+[ View Receipt ] [ Download PDF ] [ Share on WhatsApp ] [ Print ]
+
+one more thing like a vehicle previous balance is 35000 receivable give load of 10000 paid 5000 advance trip ends but 5000 balance pending will show in trip payemnt histroy or how
+The Trip Payment History should show the ₹10,000 hire, the ₹5,000 advance paid, and the ₹5,000 still due for that trip. Completing the trip should not erase or automatically settle that balance.
+Trip BT-2026-00125 — Payment History
+Entry
+Amount
+Vehicle hire
+₹10,000
+Advance paid
+−₹5,000
+Trip balance payable
+₹5,000
+Show the ₹5,000 as Payment Pending on the trip, with a [Make Transaction] action to pay it later.
+The vendor’s ₹35,000 previous receivable should appear separately in the Vendor Ledger as an earlier balance. If your ledger offsets amounts across trips, it can show:
+	•	Previous amount receivable from vendor: ₹35,000
+	•	Current trip balance payable to vendor: ₹5,000
+	•	Net vendor balance: ₹30,000 receivable
+That keeps the trip history clear while the Vendor Ledger shows the overall position. Each payment should link to the trip it applies to, so the trip balance and vendor ledger update together.
+5:27 PM
+if vendor want to settle this 5000 in 35000 receivable how entry will be made
+5:28 PM
+Record it as a Settlement, since no cash or bank payment changes hands.
+On the trip or Vendor Ledger:
+	•	Click Make Transaction.
+	•	Choose Settlement.
+	•	Enter ₹5,000.
+	•	Link it to Trip BT-2026-00125.
+	•	Add a reference or remark, such as “Adjusted against vendor’s previous receivable.”
+	•	Click Save.
+The system then updates both records:
+	•	Trip: ₹5,000 balance payable → ₹0, Settled
+	•	Vendor Ledger: ₹35,000 receivable → ₹30,000 receivable
+Generate a Settlement Voucher for this entry so there’s a record, even though no cash was paid.
+
+
+C. VERY IMPORTANT — LEDGER LOGIC
+I recommend your developer use three separate concepts:
+1. Trip calculation
+What is actually owed from this particular trip?
+Example:
+Vehicle Hire ₹10,000 − Commission ₹500 = ₹9,500
+2. Previous ledger balance
+What was already outstanding before this transaction?
+Example:
+₹1,500 Payable
+3. Actual transaction/payment
+What did you actually pay or receive today?
+Example:
+Paid ₹2,000
+These should never be mixed together.
+Example
+Trip:
+Net Payable = ₹9,500
+Previous:
+Payable = ₹1,500
+Therefore:
+Total Outstanding = ₹11,000 Payable
+Today you pay:
+₹2,000	
+
+This gives you the flexibility you wanted: you can pay ₹500, ₹2,000, ₹10,000 or the entire amount whenever you actually make the payment.
+D. YOUR COMPLETE DOCUMENT FLOW
+When you owe vendor
+Trip → Vehicle Hire → Commission deduction → Vendor Payable
+Then:
+PAY V → Payment Voucher (PV)
+When vendor owes you commission
+Trip → Gross Freight → Transport Commission → Vendor balance
+Then:
+Collect → Money Receipt (MR)
+Fuel
+PAY → Fuel component → Petrol Pump Ledger + Vendor Ledger
+That structure fits both commission-based and contract-based trips, while still allowing multiple partial payments and advances.
+
+Accounts → Vendor Ledger → Select Vendor → Make Transcation→Show Ledger
+When Clicked Show Ledger
+Vendor Ledger — Rakesh Kumar (V-00341)
+Date
+Particular
+Load/Trip
+Debit
+Credit
+Balance
+22 Sep
+Vehicle Hire
+BT-2026-00125
+₹10,000 (Payable)
+—
+₹10,000 Payable
+22 Sep
+Transport Commission
+BT-2026-00125
+—
+₹500 (Receivable)
+₹9,500 Payable
+23 Sep
+Cash Payment
+BT-2026-00125
+—
+₹4,000 (Payment)
+₹5,500 Payable
+23 Sep
+Fuel — ABC Petroleum
+BT-2026-00125
+—
+₹5,000 (Payment)
+₹500 Payable
+23 Sep
+Transport Commission
+BT-2026-00126
+—
+₹3,000 (Receivable)
+₹2,500 Receivable
+23 Sep
+Commission Received — HDFC Bank
+BT-2026-00126
+—
+₹1,000 (Received)
+₹1,500 Receivable
+
+Above Entry Based on
+First contract base Hired Amount 10000 Transport Commission 500 Net Payable 9500
+Second Paid 4000 by cash And 5000 fuel from abc petroleum
+Third Commission Based fright Gross Freight 15000 Transport Commission 3000
+
+Fourth  Recieved 1000 in bank account HDFC bank
+
+
+13. SENT TO LOADING POINT
+When the vehicle starts for loading:
+SEND TO LOADING
+Status
+TO LOADING POINT
+
+14. VEHICLE REACHES LOADING POINT
+Click:
+ARRIVED AT LOADING
+Status
+WAITING FOR LOADING
+Dashboard should show:
+4 vehicles waiting for loading
+This is very useful operationally.
+
+
+17. LOADED
+Once loading is complete:
+MARK AS LOADED
+Status
+LOADED / WAITING FOR DISPATCH
+9. Bill Received from Party
+This should NOT necessarily be a separate operational status.
+Instead, create a document checklist:
+Transit Documents
+	•	☐ Party Invoice/Bill
+	•	☐ E-way Bill
+	•	☐ LR/GR
+	•	☐ Other documents
+So the trip can be loaded even if the party bill has not yet arrived.
+
+You can configure whether a particular document is mandatory before dispatch.
+If something mandatory is missing:
+DISPATCH BLOCKED — E-way Bill Pending
+This is better than allowing staff to accidentally dispatch without required documents.
+
+18. DISPATCH
+Once everything required is ready:
+DISPATCH VEHICLE
+Record:
+Dispatch Date
+Dispatch Time
+LR/GR
+POD Required
+Invoice Date
+Invoice Number
+Delivery Number
+Consignee Name
+Consignee Contact No
+Value of Goods (₹)
+Actual Quantity
+Actual Weight
+
+E-Way Bill Number 
+E-Way Bill Date
+Expiry Date 
+
+Transit Insurance
+- Insured: Yes/No
+- Insurance company
+- Policy number
+- Sum insured
+- Goods value
+- Certificate/document
+- Validity
+- Claim contact
+
+Additional chrges for company and vendor
+Status
+DISPATCHED
+
+19. IN TRANSIT
+After dispatch:
+Status
+IN TRANSIT
+The Trip page should clearly show:
+BT-TRIP-00125                               
+Gaya → Gurugram                             
+
+CUSTOMER                                    
+ABC Industries                              
+                                             
+CURRENT VEHICLE                             
+BR01XY9876                                  
+Driver: Amit Kumar                          
+Dispatched:
+20 Sep, 5:30 PM
+Expected Delivery:
+21 Sep
+                                             
+STATUS                                     
+🟢 In Transit
+
+[TRACKING] [DELIVER] [FINANCE] [MOVEMENT HISTORY]  
+[MORE]                      
+1. 📍 TRACKING
+Question it answers:
+"Where is my vehicle right now?"
+This is the live/current journey information.
+It should show:
+TRACKING
+
+Vehicle: BR01XY9876
+Driver: Amit Kumar
+
+Current Location:
+📍 Varanasi
+GPS:
+🟢 Connected
+
+Journey:
+Gaya ━━━━━━━●━━━━ Gurugram
+             ↑
+          Varanasi
+
+Distance travelled: 280 km
+Distance remaining: 650 km
+
+Expected arrival:
+25 Sep, 10:00 AM
+
+21. DELIVER
+After goods are unloaded and received:
+MARK DELIVERED
+Record:
+Consignor Name
+Billing Term
+Total Billing Amt
+Bal. Recievable
+POD Required
+Vehicle No.
+Hired Amount
+Bal Payable
+Date
+Consignee Name
+Pikup
+Drop
+Qty
+Weight
+Reporting Date & time
+Unloading Date & time
+
+Breakage 
+Excess
+Shortage
+Damage
+Fine Amount
+Received POD
+Remarks
+Additional Charges
+Status
+DELIVERED
+
+22. POD LOGIC
+This should be automatic based on whether POD is compulsory.
+At order/trip creation, have:
+POD Required?
+○ Yes
+○ No
+If NO
+DELIVERED
+   ↓
+COMPLETED
+If YES
+DELIVERED
+   ↓
+POD PENDING
+   ↓
+POD RECEIVED
+   ↓
+COMPLETED
+This is exactly the workflow you described.
+
+23. POD RECEIVED
+When POD arrives:
+UPLOAD POD
+Store:
+POD File
+Received Date
+Received By
+Remarks
+Then:
+Status
+POD RECEIVED
+and finally:
+Status
+COMPLETED
+
+
+3. 🚚 MOVEMENT HISTORY
+Question it answers:
+"What happened to this load from the beginning until now?"
+This is your Trip Timeline.
+Example:
+MOVEMENT HISTORY
+
+Movement History — Developer Specification
+Purpose
+Show a chronological, read-only timeline answering: “What happened to this load from the beginning until now?”
+Trip: BT-TRIP-00125 Route: Gaya → Gurugram Current vehicle: BR01XY9876
+Trip Timeline
+Date and time
+Location
+Event
+Details
+20 Sep, 10:00 AM
+📍 Gaya
+🚚 Vehicle arrived for loading
+Vehicle: HR55AB1234
+20 Sep, 10:30 AM
+📍 Gaya
+📦 Loading completed
+Recorded quantity and weight
+20 Sep, 11:00 AM
+📍 Gaya
+🚛 Vehicle departed
+Trip dispatched
+20 Sep, 4:05 PM
+📍 Varanasi
+⚠️ Breakdown reported
+Show the operator’s note, if entered
+20 Sep, 4:20 PM
+📍 Varanasi
+🔄 Vehicle changed
+Old: HR55AB1234 · New: BR01XY9876
+20 Sep, 4:35 PM
+📍 Varanasi
+▶️ Journey resumed
+Vehicle: BR01XY9876
+25 Sep, 9:15 AM
+📍 Gurugram
+🏁 Arrived at delivery point
+Arrival recorded
+25 Sep, 10:00 AM
+📍 Gurugram
+✅ Delivery completed
+Delivery details recorded
+25 Sep, 10:15 AM
+📍 Gurugram
+📄 POD uploaded
+Link to view or download the POD
+Each timeline entry should include
+	•	🕒 Date and time
+	•	📍 Location, when available
+	•	🔔 Event name
+	•	📝 Relevant details, such as vehicle number or operator note
+	•	👤 Person who recorded the event
+	•	📎 Attachment or document link, when applicable
+Behavior
+	•	Show events in chronological order, oldest first.
+	•	Add an entry automatically when the user completes an operational action, such as Arrived at Loading, Mark as Loaded, Dispatch Vehicle, Report Breakdown, Change Vehicle, Mark Delivered, or Upload POD.
+	•	Don’t require staff to enter an event again if it was already recorded by one of these actions.
+	•	Preserve the original event if details are corrected. Record who made the correction and when.
+	•	Keep the current trip status separate from the timeline. Status shows where the trip is now; Movement History shows its full history.
+
+3. 💰 FINANCE
+Finance = all money related to this particular trip.
+This is where your existing accounting system connects to the Trip.
+It should show both:
+Client 
+What you are going to receive from the customer.
+Vehicle Vendor
+What you have to pay the vehicle owner/vendor.
+
+Example
+Suppose:
+Client freight: ₹50,000
+Vehicle vendor: ₹42,000
+Then your Trip Finance screen could show:
+TRIP FINANCE
+If clicked Client
+Client
+
+Client information
+Clinet: Rakesh Kumar (C-00341)
+Mobile: 98XXXXXX44
+Adress:
+Particular	                            Amount
+Freight — BT-2026-0012	₹10,000
+Transport Commission	                   -₹500
+Current Trip Receivable        	   ₹9,500
+Previous Balance —                	   ₹1,500 Receivable
+Net Balance        	                ₹11,000 Receivable
+
+[Collect] If clicked collect open money receipt page
+
+
+If clicked 
+VEHICLE VENDOR
+Mentioned aboved
+
+
+TRIP MARGIN
+Contract base
+Customer Freight        ₹50,000
+Vehicle Hire                 ₹42,000
+--------------------------------
+Expected Margin         ₹ 6,000
+
+Commission base
+Gross Freight        ₹50,000
+Transport Commssion                 ₹2,000
+--------------------------------
+Expected Margin         ₹ 2,000
+
+
+Now consider your vehicle-change example
+This is where Finance becomes very useful.
+Original vehicle:
+HR55AB1234 — Vendor A
+Agreed amount: ₹42,000
+Then vehicle breaks down.
+New vehicle:
+BR01XY9876 — Vendor B
+Agreed amount: ₹45,000
+Your Trip should show:
+TRIP FINANCE
+
+CUSTOMER
+Freight                 ₹50,000
+
+VEHICLE COSTS
+────────────────────────────
+Vehicle 1
+HR55AB1234
+Vendor A                ₹42,000
+
+Vehicle 2
+BR01XY9876
+Vendor B                ₹45,000
+
+Total Vehicle Cost      ₹87,000
+Now your system can show:
+⚠️ Trip Margin
+Revenue: ₹50,000 Vehicle Cost: ₹87,000
+Loss: ₹37,000
+
+
+
+
+
+Under More:
+More
+🚚 Change Vehicle
+⚠️ Report Incident
+🛑 Cancel Trip
+🔄 Reassign Driver
+
+But I would actually make Change Vehicle directly visible when the trip is in transit:
+🚚 Change Vehicle
+That makes it very easy for your staff.
+
+2. When staff clicks "Change Vehicle"
+Don't simply ask:
+New vehicle number?
+Make a proper form.
+VEHICLE CHANGE
+Reason
+○ Breakdown ○ Transshipment ○ Accident ○ Other
+Then:
+Old Vehicle
+HR55AB1234
+Automatically filled and locked.
+New Vehicle
+[ Select existing vehicle ▼ ]
+If the vehicle is already registered in your system, select it.
+If it's a completely new vehicle:
++ Add New Vehicle
+Then select:
+New Driver
+[ Select driver ▼ ]
+
+3. Very important: don't delete the old vehicle
+This is critical.
+Suppose:
+10:00 AM
+HR55AB1234 starts the trip.
+Then at 4:00 PM it breaks down.
+You change it to:
+BR01XY9876
+Your software should NOT replace HR55AB1234 everywhere.
+Instead show:
+Vehicle History
+Time
+Vehicle
+Driver
+Reason
+10:00 AM
+HR55AB1234
+Raj Kumar
+Original
+4:05 PM
+BR01XY9876
+Amit Kumar
+Breakdown
+So later you can prove:
+The goods initially travelled in HR55AB1234 and were transferred to BR01XY9876 at 4:05 PM.
+
+4. Add the location of the change
+This is very useful.
+When changing vehicle:
+Change location
+	•	Address/place
+	•	Pincode
+	•	GPS location, if available
+	•	Date
+	•	Time
+Example:
+Location: Varanasi, UP Pincode: 221001 Date: 24/09/2026 Time: 4:05 PM
+
+5. Add proof
+Your software should ask for supporting documents/photos.
+Upload Proof
+	•	New vehicle number photo with Driver
+	•	6. Add a confirmation before changing
+	•	After entering everything:
+	•	VEHICLE CHANGE SUMMARY
+	•	
+	•	Old Vehicle:
+	•	HR55AB1234
+	•	
+	•	New Vehicle:
+	•	BR01XY9876
+	•	
+	•	Reason:
+	•	Breakdown
+	•	
+	•	Location:
+	•	Varanasi
+	•	
+	•	Date:
+	•	24/09/2026
+	•	
+	•	Time:
+	•	04:05 PM
+	•	
+	•	Driver:
+	•	Amit Kumar
+	•	Then:
+	•	[ Confirm Vehicle Change ]
+	•	Once confirmed, your system creates a new Vehicle Movement Record.
+
+What happens to the e-way bill?
+Your software should have:
+E-Way Bill section
+E-Way Bill
+No: 121234567890
+
+Current Vehicle:
+BR01XY9876
+
+Previous Vehicle:
+HR55AB1234
+
+[ Update Vehicle on E-Way Bill ]
+If you later integrate your software with the e-way bill API, the system can use the vehicle-update process. The official API supports vehicle updates and includes fields for the reason for vehicle change.
+Until API integration
+Your software should simply guide the staff:
+⚠️ Vehicle changed. Update the vehicle number in the applicable e-way bill Part B before continuing the movement.
+Don't make your own software pretend that the e-way bill has been updated unless your software actually connects to the government system and receives confirmation.
+After the vehicle is changed
+The Trip screen should now show:
+BT-TRIP-00125
+
+CURRENT VEHICLE
+🚚 BR01XY9876
+
+Driver
+Amit Kumar
+
+Status
+🟢 In Transit
+
+Original Vehicle
+HR55AB1234
+
+Vehicle Changes
+1
+Click Vehicle Changes (1) and see:
+Vehicle Change #1
+
+Old Vehicle:
+HR55AB1234
+
+New Vehicle:
+BR01XY9876
+
+Reason:
+Breakdown
+
+Location:
+Varanasi
+
+Changed:
+24 Sep 2026, 4:05 PM
+
+E-Way Bill:
+Updated / Pending
+
+Proof:
+📷 3 photos
+
+🚨 REPORT INCIDENT
+When clicked, select:
+- Vehicle missing
+- Driver unreachable
+- Accident
+- Breakdown
+- Theft
+- Delivery problem
+- Other
+When clicked vehicle missing
+Your software should have a simple checklist:
+VEHICLE MISSING
+
+☐ Called driver
+☐ Called vehicle owner
+☐ Checked GPS
+☐ Informed customer
+☐ Police complaint/report initiated
+☐ Insurance company informed
+☐ Documents collected
+☐ Evidence preserved
+☐ Vehicle recovered
+☐ Goods recovered
+☐ Incident closed
+Don't make these just notes.
+Each action should have:
+Date + Time + Person + Remark
+Example:
+22/09/2026 — 10:48 PM
+Called driver — no response
+By: Staff Akash
+
+Then:
+22/09/2026 — 10:55 PM
+Vendor informed
+By: Staff Akash
+
+This creates a proper history.
+After checklist the system immediately freezes the trip and displays all critical information:
+Create:
+Incident ID: INC-00125
+Automatically save:
+- Vehicle number
+- Owner/vendor
+- Driver
+- Driver mobile
+- RC details
+- Permit
+- Insurance
+- GPS last location
+- Last GPS timestamp
+- Last driver location
+- Loading location
+- Loading date/time
+- Destination
+- LR/GR
+- E-way bill
+- Goods description
+- Goods value
+- Consignor
+- Consignee
+- Freight
+- Advance paid
+- Diesel supplied/paid
+- All documents
+- Loading photos/video
+- Driver/vehicle confirmation form
+This creates a complete incident file.
+3. 📵 Driver Unreachable
+This is different from Vehicle Missing.
+Maybe the vehicle is still moving, but the driver isn't answering.
+Form
+INCIDENT: DRIVER UNREACHABLE
+
+Last Contact:
+10:25 AM
+
+Last Known Location:
+Varanasi
+
+Calls Attempted:
+3
+
+WhatsApp:
+Sent
+
+Vendor Contacted:
+Yes
+
+GPS:
+🟢 Vehicle Moving
+
+Remarks:
+________
+What the software should do
+Don't immediately mark the vehicle as missing.
+Instead:
+Trip Status: ⚠️ Driver Unreachable
+Then allow staff to:
+	•	Call again
+	•	Contact vendor
+	•	Check GPS
+	•	Add note
+	•	Escalate to supervisor
+If later the vehicle also disappears, staff can create a Vehicle Missing incident linked to the same Trip.
+4. 🚗 Accident
+This needs a more detailed form.
+Form
+INCIDENT: ACCIDENT
+
+Date:
+______
+
+Time:
+______
+
+Location:
+______
+
+Vehicle:
+HR55AB1234
+
+Driver:
+Raj Kumar
+
+Injuries:
+☐ No
+☐ Yes
+
+Third Party Involved:
+☐ No
+☐ Yes
+
+Vehicle Damage:
+☐ Minor
+☐ Major
+☐ Unknown
+
+Goods Damage:
+☐ No
+☐ Yes
+☐ Unknown
+
+Police Informed:
+☐ Yes
+☐ No
+
+Insurance Informed:
+☐ Yes
+☐ No
+
+Photos:
+📷 Upload
+
+
+Remarks:
+________
+Important
+If goods may be damaged, the system should allow you to create a Goods Damage incident linked to the accident rather than forcing staff to create a completely unrelated case.
+
+5. 🔧 Breakdown
+This is probably going to be common for your business.
+Form
+INCIDENT: BREAKDOWN
+
+Location:
+________
+
+Problem:
+☐ Engine
+☐ Tyre
+☐ Electrical
+☐ Mechanical
+☐ Other
+
+Vehicle Can Continue:
+☐ Yes
+☐ No
+
+Expected Repair Time:
+________
+Photos:
+📷
+Remarks:
+________
+Then give two buttons:
+[Continue With Same Vehicle]
+or
+[Change Vehicle]
+Or
+[Wait for Repair]
+If they select Change Vehicle, open the vehicle-change workflow we discussed earlier.
+So:
+Breakdown → Change Vehicle
+automatically creates a Vehicle Change event in Movement History.
+8. 🚨 Theft
+Keep this separate from Vehicle Missing.
+For example, the vehicle is still found but goods are stolen.
+Form
+INCIDENT: THEFT
+
+What was stolen?
+________
+
+Quantity:
+________
+
+Estimated Value:
+₹ ________
+
+Location:
+________
+
+Date/Time:
+________
+
+
+Police Reported:
+Yes/No
+
+Insurance Informed:
+Yes/No
+
+Customer Informed:
+Yes / No
+
+Upload:
+📷 Photos
+📄 Police documents
+📄 Insurance documents
+
+9. 🚚 Delivery Problem
+This is for things such as:
+	•	Consignee closed
+	•	Wrong address
+	•	Receiver refused
+	•	Delivery appointment unavailable
+	•	Customer requested delay
+	•	Documents missing
+	•	Vehicle reached but unloading didn't happen
+Form
+INCIDENT: DELIVERY PROBLEM
+
+Problem Type:
+
+○ Consignee unavailable
+○ Wrong address
+○ Delivery refused
+○ Waiting for unloading
+○ Documents problem
+○ Customer requested delay
+○ Other
+
+Current Location:
+________
+
+Next Action:
+________
+
+Remarks:
+________
+Then your Trip status can show:
+🟠 Delivery Delayed
+instead of simply saying "In Transit."
+
+10. Other
+For something that doesn't fit the predefined categories.
+Keep it simple:
+INCIDENT: OTHER
+
+Title:
+________
+
+Date/Time:
+________
+
+Location:
+________
+
+Description:
+________________
+
+Action Taken:
+________________
+
+Upload Documents:
+[Upload]
+
+
+
+
+
+15. DOCUMENT EXPIRY ALERTS
+This is another feature I strongly recommend.
+Your software should automatically alert you:
+30 days before
+🟠 Insurance expiring
+15 days before
+🟠 Permit expiring
+7 days before
+🔴 Fitness expiring
+And so on.
+You should have a dashboard:
+Document Expiry
+Vehicle	            Document	Expiry	 Status
+HR55AB1234	Insurance	15 Oct	  🟠
+HR12CD5678	Fitness	               25 Sep	  🔴
+BR01XY1234	Permit	               20 Dec	   🟢
+
+
+
+17. Your main dashboard
+I would make your Bihar Transport dashboard show:
+Today's Operations
+Loads: 18
+Vehicles in transit: 12
+Loading today: 4
+Delivered today: 7
+Pending POD: 3
+Alerts
+🔴 2 vehicles with expired documents
+🟠 5 documents expiring soon
+🔴 1 vehicle not reporting location
+🟠 2 delayed deliveries
+🟢 15 active trips
+Money
+Customer Receivable: ₹_____
+Vendor Payable: ₹_____
+Today's Collection: ₹_____
+Today's Payment: ₹_____
+
+20. REACHED DELIVERY POINT
+When the vehicle reaches the destination:
+ARRIVED AT DELIVERY
+Status
+AT DELIVERY POINT
+Record:
+	•	Arrival date/time
+	•	Delivery location
+	•	Receiver
+	•	Remarks
+
+
+24. CUSTOMER BILLING
+Customer billing should be independent from vehicle operations.
+A trip can be:
+Delivered + Customer Bill Pending
+or:
+Delivered + Customer Bill Generated + Payment Pending
+For example:
+Party Freight       ₹50,000
+GST                 ₹X
+Invoice Total       ₹X
+
+Invoice Status:
+Unbilled
+Billed
+Partially Paid
+Paid
+
+25. CUSTOMER PAYMENT
+Whenever the customer pays:
++ RECORD PAYMENT
+Same concept as vehicle payment.
+Customer Invoice: ₹50,000
+
+Payment 1: ₹20,000
+Payment 2: ₹15,000
+
+Total Received: ₹35,000
+Balance: ₹15,000
+No fixed payment schedule.
+
+26. THREE SEPARATE FINANCIAL CALCULATIONS
+This is very important for your developer.
+The system should not mix these.
+Customer side
+Customer Freight
+Example:
+₹50,000
+Vehicle side
+Gross Vehicle Hire
+₹42,000
+Your commission
+Commission Deducted from Vehicle Hire
+₹2,000
+Vendor payable
+₹42,000 − ₹2,000 = ₹40,000
+So the system knows:
+CUSTOMER
+Receivable: ₹50,000
+
+VEHICLE VENDOR
+Gross Hire: ₹42,000
+Commission: ₹2,000
+Net Payable: ₹40,000
+
+27. BUSINESS MODEL
+Your software should maintain:
+Contract
+If Billing To is:
+	•	Consignor
+	•	Consignee
+	•	Third Party
+Then:
+Business Model = CONTRACT
+The vehicle vendor payable is calculated from the vehicle-hire section.
+Commission
+If Billing To is:
+	•	Vehicle Vendor
+Then:
+Business Model = COMMISSION
+The commission calculation is still:
+Gross Vehicle Hire − Commission = Net Vendor Payable.
+The important thing is not to build two different operational systems.
+Both use the same Vehicle Hire module.
+29. MASTER TRIP STATUS
+Your main status progression should be:
+1. ENQUIRY
+       ↓
+2. RATE QUOTED
+       ↓
+3. ORDER CONFIRMED
+       ↓
+4. VEHICLE PENDING
+       ↓
+5. VEHICLE HIRED
+       ↓
+6. TO LOADING POINT
+       ↓
+7. AT LOADING POINT
+       ↓
+8. LOADED
+       ↓
+9. DISPATCHED
+       ↓
+10. IN TRANSIT
+       ↓
+11. AT DELIVERY POINT
+       ↓
+12. DELIVERED
+       ↓
+13. POD PENDING ──────┐
+       ↓              │
+14. POD RECEIVED ←────┘
+       ↓
+15. COMPLETED
+For trips where POD isn't required:
+DELIVERED
+   ↓
+COMPLETED
+Also allow:
+CANCELLED
+with cancellation reason and audit history.
+
+30. DON'T USE STATUS FOR EVERYTHING
+Your developer should keep these separate.
+A. Trip Status
+Where is the shipment operationally?
+Enquiry → Vehicle → Loading → Dispatch → Transit → Delivery → Completed
+B. Document Status
+Are documents available?
+Pending / Received / Generated
+C. Customer Payment Status
+Unbilled / Unpaid / Partially Paid / Paid
+D. Vehicle Vendor Payment Status
+Unpaid / Partially Paid / Paid
+E. POD Status
+Not Required / Pending / Received
+This prevents the software from becoming confusing.
+
+31. MAIN DASHBOARD
+Your dashboard should give you an instant picture.
+Today's operations
+NEW ENQUIRIES             8
+
+RATE QUOTED               5
+
+ORDERS CONFIRMED          7
+
+VEHICLE PENDING            4
+
+VEHICLES HIRED             9
+
+WAITING FOR LOADING        3
+
+LOADED                     5
+
+DISPATCHED                 6
+
+IN TRANSIT                18
+
+AT DELIVERY                2
+
+POD PENDING               11
+And financial alerts:
+CUSTOMER RECEIVABLE       ₹12,50,000
+
+VENDOR PAYABLE             ₹8,20,000
+
+POD PENDING                   11
+
+CUSTOMER PAYMENT PENDING       9
+
+VEHICLE PAYMENT PENDING        7
+
+32. TRIP DETAIL PAGE
+I would make this your most important screen.
+Header
+BT-2026-00125
+ABC Industries Muzaffarpur → Kolkata
+Progress
+ORDER CONFIRMED → VEHICLE → LOADING → DISPATCH → TRANSIT → DELIVERY → POD → COMPLETED
+Current status
+🟠 IN TRANSIT
+Tabs
+Overview | Vehicle | Loading | Documents | Billing | Payments | POD | History
+This allows your staff to work from one shipment record.
+
+33. HISTORY / AUDIT TRAIL
+Every important action should be recorded.
+Example:
+20 Sep 10:15
+Enquiry created — Staff A
+
+20 Sep 11:00
+Rate ₹50,000 quoted — Staff A
+
+20 Sep 12:30
+Order confirmed — Staff A
+
+20 Sep 13:15
+Vehicle BR01XX1234 hired — Staff B
+
+20 Sep 15:00
+Vehicle reached loading point — Staff B
+
+20 Sep 17:30
+Loading completed — Staff B
+
+20 Sep 18:00
+Dispatched — Staff B
+
+21 Sep 09:15
+Reached delivery point — Staff A
+
+21 Sep 11:00
+Delivered — Staff A
+
+22 Sep 14:20
+POD uploaded — Staff A
+
+22 Sep 14:25
+Trip completed
+Staff should not be able to silently change old records.
+
+34. The most important calculation rules for your developer
+Give your developer these formulas directly:
+Vehicle commission
+If Percentage:
+Commission = Gross Vehicle Hire × Commission %
+Net vendor payable
+Net Vendor Payable = Gross Vehicle Hire − Commission
+Vendor balance
+Vendor Balance = Net Vendor Payable − Total Vendor Payments
+Customer balance
+Customer Balance = Customer Invoice Total − Total Customer Payments
+Your vehicle-side commission income
+Commission Income = Commission deducted from Gross Vehicle Hire
+
+35. Example of one complete trip
+Let's put everything together.
+Customer
+ABC Industries
+Route
+Muzaffarpur → Kolkata
+Customer freight
+₹50,000
+Billing arrangement
+Consignor
+Business model
+Contract
+Vehicle
+BR01XX1234
+Vehicle vendor
+XYZ Transport
+Gross vehicle hire
+₹42,000
+Commission
+₹2,000
+Net vendor payable
+₹40,000
+Vendor payments
+₹10,000 ₹15,000 ₹5,000
+Total paid:
+₹30,000
+Balance:
+₹10,000
+Trip status
+DELIVERED
+POD
+Required: Yes
+POD received: No
+Therefore overall status:
+POD PENDING
+Once POD is uploaded:
+COMPLETED
+
+Missiing things
+. Petrol Pump screen
+Go to:
+Accounts → Petrol Pumps
+You see:
+ABC PETROL PUMP
+
+Credit Limit:             ₹2,00,000
+Current Outstanding:       ₹85,000
+
+This Month Fuel:           ₹45,000
+Previous Outstanding:      ₹40,000
+
+Total Outstanding:         ₹85,000
+And a transaction list:
+Date
+Vehicle
+Load/Trip
+Fuel
+Amount
+20 Sep
+BR01XX1234
+BT-2026-00125
+Diesel
+₹8,000
+21 Sep
+BR02YY5678
+BT-2026-00125
+Diesel
+₹6,500
+22 Sep
+BR03ZZ7890
+BT-2026-00125
+Diesel
+₹7,200
+
+8. Monthly pump bill
+When the pump gives you the monthly bill:
+Create Pump Bill
+ABC PETROL PUMP
+
+Period:
+01 Sep – 30 Sep
+
+Fuel Credit:
+₹85,000
+
+Bill No:
+[ ______ ]
+
+Bill Date:
+[ ______ ]
+
+Due Date:
+[ ______ ]
+
+[ CREATE BILL ]
+Now:
+Petrol Pump Payable = ₹85,000
+You don't create new fuel entries—the existing fuel transactions are already linked to the bill.
+
+9. When you finally pay the pump
+Click:
+Pay Pump
+ABC Petrol Pump
+
+Outstanding: ₹85,000
+
+Payment:
+₹85,000
+
+Payment Mode:
+Bank
+
+Bank:
+HDFC Bank
+
+UTR:
+XXXXXXXX
+
+[ SAVE PAYMENT ]
+Now:
+Pump Outstanding
+₹85,000 → ₹0
+And your bank decreases by ₹85,000.
+
+
+The one-line instruction for your developer
+You can give your developer this:
+“Build the system around one Trip/Order ID. An enquiry becomes a confirmed order, then vehicle hiring, loading, dispatch, transit, delivery and POD. Use one universal Vehicle Hire module where Billing To automatically determines Contract or Commission, Rate As Per determines the hire calculation, Commission can be 0%, percentage or fixed amount, and Net Vendor Payable = Gross Vehicle Hire − Commission. Vendor payments are recorded whenever they occur, with no fixed payment stage. Customer billing/payment, vendor payment, GST, documents and POD should be separate linked modules, while the Trip Status controls the operational lifecycle.”
+That structure gives you a single workflow for both your contract and commission business, without forcing your real-world operations into rigid rules.
+

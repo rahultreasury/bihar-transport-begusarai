@@ -1,6 +1,6 @@
 import { useState, useEffect, useContext } from 'react';
 import { appointmentAPI } from '../services/api';
-import { AuthContext } from '../App';
+import { AuthContext } from '../contexts/AuthContext';
 
 function Appointment() {
   const { user } = useContext(AuthContext);

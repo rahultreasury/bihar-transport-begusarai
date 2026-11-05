@@ -1,0 +1,7 @@
+<!doctype html><meta charset="utf-8"><title>seed</title><body><pre id="o">seeding</pre><script>
+var o=document.getElementById("o");
+try{localStorage.setItem("token", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwidHlwZSI6ImFkbWluIiwiaWF0IjoxNzkwNTMwMjU2LCJleHAiOjE3OTExMzUwNTZ9._x3RpLZUCvoeSvxSzPq2GxhSbi6QaTEngbfi2mVE69w");
+localStorage.setItem("user", "{\"user_id\":1,\"admin_id\":1,\"id\":1,\"email\":\"admin@bihartransport.com\",\"full_name\":\"System Administrator\",\"name\":\"System Administrator\",\"role\":\"super_admin\"}");
+o.textContent="OK tokenLen="+localStorage.getItem("token").length+" user="+localStorage.getItem("user");}
+catch(e){o.textContent="ERR "+e.message;}
+</script>

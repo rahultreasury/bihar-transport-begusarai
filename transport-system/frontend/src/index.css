@@ -4,105 +4,942 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ===========================================================================
+   BIHAR TRANSPORT — DESIGN TOKENS
+   ---------------------------------------------------------------------------
+   The master visual language for the admin console. The Enquiry page is the
+   reference implementation; every other module is expected to read from these
+   variables rather than inventing its own colours.
+
+   THE RULE: navy + white + soft grey carry the interface. Orange is a small,
+   deliberate accent — primary buttons, active navigation, focus rings, key
+   highlights. Never a whole card.
+   =========================================================================== */
+
 :root {
-  /* Brand Colors CSS Variables */
-  --primary-blue: #1a3a6b;
-  --accent-orange: #F5A623;
-  --card-bg: rgba(255,255,255,0.1);
-  --primary-color: #f59e0b;
-  --secondary-color: #0ea5e9;
-  --dark-color: #1e3a5f;
+  color-scheme: light;
+
+  /* ── Brand ───────────────────────────────────────────────────────────── */
+  --bt-navy: #15345B;
+  --bt-navy-dark: #102B4C;
+  --bt-orange: #F5A000;
+  --bt-orange-dark: #D98900;
+  --bt-orange-light: #FFF4DD;
+
+  /* ── Surfaces ────────────────────────────────────────────────────────── */
+  --bt-bg: #F6F8FB;
+  --bt-surface: #FFFFFF;
+  --bt-surface-soft: #F9FAFC;
+
+  /* ── Text ────────────────────────────────────────────────────────────── */
+  --bt-text-primary: #172033;
+  --bt-text-secondary: #66758C;
+  --bt-text-muted: #94A3B8;
+
+  /* ── Borders ─────────────────────────────────────────────────────────── */
+  --bt-border: #E3E8EF;
+  --bt-border-strong: #D5DDE8;
+
+  /* ── Status ──────────────────────────────────────────────────────────── */
+  --bt-success: #16A36A;
+  --bt-success-bg: #ECFDF5;
+  --bt-info: #1683C7;
+  --bt-info-bg: #EFF8FF;
+  --bt-warning: #F59E0B;
+  --bt-warning-bg: #FFF7E6;
+  --bt-danger: #E5484D;
+  --bt-danger-bg: #FFF1F2;
+
+  /* ── Geometry & depth ────────────────────────────────────────────────── */
+  --bt-radius-input: 10px;
+  --bt-radius-btn: 12px;
+  --bt-radius-card: 16px;
+  --bt-radius-modal: 20px;
+  --bt-shadow: 0 2px 10px rgba(16, 43, 76, 0.04);
+  --bt-shadow-hover: 0 6px 18px rgba(16, 43, 76, 0.07);
+  --bt-shadow-popover: 0 12px 32px rgba(16, 43, 76, 0.12);
+  --bt-shadow-modal: 0 24px 64px rgba(16, 43, 76, 0.18);
+  --bt-ring-orange: 0 0 0 3px rgba(245, 160, 0, 0.18);
+  --bt-transition: 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  --bt-header-height: 72px;
+  --bt-header-height-compact: 72px;
+
+  /* ── Legacy aliases, kept so older selectors keep resolving ──────────── */
+  --primary-blue: var(--bt-navy);
+  --accent-orange: var(--bt-orange);
+  --card-bg: var(--bt-surface);
+  --primary-color: var(--bt-orange);
+  --secondary-color: var(--bt-info);
+  --dark-color: var(--bt-navy);
 }
 
 html {
   scroll-behavior: smooth;
+  max-width: 100%;
 }
 
 body {
   font-family: 'Inter', system-ui, sans-serif;
   @apply bg-gray-50 text-gray-800;
+  max-width: 100%;
 }
 
+/* The admin console lives on --bt-bg. Everything inside AdminShell inherits it,
+   which is what keeps the workspace from reading as one flat white sheet. */
+.bt-app {
+  background: var(--bt-bg);
+  color: var(--bt-text-primary);
+}
+
+html.admin-dark {
+  color-scheme: dark;
+}
+
+html.admin-dark body {
+  @apply bg-gray-950 text-gray-200;
+}
+
+
 @layer components {
+  /* Premium searchable selector popover used by the admin assignment selectors.
+     A short, restrained entrance - no bounce, no gradient - just a 4px rise so
+     the result list reads as one surface lifting off the page. */
+  .bt-popover {
+    animation: btPopoverIn 150ms cubic-bezier(0.16, 1, 0.3, 1);
+    transform-origin: top center;
+    will-change: transform, opacity;
+  }
+  .bt-popover[data-drop='up'] {
+    transform-origin: bottom center;
+    animation-name: btPopoverInUp;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .bt-popover { animation: none; }
+  }
+
+  /* ── Semantic utilities ────────────────────────────────────────────────
+     These are the names the admin modules actually reference thousands of
+     times (`bg-surface`, `text-text`, `text-muted`, `border-border`, `bg-card`).
+     Retargeting them at the design tokens is what lets every existing page
+     inherit the Enquiry console's palette without touching its JSX. */
+  .bg-surface { background: var(--bt-bg); }
+  html.admin-dark .bg-surface { background: rgba(2,6,23,1); }
+
+  .text-text { color: var(--bt-text-primary); }
+  html.admin-dark .text-text { color: rgba(226,232,240,1); }
+
+  .text-muted { color: var(--bt-text-muted); }
+  html.admin-dark .text-muted { color: rgba(148,163,184,1); }
+
+  .bg-card { background: var(--bt-surface); }
+  html.admin-dark .bg-card { background: rgba(15,23,42,0.55); }
+
+  .bg-skeleton { background: rgba(148,163,184,0.25); }
+  html.admin-dark .bg-skeleton { background: rgba(148,163,184,0.18); }
+
+  .border-border { border-color: var(--bt-border); }
+  html.admin-dark .border-border { border-color: rgba(51,65,85,0.6); }
+
+  .bg-sidebar { background: rgba(255,255,255,0.06); }
+  html.admin-dark .bg-sidebar { background: rgba(15,23,42,0.4); }
+
+  .bg-header { background: var(--bt-surface); }
+  html.admin-dark .bg-header { background: rgba(15,23,42,0.35); }
+
+  .bg-hover { background: rgba(245,160,0,0.06); }
+  .bg-tableHead { background: var(--bt-surface-soft); }
+  html.admin-dark .bg-tableHead { background: rgba(2,6,23,0.4); }
+
+  /* ── Compatibility bridge ───────────────────────────────────────────────
+     Tailwind can only apply an opacity modifier (`/60`) to a colour that lives
+     in `theme.colors`. The semantic names above are hand-written classes, so
+     `border-border/60` and `bg-card/40` are never generated as utilities and
+     silently fall through to "no background / default border colour".
+
+     That is not a theoretical gap: the admin console uses `border-border/60`
+     ~430 times and `bg-card/40` ~150 times. The definitions below give those
+     names real values, drawn from the design tokens, so a card finally looks
+     like a card and a divider finally looks like a divider.
+
+     NOTE on `bg-card/*`: the `/40` came from the old glassmorphism era, where a
+     translucent panel over a dark surface read as "elevated". On the light
+     premium surface a 40%-alpha panel is simply muddy, so every `bg-card`
+     variant now resolves to the solid card surface. Elevation is expressed by
+     the border and the hairline shadow, not by translucency. */
+  .bg-card\/30, .bg-card\/40, .bg-card\/50, .bg-card\/60,
+  .bg-card\/70, .bg-card\/80, .bg-card\/90 { background: var(--bt-surface); }
+  html.admin-dark .bg-card\/40 { background: rgba(15,23,42,0.55); }
+
+  .border-border\/20 { border-color: rgba(227, 232, 239, 0.2); }
+  .border-border\/30 { border-color: rgba(227, 232, 239, 0.3); }
+  .border-border\/40 { border-color: rgba(227, 232, 239, 0.4); }
+  .border-border\/50 { border-color: rgba(227, 232, 239, 0.5); }
+  .border-border\/60 { border-color: rgba(227, 232, 239, 0.6); }
+  .border-border\/70 { border-color: rgba(227, 232, 239, 0.7); }
+  .border-border\/80 { border-color: rgba(227, 232, 239, 0.8); }
+  html.admin-dark .border-border\/60 { border-color: rgba(51,65,85,0.6); }
+
+  .bg-hover\/30 { background: rgba(245,160,0,0.03); }
+  .bg-hover\/40 { background: rgba(245,160,0,0.04); }
+  .bg-hover\/60 { background: rgba(245,160,0,0.06); }
+
+  .text-muted\/40 { color: rgba(148,163,184,0.4); }
+  .text-muted\/50 { color: rgba(148,163,184,0.5); }
+  .text-muted\/60 { color: rgba(148,163,184,0.6); }
+
+  .bg-surface\/95 { background: rgba(246,248,251,0.95); }
+  .bg-header\/30  { background: rgba(255,255,255,0.3); }
+  .bg-border     { background: var(--bt-border); }
+  .bg-border\/60 { background: rgba(227,232,239,0.6); }
+  .bg-muted      { background: var(--bt-text-muted); }
+  .bg-text       { background: var(--bt-text-primary); }
+  .border-text   { border-color: var(--bt-text-primary); }
+
+  /* =========================================================================
+     THE PREMIUM COMPONENT LAYER
+     -------------------------------------------------------------------------
+     These are the reusable building blocks of the Bihar Transport console. The
+     React wrappers in `components/admin-premium/ui/` render exactly these, and
+     pages may also use them directly. Keeping both halves in sync is what makes
+     the Enquiry workspace and, say, the Drivers table look like the same product.
+     ========================================================================= */
+
+  /* ── Surfaces ────────────────────────────────────────────────────────────
+     The layering the whole console depends on:
+       page (--bt-bg) → white card → 1px cool border → hairline shadow        */
+
+  .bt-card {
+    background: var(--bt-surface);
+    border: 1px solid var(--bt-border);
+    border-radius: var(--bt-radius-card);
+    box-shadow: var(--bt-shadow);
+    transition: box-shadow var(--bt-transition), border-color var(--bt-transition),
+                transform var(--bt-transition);
+  }
+
+  .bt-card-hover:hover {
+    box-shadow: var(--bt-shadow-hover);
+    border-color: var(--bt-border-strong);
+  }
+
+  /* Compact variant for dense operational panels (the Enquiry `Panel` feel) */
+  .bt-panel {
+    @apply bt-card;
+  }
+
+  /* Section header: [orange icon]  TITLE
+                            Subtitle                                    */
+  .bt-card-header {
+    @apply flex items-center justify-between gap-3 border-b border-bt-border px-5 py-4;
+  }
+
+  .bt-icon-chip {
+    @apply flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px];
+    background: var(--bt-orange-light);
+    color: var(--bt-orange-dark);
+  }
+
+  .bt-icon-chip-navy {
+    @apply flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px];
+    background: rgba(21, 52, 91, 0.06);
+    color: var(--bt-navy);
+  }
+
+  .bt-section-title {
+    @apply text-[17px] font-bold leading-tight text-bt-navy;
+  }
+
+  .bt-section-subtitle {
+    @apply mt-0.5 text-[13px] leading-relaxed text-bt-ink-2;
+  }
+
+  .bt-eyebrow {
+    @apply text-[11px] font-bold uppercase tracking-[0.12em] text-bt-ink-3;
+  }
+
+  /* ── Page hierarchy ────────────────────────────────────────────────────── */
+
+  .bt-page-title {
+    @apply text-bt-navy;
+    font-size: clamp(1.75rem, 2.2vw + 1rem, 2.125rem);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+  }
+
+  .bt-page-desc {
+    @apply mt-2 max-w-3xl text-[15px] leading-relaxed text-bt-ink-2;
+  }
+
+  .bt-page-wrap {
+    @apply mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8;
+  }
+
+  /* ── Buttons ─────────────────────────────────────────────────────────────
+     One geometry (10–12px radius, 40–46px tall, 180ms), four intents.         */
+
+  .bt-btn {
+    @apply inline-flex select-none items-center justify-center gap-2 whitespace-nowrap font-semibold;
+    height: 42px;
+    padding: 0 18px;
+    border-radius: var(--bt-radius-btn);
+    border: 1px solid transparent;
+    font-size: 14px;
+    transition: background-color var(--bt-transition), border-color var(--bt-transition),
+                color var(--bt-transition), box-shadow var(--bt-transition);
+  }
+
+  .bt-btn:focus-visible {
+    outline: none;
+    box-shadow: var(--bt-ring-orange);
+  }
+
+  .bt-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .bt-btn-sm { height: 36px; padding: 0 14px; font-size: 13px; }
+  .bt-btn-lg { height: 46px; padding: 0 24px; font-size: 15px; }
+  .bt-btn-icon { width: 42px; padding: 0; }
+  .bt-btn-sm.bt-btn-icon { width: 36px; }
+
+  /* Primary — important operational action */
+  .bt-btn-primary {
+    background: var(--bt-navy);
+    color: #fff;
+    box-shadow: 0 1px 2px rgba(16, 43, 76, 0.16);
+  }
+  .bt-btn-primary:hover:not(:disabled) { background: var(--bt-navy-dark); }
+
+  /* Accent — the brand action (high priority, use sparingly) */
+  .bt-btn-accent {
+    background: var(--bt-orange);
+    color: var(--bt-navy-dark);
+    box-shadow: 0 1px 2px rgba(217, 137, 0, 0.28);
+  }
+  .bt-btn-accent:hover:not(:disabled) { background: var(--bt-orange-dark); color: #fff; }
+
+  /* Header Quick Actions — Premium styling */
+  .bt-btn-header-vehicle-hire {
+    background: var(--bt-orange);
+    color: var(--bt-navy-dark);
+    border: 1px solid rgba(245, 160, 0, 0.6);
+    box-shadow: 0 2px 4px rgba(245, 160, 0, 0.25), 0 0 0 1px rgba(245, 160, 0, 0.15);
+    transition: all 200ms ease;
+    position: relative;
+  }
+  .bt-btn-header-vehicle-hire:hover:not(:disabled) {
+    background: var(--bt-orange-dark);
+    color: #fff;
+    box-shadow: 0 4px 8px rgba(245, 160, 0, 0.35), 0 0 12px rgba(245, 160, 0, 0.25), 0 0 0 1px rgba(245, 160, 0, 0.3);
+    transform: translateY(-1px);
+  }
+  .bt-btn-header-vehicle-hire:active:not(:disabled) {
+    transform: translateY(0);
+    box-shadow: 0 2px 4px rgba(245, 160, 0, 0.25), 0 0 8px rgba(245, 160, 0, 0.2);
+  }
+  .bt-btn-header-vehicle-hire:focus-visible:not(:disabled) {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(245, 160, 0, 0.4), 0 4px 8px rgba(245, 160, 0, 0.35), 0 0 12px rgba(245, 160, 0, 0.25);
+  }
+
+  .bt-btn-header-bookings {
+    background: var(--bt-surface);
+    color: var(--bt-text-primary);
+    border: 1px solid var(--bt-border-strong);
+    box-shadow: 0 1px 2px rgba(16, 43, 76, 0.08);
+    transition: all 200ms ease;
+  }
+  .bt-btn-header-bookings:hover:not(:disabled) {
+    background: var(--bt-surface-soft);
+    border-color: rgba(21, 52, 91, 0.5);
+    box-shadow: 0 4px 8px rgba(21, 52, 91, 0.12), 0 0 8px rgba(21, 52, 91, 0.08), 0 0 0 1px rgba(21, 52, 91, 0.1);
+    transform: translateY(-1px);
+  }
+  .bt-btn-header-bookings:active:not(:disabled) {
+    transform: translateY(0);
+    box-shadow: 0 2px 4px rgba(16, 43, 76, 0.08), 0 0 6px rgba(21, 52, 91, 0.06);
+  }
+  .bt-btn-header-bookings:focus-visible:not(:disabled) {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(21, 52, 91, 0.25), 0 4px 8px rgba(21, 52, 91, 0.12), 0 0 8px rgba(21, 52, 91, 0.08);
+  }
+
+  .bt-btn-header-financials {
+    background: #2563EB;
+    color: #fff;
+    border: 1px solid rgba(37, 99, 235, 0.6);
+    box-shadow: 0 2px 4px rgba(37, 99, 235, 0.25), 0 0 0 1px rgba(37, 99, 235, 0.15), 0 0 12px rgba(37, 99, 235, 0.3);
+    transition: all 200ms ease;
+    position: relative;
+  }
+  .bt-btn-header-financials:hover:not(:disabled) {
+    background: #1D4ED8;
+    color: #fff;
+    box-shadow: 0 4px 8px rgba(37, 99, 235, 0.35), 0 0 16px rgba(37, 99, 235, 0.4), 0 0 0 1px rgba(37, 99, 235, 0.4);
+    transform: translateY(-1px);
+  }
+  .bt-btn-header-financials:active:not(:disabled) {
+    transform: translateY(0);
+    box-shadow: 0 2px 4px rgba(37, 99, 235, 0.25), 0 0 10px rgba(37, 99, 235, 0.3), 0 0 0 1px rgba(37, 99, 235, 0.35);
+  }
+  .bt-btn-header-financials:focus-visible:not(:disabled) {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.5), 0 4px 8px rgba(37, 99, 235, 0.35), 0 0 16px rgba(37, 99, 235, 0.4);
+  }
+
+  .bt-btn-header-financials.active {
+    background: #1E40AF;
+    box-shadow: 0 2px 4px rgba(30, 64, 175, 0.35), 0 0 16px rgba(37, 99, 235, 0.5), 0 0 0 1px rgba(30, 64, 175, 0.6);
+  }
+
+  /* Create Order button — matches Financials header button style */
+  .bt-btn-create-order {
+    background: #2563EB;
+    color: #fff;
+    border: 1px solid rgba(37, 99, 235, 0.6);
+    box-shadow: 0 2px 4px rgba(37, 99, 235, 0.25), 0 0 0 1px rgba(37, 99, 235, 0.15), 0 0 12px rgba(37, 99, 235, 0.3);
+    transition: all 200ms ease;
+    position: relative;
+  }
+  .bt-btn-create-order:hover:not(:disabled) {
+    background: #1D4ED8;
+    color: #fff;
+    box-shadow: 0 4px 8px rgba(37, 99, 235, 0.35), 0 0 16px rgba(37, 99, 235, 0.4), 0 0 0 1px rgba(37, 99, 235, 0.4);
+    transform: translateY(-1px);
+  }
+  .bt-btn-create-order:active:not(:disabled) {
+    transform: translateY(0);
+    box-shadow: 0 2px 4px rgba(37, 99, 235, 0.25), 0 0 10px rgba(37, 99, 235, 0.3), 0 0 0 1px rgba(37, 99, 235, 0.35);
+  }
+  .bt-btn-create-order:focus-visible:not(:disabled) {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.5), 0 4px 8px rgba(37, 99, 235, 0.35), 0 0 16px rgba(37, 99, 235, 0.4);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .bt-btn-header-vehicle-hire,
+    .bt-btn-header-bookings,
+    .bt-btn-header-financials {
+      transition: none;
+      transform: none !important;
+    }
+    .bt-btn-header-vehicle-hire:hover:not(:disabled),
+    .bt-btn-header-bookings:hover:not(:disabled),
+    .bt-btn-header-financials:hover:not(:disabled) {
+      transform: none;
+    }
+    .bt-btn-header-vehicle-hire:active:not(:disabled),
+    .bt-btn-header-bookings:active:not(:disabled),
+    .bt-btn-header-financials:active:not(:disabled) {
+      transform: none;
+    }
+  }
+
+  /* Secondary — white with a hairline border */
+  .bt-btn-secondary {
+    background: var(--bt-surface);
+    border-color: var(--bt-border-strong);
+    color: var(--bt-text-primary);
+  }
+  .bt-btn-secondary:hover:not(:disabled) {
+    background: var(--bt-surface-soft);
+    border-color: #C3CDDC;
+  }
+
+  /* Ghost — no fill until hover */
+  .bt-btn-ghost {
+    background: transparent;
+    color: var(--bt-text-secondary);
+  }
+  .bt-btn-ghost:hover:not(:disabled) {
+    background: var(--bt-orange-light);
+    color: var(--bt-navy-dark);
+  }
+
+  /* Danger — destructive operations only */
+  .bt-btn-danger {
+    background: var(--bt-danger);
+    color: #fff;
+  }
+  .bt-btn-danger:hover:not(:disabled) { background: #C93A3F; }
+
+  .bt-btn-danger-outline {
+    background: var(--bt-surface);
+    border-color: rgba(229, 72, 77, 0.35);
+    color: var(--bt-danger);
+  }
+  .bt-btn-danger-outline:hover:not(:disabled) { background: var(--bt-danger-bg); }
+
+  /* ── Forms ─────────────────────────────────────────────────────────────── */
+
+  .bt-label {
+    @apply mb-1.5 block text-[13px] font-semibold text-bt-navy;
+  }
+
+  .bt-input,
+  .bt-select,
+  .bt-textarea {
+    @apply w-full outline-none;
+    background: var(--bt-surface);
+    border: 1px solid var(--bt-border-strong);
+    border-radius: var(--bt-radius-input);
+    padding: 0 14px;
+    height: 42px;
+    color: var(--bt-text-primary);
+    font-size: 14px;
+    transition: border-color var(--bt-transition), box-shadow var(--bt-transition);
+  }
+
+  .bt-textarea {
+    @apply h-auto py-2.5;
+    min-height: 96px;
+    line-height: 1.55;
+    resize: vertical;
+  }
+
+  /* Compact input variant for dense operational panels — 40px height */
+  .bt-input-sm {
+    height: 40px;
+    padding: 0 12px;
+    font-size: 13px;
+  }
+
+  .bt-input::placeholder,
+  .bt-textarea::placeholder { color: var(--bt-text-muted); }
+
+  .bt-input:hover:not(:disabled),
+  .bt-select:hover:not(:disabled),
+  .bt-textarea:hover:not(:disabled) { border-color: #C3CDDC; }
+
+  .bt-input:focus,
+  .bt-select:focus,
+  .bt-textarea:focus {
+    border-color: var(--bt-orange);
+    box-shadow: var(--bt-ring-orange);
+  }
+
+  .bt-input:disabled,
+  .bt-select:disabled,
+  .bt-textarea:disabled {
+    background: var(--bt-surface-soft);
+    color: var(--bt-text-muted);
+    cursor: not-allowed;
+  }
+
+  .bt-select {
+    @apply cursor-pointer appearance-none pr-10;
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%2366758C' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+  }
+
+  /* ── Status badges ───────────────────────────────────────────────────────
+     One shape, one dot, six semantic tones — identical everywhere.           */
+
+  .bt-badge {
+    @apply inline-flex items-center gap-1.5 whitespace-nowrap rounded-full font-semibold;
+    padding: 4px 11px;
+    font-size: 12px;
+    line-height: 1.25;
+  }
+
+  .bt-badge::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 9999px;
+    background: currentColor;
+    flex: none;
+  }
+
+  .bt-badge-plain::before { display: none; }
+
+  .bt-badge-success { background: var(--bt-success-bg); color: var(--bt-success); }
+  .bt-badge-info    { background: var(--bt-info-bg);    color: var(--bt-info); }
+  .bt-badge-warning { background: var(--bt-warning-bg); color: #B4740A; }
+  .bt-badge-danger  { background: var(--bt-danger-bg);  color: var(--bt-danger); }
+  .bt-badge-accent  { background: var(--bt-orange-light); color: var(--bt-orange-dark); }
+  .bt-badge-neutral { background: #F1F4F9; color: var(--bt-text-secondary); }
+  .bt-badge-navy    { background: rgba(21, 52, 91, 0.07); color: var(--bt-navy); }
+
+  /* ── Tables ──────────────────────────────────────────────────────────────
+     Generous row spacing, muted uppercase headings, quiet separators.        */
+
+  .bt-table-wrap {
+    @apply overflow-x-auto;
+    border: 1px solid var(--bt-border);
+    border-radius: var(--bt-radius-card);
+    background: var(--bt-surface);
+    box-shadow: var(--bt-shadow);
+  }
+
+  .bt-table {
+    @apply w-full min-w-[720px] border-collapse;
+  }
+
+  .bt-table thead th {
+    @apply whitespace-nowrap px-5 py-3.5 text-left align-middle;
+    background: var(--bt-surface-soft);
+    border-bottom: 1px solid var(--bt-border);
+    color: var(--bt-text-muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .bt-table tbody td {
+    @apply px-5 py-4 align-middle text-[14px];
+    border-bottom: 1px solid #EFF2F7;
+    color: var(--bt-text-primary);
+  }
+
+  /* Compact table variant — used by the Order / Trip Master dashboard so the
+     full lifecycle table begins within the initial desktop viewport. */
+  .bt-table-density-compact thead th {
+    @apply px-3.5 py-2 text-left;
+    font-size: 10px;
+    letter-spacing: 0.07em;
+  }
+
+  .bt-table-density-compact tbody td {
+    @apply px-3.5 py-2 text-[12.5px];
+  }
+
+  .bt-table tbody tr { transition: background-color var(--bt-transition); }
+  .bt-table tbody tr:hover { background: var(--bt-surface-soft); }
+  .bt-table tbody tr:last-child td { border-bottom: 0; }
+
+  /* ── KPI tiles ────────────────────────────────────────────────────────────
+     Identical structure on every module: label · big navy number · delta.     */
+
+  .bt-kpi { @apply bt-card relative overflow-hidden p-5; }
+
+  .bt-kpi-label {
+    @apply flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.1em] text-bt-ink-3;
+  }
+
+  .bt-kpi-dot { width: 7px; height: 7px; border-radius: 9999px; flex: none; }
+
+  .bt-kpi-value {
+    @apply mt-2 block text-bt-navy;
+    font-size: clamp(1.75rem, 1.2vw + 1.4rem, 2.25rem);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+
+  .bt-kpi-sub { @apply mt-1.5 block text-[12.5px] text-bt-ink-2; }
+
+  /* =========================================================================
+     DASHBOARD DENSITY SCOPE — `.bt-dash`
+     --------------------------------------------------------------------------
+     Applied ONLY by pages/AdminDashboard.jsx. It is a set of narrow, additive
+     overrides that compress the vertical rhythm of the operations console so
+     OPERATIONS, FINANCIALS and RESOURCES all resolve inside a single desktop
+     viewport (1440×900 and 1500×900) without scrolling.
+
+     WHY IT IS SCOPED
+     Every rule below is a descendant selector (`.bt-dash .bt-*`), so the
+     specificity is 0-2-0 and it wins over the 0-1-0 token without a single
+     `!important` — and it cannot leak. No shared `bt-*` token is redefined,
+     so Enquiry, Bookings, Drivers, Trips and every other module keep exactly
+     the type they have today. The palette is untouched: same navy, white and
+     orange, same borders and radii.
+
+     THE VERTICAL BUDGET (900px viewport)
+       sticky top header ..........................  72px
+       page container top padding (AdminShell) ...  32px
+       ------------------------------------------------------
+       usable ...................................... 796px
+       this scope renders the three sections in .... ~718px
+
+     Not a global font-size reduction: the KPI number stays the loudest element
+     on the page, the page title stays clearly above the section titles, and the
+     cards simply stop spending 20px of padding on every edge.
+     ========================================================================= */
+
+  /* Page header — medium title, restrained description */
+  .bt-dash .bt-page-title {
+    font-size: 28px;
+    letter-spacing: -0.015em;
+  }
+
+  .bt-dash .bt-page-desc {
+    margin-top: 4px;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+
+  .bt-dash .bt-eyebrow {
+    margin-bottom: 4px;
+  }
+
+  /* Section header — clearly subordinate to the page title */
+  .bt-dash .bt-section-title {
+    font-size: 16px;
+  }
+
+  .bt-dash .bt-section-subtitle {
+    margin-top: 1px;
+    font-size: 12.5px;
+    line-height: 1.45;
+  }
+
+  .bt-dash .bt-card-header {
+    padding: 12px 16px;
+  }
+
+  /* KPI tile — compact footprint, still the loudest number on the card */
+  .bt-dash .bt-kpi {
+    padding: 14px 16px;
+  }
+
+  .bt-dash .bt-kpi-label {
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+  }
+
+  .bt-dash .bt-kpi-value {
+    margin-top: 6px;
+    font-size: 30px;
+    line-height: 1.1;
+  }
+
+  .bt-dash .bt-kpi-sub {
+    margin-top: 4px;
+    font-size: 12px;
+  }
+
+  /* The failed-KPI message carries the tile's voice without its full size. */
+  .bt-dash .bt-kpi-error {
+    margin-top: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.35;
+  }
+
+  /* ── States ────────────────────────────────────────────────────────────── */
+
+  .bt-empty {
+    @apply flex flex-col items-center justify-center rounded-[14px] border border-dashed px-6 py-12 text-center;
+    border-color: var(--bt-border-strong);
+    background: var(--bt-surface-soft);
+  }
+
+  .bt-error {
+    @apply flex items-start gap-3 rounded-[14px] border px-4 py-4;
+    border-color: rgba(229, 72, 77, 0.28);
+    background: var(--bt-danger-bg);
+  }
+
+  .bt-skeleton {
+    background: linear-gradient(90deg, rgba(148,163,184,0.18) 25%, rgba(148,163,184,0.32) 37%, rgba(148,163,184,0.18) 63%);
+    background-size: 400% 100%;
+    animation: btShimmer 1.4s ease infinite;
+  }
+
+  /* ── Dropdowns / popovers ───────────────────────────────────────────────── */
+
+  .bt-popover-surface {
+    @apply overflow-hidden rounded-[14px];
+    background: var(--bt-surface);
+    border: 1px solid var(--bt-border);
+    box-shadow: var(--bt-shadow-popover);
+  }
+
+  .bt-option {
+    @apply flex w-full cursor-pointer items-center gap-2 px-3 py-2.5 text-left text-[14px] text-bt-ink transition-colors;
+  }
+  .bt-option:hover { background: var(--bt-surface-soft); }
+  .bt-option[data-selected='true'] {
+    background: var(--bt-orange-light);
+    color: var(--bt-navy-dark);
+    font-weight: 600;
+  }
+
+  /* ── Modals ────────────────────────────────────────────────────────────── */
+
+  .bt-modal-backdrop {
+    @apply fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto p-4 sm:p-6;
+    background: rgba(16, 43, 76, 0.55);
+    backdrop-filter: blur(3px);
+  }
+
+  .bt-modal-panel {
+    @apply w-full;
+    max-width: 640px;
+    background: var(--bt-surface);
+    border-radius: var(--bt-radius-modal);
+    box-shadow: var(--bt-shadow-modal);
+    animation: btModalIn 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* ── Three-dot action menu ─────────────────────────────────────────────────
+     The LIGHTER sibling of the modal backdrop.
+
+     A modal is an interruption and earns a heavy scrim (0.55 navy). A three-dot
+     menu is a momentary focus change, so it gets a much lighter one — the page
+     is still recognisable underneath. Same tokens, same easing, same 180ms
+     timing as `btModalIn`, so it belongs to the same motion language.
+
+     Deliberately BELOW `.bt-modal-backdrop` (z-70) so a real modal can still
+     open on top of an open menu, and far below the Google Places container
+     (z-10000) and the WhatsApp float (z-9999), which must keep winning. */
+  .bt-actionmenu-backdrop {
+    @apply fixed inset-0 z-[68];
+    background: rgba(15, 23, 42, 0.12);
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+    animation: btActionMenuFade 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .bt-actionmenu-panel {
+    @apply fixed z-[69] overflow-y-auto py-1;
+    max-height: min(70vh, 26rem);
+    background: var(--bt-surface);
+    border: 1px solid var(--bt-border);
+    border-radius: 0.75rem;
+    /* Deliberately NO filter and NO backdrop-filter: the menu must stay sharp
+       while the page behind it is blurred. They are siblings, so nothing here
+       inherits the scrim. */
+    box-shadow: 0 18px 45px -12px rgba(15, 23, 42, 0.35);
+    animation: btActionMenuIn 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .bt-actionmenu-trigger {
+    @apply p-1 rounded-lg transition-colors;
+  }
+  .bt-actionmenu-trigger:hover { background: rgba(15, 23, 42, 0.06); }
+
+  @keyframes btActionMenuFade {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  @keyframes btActionMenuIn {
+    from { opacity: 0; transform: translateY(-4px) scale(0.985); }
+    to   { opacity: 1; transform: translateY(0)    scale(1); }
+  }
+
+  /* ── Divider used between card header and body ──────────────────────────── */
+  .bt-divider { border-color: var(--bt-border); }
+
+  /* =========================================================================
+     LEGACY CLASSES — kept working, retargeted onto the tokens above so the
+     public site and older modules inherit the same premium language.
+     ========================================================================= */
+
   .btn-primary {
-    @apply bg-amber-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-amber-600 transition-colors shadow-md;
+    @apply bt-btn bt-btn-accent;
   }
-  
+
   .btn-secondary {
-    @apply bg-sky-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-sky-600 transition-colors shadow-md;
+    @apply bt-btn bt-btn-primary;
   }
-  
+
   .btn-outline {
-    @apply border-2 border-amber-500 text-amber-500 px-6 py-3 rounded-lg font-semibold hover:bg-amber-500 hover:text-white transition-colors;
+    @apply bt-btn border-amber-500 text-amber-600;
   }
 
   .card {
-    @apply bg-white rounded-xl shadow-card p-6 transition-shadow hover:shadow-card-hover;
+    @apply bt-card p-6;
   }
 
   .input-field {
-    @apply w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition-all;
+    @apply bt-input;
   }
 
   .label {
-    @apply block text-sm font-medium text-gray-700 mb-1;
+    @apply bt-label;
   }
 
   .section-title {
-    @apply text-3xl font-bold text-gray-900 mb-2;
+    @apply text-3xl font-bold text-bt-navy mb-2;
   }
 
   .section-subtitle {
-    @apply text-lg text-gray-600 mb-8;
+    @apply text-lg text-bt-ink-2 mb-8;
   }
 
-  /* Government-style card */
   .gov-card {
-    @apply bg-white rounded-xl shadow-md border border-gray-200 p-6;
+    @apply bt-card p-6;
   }
 
-  /* Government-style input */
   .gov-input {
-    @apply w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition-all;
+    @apply bt-input;
   }
 
-  /* Government-style button */
   .gov-btn {
-    @apply px-6 py-3 rounded-lg font-semibold transition-all;
+    @apply bt-btn;
   }
 
   .gov-btn-primary {
-    @apply bg-primary-600 text-white hover:bg-primary-700;
+    @apply bt-btn-primary;
   }
 
   /* Primary color utility */
   .bg-primary-600 {
-    background-color: #f59e0b;
+    background-color: var(--bt-orange);
   }
 
   .hover\:bg-primary-700:hover {
-    background-color: #d97706;
+    background-color: var(--bt-orange-dark);
   }
 
   .text-primary-600 {
-    color: #f59e0b;
+    color: var(--bt-orange-dark);
   }
 
   /* Badge styles */
-  .badge-success {
-    @apply bg-green-100 text-green-800;
-  }
+  .badge-success { @apply bt-badge bt-badge-success; }
+  .badge-danger  { @apply bt-badge bt-badge-danger; }
+  .badge-warning { @apply bt-badge bt-badge-warning; }
+  .badge-info    { @apply bt-badge bt-badge-info; }
+}
 
-  .badge-danger {
-    @apply bg-red-100 text-red-800;
-  }
+@keyframes btShimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: 0 0; }
+}
 
-  .badge-warning {
-    @apply bg-yellow-100 text-yellow-800;
-  }
+@keyframes btModalIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
 
-  .badge-info {
-    @apply bg-blue-100 text-blue-800;
+@keyframes btPopoverIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes btPopoverInUp {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
   }
 }
 
@@ -192,6 +1029,36 @@ body {
   }
 }
 
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-24px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.animate-scale-in {
+  animation: scaleIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-slide-down {
+  animation: slideDown 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
 .animate-slide-up {
   animation: slideUp 0.5s ease-out forwards;
 }
@@ -220,24 +1087,9 @@ body {
   animation: float 3s ease-in-out infinite;
 }
 
-/* Navbar hover underline effect */
+/* Navbar hover text color effect */
 .nav-link {
-  position: relative;
-}
-
-.nav-link::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  width: 0;
-  height: 2px;
-  background-color: #F5A623;
-  transition: width 0.3s ease;
-}
-
-.nav-link:hover::after {
-  width: 100%;
+  transition: color 0.15s ease;
 }
 
 /* Button hover scale effect */
@@ -324,7 +1176,194 @@ body {
 
 /* Hero gradient background */
 .hero-gradient {
-  background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%);
+  background-image: url('/bihar-transport-hero.jpg');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+/* Premium glowing tracking card */
+.tracking-card {
+  position: relative;
+  isolation: isolate;
+  border-radius: 26px;
+  background: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  box-shadow:
+    0 0 24px rgba(255, 152, 0, 0.12),
+    0 0 60px rgba(255, 152, 0, 0.10),
+    0 0 100px rgba(80, 155, 255, 0.12),
+    0 20px 60px rgba(0, 0, 0, 0.22);
+  transition:
+    box-shadow 350ms ease,
+    transform 350ms ease,
+    border-color 350ms ease;
+}
+
+.tracking-card::before {
+  content: "";
+  position: absolute;
+  inset: -18px;
+  z-index: -1;
+  border-radius: inherit;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 152, 0, 0.20),
+    rgba(255, 255, 255, 0.08),
+    rgba(80, 155, 255, 0.18)
+  );
+  filter: blur(38px);
+  opacity: 0.75;
+  pointer-events: none;
+  transition: opacity 350ms ease;
+}
+
+.tracking-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 152, 0, 0.35);
+  box-shadow:
+    0 0 30px rgba(255, 152, 0, 0.18),
+    0 0 75px rgba(255, 152, 0, 0.13),
+    0 0 110px rgba(80, 155, 255, 0.16),
+    0 24px 65px rgba(0, 0, 0, 0.24);
+}
+
+.tracking-card:hover::before {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tracking-card,
+  .tracking-card::before {
+    transition: none;
+  }
+  .tracking-card:hover {
+    transform: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .tracking-card {
+    border-radius: 20px;
+  }
+  .tracking-card::before {
+    inset: -10px;
+    filter: blur(24px);
+    opacity: 0.6;
+  }
+}
+
+/* ==========================================================================
+   Hero booking widget — premium "breathe" glow
+   ==========================================================================
+   A VERY slow, low-amplitude warm-amber halo around the pickup/drop/vehicle
+   booking card. Two rules make it read as premium rather than as a game UI:
+
+     1. ONLY `box-shadow` is animated. The bar itself never translates,
+        scales or reflows, so the truck photograph behind it stays perfectly
+        still and the layout can never shift.
+
+     2. The amplitude is deliberately tiny — the ring grows 0 → 6px while its
+        alpha only reaches 0.055, and the drop shadow drifts a couple of px.
+        Over a 5s ease-in-out cycle that is a breath, not a pulse.
+
+   The flat `box-shadow` on the class is the REAL resting state, not a
+   fallback: it is what renders when the animation is switched off below, so
+   reduced-motion users get a premium static card rather than a dead one.
+
+   The warm `rgba(245,160,0,…)` is the same #F5A000 amber as the Continue
+   button, which ties the glow to the brand's existing CTA colour. */
+@keyframes btb-booking-breathe {
+  0%,
+  100% {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.9),
+      0 1px 2px rgba(16, 24, 40, 0.04),
+      0 12px 28px -16px rgba(10, 30, 58, 0.3),
+      0 0 0 0 rgba(245, 160, 0, 0);
+  }
+
+  50% {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.9),
+      0 1px 2px rgba(16, 24, 40, 0.05),
+      0 16px 34px -16px rgba(10, 30, 58, 0.38),
+      0 0 0 6px rgba(245, 160, 0, 0.055);
+  }
+}
+
+.btb-booking-glow {
+  /* Resting state — also what reduced-motion users see. */
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 1px 2px rgba(16, 24, 40, 0.04),
+    0 12px 28px -16px rgba(10, 30, 58, 0.3),
+    0 0 0 0 rgba(245, 160, 0, 0);
+  animation: btb-booking-breathe 5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btb-booking-glow {
+    animation: none;
+  }
+}
+
+/* ==========================================================================
+   Google Places Autocomplete dropdown — stacking context
+   ==========================================================================
+   The Maps API appends its `.pac-container` to `document.body`, so it lands
+   OUTSIDE the hero's stacking context. Google's own stylesheet gives it no
+   z-index, which means the hero content (`relative z-10`) paints straight over
+   the suggestions and the customer can never see what they are clicking.
+
+   Giving the container an explicit z-index above the hero puts the dropdown
+   back on top. The border/radius/shadow below simply bring it in line with the
+   rest of the premium booking UI; Google sets no background or box-shadow of
+   its own, so there is nothing to override.
+   ========================================================================== */
+.pac-container {
+  z-index: 10000;
+  border: 1px solid rgb(226 232 240);
+  border-radius: 0.75rem;
+  box-shadow: 0 18px 45px -12px rgba(15, 23, 42, 0.35);
+  margin-top: 4px;
+  overflow: hidden;
+}
+
+.pac-item {
+  padding: 0.5rem 0.75rem;
+  color: #334155;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.pac-item:hover,
+.pac-item-selected {
+  background-color: #fffbeb;
+}
+
+.pac-item-query {
+  color: #0f172a;
+  font-weight: 600;
+}
+
+/* Slim scrollbar for the Home location suggestion list. */
+.bt-scroll-thin::-webkit-scrollbar {
+  width: 6px;
+}
+
+.bt-scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.bt-scroll-thin::-webkit-scrollbar-thumb {
+  background-color: #cbd5e1;
+  border-radius: 9999px;
+}
+
+.bt-scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
 }
 
 /* Status badges */
@@ -403,7 +1442,7 @@ body {
 .brand-title {
   font-weight: 700;
   font-size: 18px;
-  color: white;
+  color: #172B4D;
 }
 
 .brand-location {
@@ -768,3 +1807,680 @@ body {
   }
 }
 
+/* Hide scrollbar for snap-scroll containers */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* ============================================
+   REDUCED MOTION — Accessibility
+   ============================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ============================================
+   FOCUS VISIBLE — Accessibility
+   ============================================ */
+*:focus-visible {
+  outline: 2px solid #f59e0b;
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+/* ============================================
+   SKIP LINK — Accessibility
+   ============================================ */
+.skip-to-content {
+  position: absolute;
+  top: -100%;
+  left: 0;
+  z-index: 100;
+  padding: 8px 16px;
+  background: #f59e0b;
+  color: white;
+  font-weight: 600;
+  border-radius: 0 0 8px 0;
+  transition: top 0.2s;
+}
+.skip-to-content:focus {
+  top: 0;
+}
+
+/* ============================================
+   CUSTOM SCROLLBAR
+   ============================================ */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.3);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.5);
+}
+
+/* ============================================
+   PARTNER PAGE — PREMIUM ENTERPRISE STYLES
+   ============================================ */
+
+/* Network dot movement animation for partner section */
+@keyframes networkDotMove {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+/* Hero location labels gentle float */
+@keyframes heroLabelFloat {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.hero-location-labels rect,
+.hero-location-labels text {
+  animation: heroLabelFloat 4s ease-in-out infinite;
+}
+
+.hero-location-labels :nth-child(2) {
+  animation-delay: 0.5s;
+}
+
+.hero-location-labels :nth-child(4) {
+  animation-delay: 1s;
+}
+
+.hero-location-labels :nth-child(6) {
+  animation-delay: 1.5s;
+}
+
+.hero-location-labels :nth-child(8) {
+  animation-delay: 2s;
+}
+
+/* Network lines — SVG animate elements handle pulsing, no CSS animation needed */
+
+/* Partner page section reveal animations */
+.partner-section-reveal {
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1), transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.partner-section-reveal.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Card entrance with stagger */
+.partner-card-enter {
+  opacity: 0;
+  transform: translateY(30px);
+  transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1), transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.partner-card-enter.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Step number animation */
+.partner-step-number {
+  transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Progress line animation */
+.partner-progress-line {
+  transition: width 1s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Floating label subtle animation */
+.partner-floating-label {
+  animation: partnerFloat 6s ease-in-out infinite;
+}
+
+.partner-floating-label:nth-child(2) {
+  animation-delay: 1.5s;
+}
+
+.partner-floating-label:nth-child(3) {
+  animation-delay: 3s;
+}
+
+.partner-floating-label:nth-child(4) {
+  animation-delay: 4.5s;
+}
+
+@keyframes partnerFloat {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+/* CTA section gradient animation */
+.partner-cta-gradient {
+  background: linear-gradient(135deg, #0F2B55 0%, #1a3a6b 50%, #0F2B55 100%);
+  background-size: 200% 200%;
+  animation: gradientShift 8s ease-in-out infinite;
+}
+
+@keyframes gradientShift {
+  0%, 100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  .network-lines line,
+  .partner-floating-label,
+  .partner-cta-gradient {
+    animation: none !important;
+  }
+
+  .partner-section-reveal,
+  .partner-card-enter {
+    transition: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  .partner-progress-line {
+    transition: none !important;
+  }
+}
+
+/* ============================================
+   PARTNER HERO IMAGE GLOW
+   ============================================ */
+@keyframes partnerHeroGlow {
+  0% {
+    box-shadow:
+      0 0 0 rgba(245, 179, 53, 0),
+      0 0 0 rgba(245, 179, 53, 0);
+  }
+  50% {
+    box-shadow:
+      0 0 24px rgba(245, 179, 53, 0.25),
+      0 0 48px rgba(245, 179, 53, 0.10);
+  }
+  100% {
+    box-shadow:
+      0 0 0 rgba(245, 179, 53, 0),
+      0 0 0 rgba(245, 179, 53, 0);
+  }
+}
+
+.partner-hero-image-frame {
+  animation: partnerHeroGlow 3.5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .partner-hero-image-frame {
+    animation: none;
+    box-shadow: 0 0 0 rgba(245, 179, 53, 0);
+  }
+}
+
+/* ============================================
+   TRIPS KPI STRIP (AdminTrips Page)
+   ============================================ */
+.kpi-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: flex-start;
+}
+
+.kpi-strip-item {
+  flex: 1 1 150px;
+  min-width: 140px;
+  max-width: 200px;
+  background: rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: 0.75rem;
+  border: 1px solid rgba(229, 231, 235, 0.6);
+  padding: 1rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.kpi-strip-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #9ca3af;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+}
+
+.kpi-strip-value {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #1f2937;
+  line-height: 1.2;
+  margin-top: 0.25rem;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .kpi-strip {
+    gap: 0.5rem;
+  }
+  
+  .kpi-strip-item {
+    flex: 1 1 45%;
+    min-width: 120px;
+    padding: 0.75rem;
+  }
+  
+  .kpi-strip-value {
+    font-size: 1.25rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .kpi-strip {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x mandatory;
+    padding-bottom: 0.5rem;
+  }
+  
+  .kpi-strip-item {
+    flex: 0 0 140px;
+    scroll-snap-align: start;
+  }
+}
+
+/* ============================================
+   ENQUIRY — "FINDING YOUR TRUCK" EXPERIENCE
+   Transport/route/precision/inquiry motion.
+   Everything below animates transform + opacity
+   only, so the GPU can composite it and the map
+   never has to re-render. The whole block is
+   disabled under prefers-reduced-motion.
+   ============================================ */
+
+/* Radar / search ring expanding from the pickup area */
+@keyframes btb-radar {
+  0% {
+    transform: scale(0.25);
+    opacity: 0.55;
+  }
+  70% {
+    opacity: 0.12;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0;
+  }
+}
+
+/* Slow breathing halo behind the truck icon */
+@keyframes btb-halo {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.45;
+  }
+  50% {
+    transform: scale(1.18);
+    opacity: 0.12;
+  }
+}
+
+/* Gentle lift-and-fall so the truck feels "active", never game-like */
+@keyframes btb-truck-hover {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -3px, 0);
+  }
+}
+
+/* Orange accent pulse used by "active" status dots */
+@keyframes btb-accent-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 12px rgba(245, 158, 11, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0);
+  }
+}
+
+/* Staggered entrance for the hero elements */
+@keyframes btb-rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+/* Sweeping highlight across the "searching" status bar */
+@keyframes btb-sweep {
+  from {
+    transform: translate3d(-100%, 0, 0);
+  }
+  to {
+    transform: translate3d(220%, 0, 0);
+  }
+}
+
+.btb-radar-ring {
+  animation: btb-radar 2.6s cubic-bezier(0.22, 0.61, 0.36, 1) infinite;
+  will-change: transform, opacity;
+}
+
+.btb-halo {
+  animation: btb-halo 2.4s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+.btb-truck-hover {
+  animation: btb-truck-hover 2.4s ease-in-out infinite;
+  will-change: transform;
+}
+
+.btb-accent-pulse {
+  animation: btb-accent-pulse 2.2s ease-out infinite;
+}
+
+.btb-rise {
+  animation: btb-rise 0.55s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+.btb-sweep::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  display: block;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.55) 50%,
+    transparent 100%
+  );
+  animation: btb-sweep 2.8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* Google Maps marker labels, restyled into brand pills.
+   The default marker label is plain dark text on the basemap; these rules turn
+   it into the compact "Pickup" / "Drop" chips used on the confirmation map. */
+.btb-map-label {
+  background: #ffffff !important;
+  color: #172b4d !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.06em !important;
+  text-transform: uppercase !important;
+  padding: 3px 9px !important;
+  border-radius: 999px !important;
+  box-shadow: 0 6px 16px -8px rgba(11, 27, 51, 0.55) !important;
+  border: 1px solid rgba(245, 158, 11, 0.45) !important;
+  white-space: nowrap;
+}
+
+.btb-map-label--drop {
+  border-color: rgba(23, 43, 77, 0.18) !important;
+}
+
+/* ============================================================
+   DO NOT TARGET GOOGLE'S OWN "gm-" CLASSES FROM THIS FILE.
+
+   The <LoadScript> instances on the home page (Pickup / Drop address
+   autocomplete) come from @react-google-maps/api, and that library runs a
+   cleanup which deletes EVERY <style> element in the document whose text
+   contains a selector for Google's "gm-" namespace — that is, a dot
+   immediately followed by "gm" and a dash:
+
+       [...document.getElementsByTagName('style')]
+         .filter(style => style.innerText.includes(<dot> + 'gm' + '-'))
+         .forEach(style => style.parentNode.removeChild(style))
+
+   This file is the single global stylesheet for the whole app, so ONE such
+   selector anywhere in it makes that cleanup remove the entire Tailwind
+   bundle. The build still succeeds and React still mounts, but the site then
+   renders as unstyled raw HTML: plain blue links, default buttons and inputs,
+   an oversized logo and a broken layout.
+
+   A previous rule here did exactly that — it rounded Google's InfoWindow
+   content wrapper through a ".btb-map-shell <gm-style> <gm-style-iw-c>"
+   selector. It matched nothing (no element ever received btb-map-shell, and
+   the app renders no InfoWindow), yet it stripped all styling from the site.
+
+   CAREFUL: Vite keeps CSS comments in dev but drops them in production, so
+   this warning must never spell that class name literally — doing so would
+   re-break dev all by itself.
+
+   If Google Maps chrome ever needs overriding, scope it to a class this app
+   actually renders (for example btb-map-label above).
+   ============================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  .btb-map-label {
+    transition: none !important;
+  }
+}
+
+/* Stagger helpers — used to stagger the marker/route entrance */
+.btb-delay-1 { animation-delay: 90ms; }
+.btb-delay-2 { animation-delay: 180ms; }
+.btb-delay-3 { animation-delay: 270ms; }
+.btb-delay-4 { animation-delay: 360ms; }
+.btb-delay-5 { animation-delay: 450ms; }
+
+/* Reduced motion: replace every motion cue with a static state.
+   The component reads the same data — only the movement is removed. */
+@media (prefers-reduced-motion: reduce) {
+  .btb-radar-ring,
+  .btb-halo,
+  .btb-truck-hover,
+  .btb-accent-pulse,
+  .btb-rise,
+  .btb-sweep::after {
+    animation: none !important;
+  }
+
+  .btb-radar-ring {
+    transform: scale(1) !important;
+    opacity: 0.28 !important;
+  }
+
+  .btb-halo {
+    transform: scale(1) !important;
+    opacity: 0.3 !important;
+  }
+
+  .btb-sweep::after {
+    display: none !important;
+  }
+}
+
+
+/* ===========================================================================
+   VEHICLE HIRE — TARGET TABLE DENSITY
+   ---------------------------------------------------------------------------
+   Scoped to `.bt-vh` (pages/AdminVehicleHireList.jsx) so the shared
+   PremiumTable, every other module and every existing token stay untouched.
+   The table is the one place the reference uses a tighter header and a fixed
+   column grid; the surrounding cards use the normal console vocabulary.
+   =========================================================================== */
+
+.bt-vh .bt-vh-table.bt-table-wrap {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.bt-vh .bt-vh-table .bt-table {
+  width: 100%;
+  min-width: 1180px;
+  table-layout: fixed;
+}
+
+.bt-vh .bt-vh-table .bt-table thead th {
+  height: 38px;
+  padding: 0 10px;
+  background: #F8FAFD;
+  border-bottom: 1px solid #E9EEF6;
+  color: #7C8CA3;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.bt-vh .bt-vh-table .bt-table thead th:first-child {
+  width: 42px;
+  padding-left: 12px;
+}
+
+.bt-vh .bt-vh-table .bt-table thead th:last-child {
+  padding-right: 14px;
+}
+
+.bt-vh .bt-vh-table .bt-table tbody td {
+  height: 68px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #EFF3F8;
+  color: #0B2B52;
+  font-size: 12px;
+  vertical-align: middle;
+}
+
+.bt-vh .bt-vh-table .bt-table tbody td:first-child {
+  padding-left: 12px;
+}
+
+.bt-vh .bt-vh-table .bt-table tbody td:last-child {
+  padding-right: 14px;
+}
+
+.bt-vh .bt-vh-table .bt-table tbody tr {
+  height: 68px;
+  transition: background-color 150ms ease;
+}
+
+.bt-vh .bt-vh-table .bt-table tbody tr:hover {
+  background: #FBFCFE;
+}
+
+.bt-vh .bt-vh-table .bt-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+/* The shared ActionMenu trigger keeps its overlay behaviour; only its local
+   hit area is tightened to the 30px control the reference uses. */
+.bt-vh .bt-vh-table .bt-actionmenu-trigger {
+  padding: 0;
+  border-radius: 7px;
+}
+
+.bt-vh .bt-vh-table .bt-actionmenu-trigger:hover {
+  background: transparent;
+}
+
+/* Native date/select chrome: keep the custom leading icons, remove the
+   browser's own calendar glyph so the field reads like the reference. */
+.bt-vh-date::-webkit-calendar-picker-indicator {
+  opacity: 0;
+  cursor: pointer;
+}
+
+.bt-vh-select {
+  background-image: none;
+}
+
+/* The app's mobile form rule enlarges every input to a 16px touch target with
+   equal 12px padding. That is right for the public site but it removes the
+   leading-icon inset and clips the compact console selects. These scoped
+   overrides keep the mobile touch target while restoring the console's
+   padding, so a select can never render as an empty ellipsis. */
+@media (max-width: 768px) {
+  .bt-vh .bt-vh-field {
+    height: 44px !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    font-size: 16px !important;
+  }
+
+  .bt-vh .bt-vh-field-icon {
+    padding-left: 40px !important;
+  }
+
+  .bt-vh .bt-vh-field-select {
+    padding-right: 36px !important;
+  }
+
+  .bt-vh .bt-vh-pagesize {
+    height: 40px !important;
+    padding: 0 30px 0 10px !important;
+    font-size: 16px !important;
+  }
+}
+
+/* Full-screen workspace header icon buttons.
+   The console's global mobile `.w-10.h-10` rule deliberately shrinks generic
+   40px utility squares to 32px, and `h-9`/`h-10` conflict in source order.
+   This scoped class keeps the workspace hamburger and bell at a consistent
+   40px without touching any other page or button. */
+.bt-workspace-icon {
+  width: 40px;
+  height: 40px;
+}
+
+/* The global mobile form rule above sets every input to 12px padding, which
+   would put the workspace header's placeholder on top of its search icon.
+   Restore the inset while keeping the 16px mobile type size. */
+@media (max-width: 768px) {
+  .bt-workspace-search {
+    height: 40px !important;
+    padding: 0 40px 0 40px !important;
+    font-size: 16px !important;
+  }
+}

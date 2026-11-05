@@ -17,6 +17,12 @@ dist/
 /transport-system/backend/node_modules/
 /transport-system/backend/npm-debug.log*
 
+# Uploaded consignment documents (LR/GR scans, e-way bills, POD photos).
+# Real paperwork is operational data that belongs in object storage or a
+# volume, never in version control. The directory is created on demand by
+# services/TripDocumentStorage.js.
+/transport-system/backend/uploads/
+
 # Database
 /transport-system/database/*.db
 /transport-system/database/*.db-shm
@@ -56,3 +62,28 @@ desktop.ini
 # Temporary files
 *.tmp
 temp/
+
+# ---------------------------------------------------------------------------
+# Secrets — never commit a real environment file, including the ad-hoc
+# backups people leave behind (`cp .env .env.bak.1790781149`).
+# `.env.example` stays tracked: it is documentation, and is negated below.
+# ---------------------------------------------------------------------------
+*.env.bak
+*.env.bak.*
+.env.*
+!.env.example
+!**/.env.example
+
+# Local database dumps / pre-repair snapshots taken off a live database.
+# Operational data, not source. Files already tracked stay tracked.
+/transport-system/backend/backups/
+
+# Throwaway diagnostic scripts (tmp-*.js) and scratch output folders.
+# Anything already tracked is unaffected by these rules.
+tmp-*
+tmp_verify/
+
+# Stray one-off script accidentally saved at the repository root.
+# Anchored with a leading slash so it matches only /transport, never a
+# directory or file named "transport" deeper in the tree.
+/transport

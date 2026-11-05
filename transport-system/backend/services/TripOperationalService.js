@@ -1,0 +1,1024 @@
+/**
+ * TripOperationalService
+ * ---------------------------------------------------------------------------
+ * The operational lifecycle between "vehicle hired" and "in transit":
+ *
+ *     ASSIGNED ─► TO_LOADING_POINT ─► AT_LOADING_POINT ─► LOADED
+ *                    ─► DISPATCHED ─► IN_TRANSIT
+ *
+ * This service is SERVER-AUTHORITATIVE. It loads the Trip from the database,
+ * validates the CURRENT status itself, and then moves it. It never accepts a
+ * status from the browser and stores it — the caller can only ASK for a named
+ * operation ("dispatch this trip"), never TELL the service what the answer
+ * should be (STEP 11).
+ *
+ * WHY THIS EXISTS SEPARATELY FROM TripService.updateTripStatus()
+ *   `updateTripStatus` is the pre-existing administrative status control that
+ *   the shipped admin UI calls. It stays where it is and keeps working. This
+ *   service is the operational path, and it is strict: the full loading chain
+ *   is mandatory and no legacy short-cut is available here. That separation is
+ *   what lets Phase 4 add the workflow without redesigning the existing UI.
+ *
+ * EVERY TRANSITION IS ATOMIC AND RECORDED
+ *   One database transaction covers: the Trip status change, the operational
+ *   fact columns, the append-only TripTimeline event, and the AuditLog entry.
+ *   A timeline event can therefore never exist for a change that rolled back,
+ *   and a change can never land without its history.
+ *
+ * IDEMPOTENCY (STEP 12)
+ *   Each operation is idempotent by TARGET STATE, not by a key: if the trip is
+ *   already in (or has already passed through) the state the operation
+ *   produces, the request succeeds and returns the current trip UNCHANGED,
+ *   writing no second timeline event. That makes a double click, a browser
+ *   retry and an API retry all safe without any client cooperation and without
+ *   inventing an idempotency header contract the existing UI does not send.
+ *
+ * ACTUAL vs PLANNED (STEP 6)
+ *   Loading records what was ACTUALLY weighed and counted, into
+ *   trips.actual_*. The PLANNED material / quantity / weight stay on the
+ *   Booking and are read-only here, so a variance is recorded and the
+ *   customer's original declaration is never overwritten.
+ */
+
+const { prisma: defaultPrisma } = require('../config/prisma');
+const { ValidationError, NotFoundError } = require('../utils/AppError');
+const TripTimelineRepository = require('../repositories/TripTimelineRepository');
+const AuditLogRepository = require('../repositories/AuditLogRepository');
+const TripDocumentService = require('./TripDocumentService');
+const ResourceAvailabilityService = require('./ResourceAvailabilityService');
+const tripStateMachine = require('../utils/TripStateMachine');
+const documentPolicy = require('../config/tripDocumentPolicy');
+const stagePolicy = require('../config/tripStagePolicy');
+const dispatchPolicy = require('../config/dispatchPolicy');
+
+/** Parse the loose date strings `TransportVehicle` stores its expiries as. */
+function parseLooseDate(value) {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * The operational transitions this service performs. Kept as data so the
+ * route layer and the tests read from the same table the service enforces.
+ */
+const OPERATIONS = Object.freeze({
+  SEND_TO_LOADING_POINT: 'SEND_TO_LOADING_POINT',
+  ARRIVE_AT_LOADING_POINT: 'ARRIVE_AT_LOADING_POINT',
+  START_LOADING: 'START_LOADING',
+  COMPLETE_LOADING: 'COMPLETE_LOADING',
+  DISPATCH: 'DISPATCH',
+  // Phase 5 — the canonical DISPATCHED → IN_TRANSIT step.
+  START_TRANSIT: 'START_TRANSIT',
+  // Cancellation — terminal. The reason is preserved in the
+  // append-only timeline event metadata (the Trip row has no
+  // free-text cancellation column), so the audit trail is the
+  // source of truth for WHY a trip was cancelled.
+  CANCEL: 'CANCEL',
+});
+
+/** What each operation sets the status to. */
+const OPERATION_TARGET = Object.freeze({
+  [OPERATIONS.SEND_TO_LOADING_POINT]: 'TO_LOADING_POINT',
+  [OPERATIONS.ARRIVE_AT_LOADING_POINT]: 'AT_LOADING_POINT',
+  [OPERATIONS.START_LOADING]: 'AT_LOADING_POINT',
+  [OPERATIONS.COMPLETE_LOADING]: 'LOADED',
+  [OPERATIONS.DISPATCH]: 'DISPATCHED',
+  [OPERATIONS.START_TRANSIT]: 'IN_TRANSIT',
+  [OPERATIONS.CANCEL]: 'CANCELLED',
+});
+
+/** Human labels used in the timeline and audit entries. */
+const OPERATION_LABEL = Object.freeze({
+  [OPERATIONS.SEND_TO_LOADING_POINT]: 'Sent to loading point',
+  [OPERATIONS.ARRIVE_AT_LOADING_POINT]: 'Arrived at loading point',
+  [OPERATIONS.START_LOADING]: 'Loading started',
+  [OPERATIONS.COMPLETE_LOADING]: 'Loaded',
+  [OPERATIONS.DISPATCH]: 'Dispatched',
+  [OPERATIONS.START_TRANSIT]: 'Started transit',
+  [OPERATIONS.CANCEL]: 'Cancelled',
+});
+
+/**
+ * Statuses that already prove an operation happened. Used for idempotency:
+ * a trip in one of these has already been through the operation.
+ */
+const OPERATION_SATISFIED_BY = Object.freeze({
+  [OPERATIONS.SEND_TO_LOADING_POINT]: [
+    'TO_LOADING_POINT', 'AT_LOADING_POINT', 'LOADED', 'DISPATCHED', 'IN_TRANSIT', 'DELIVERED', 'COMPLETED',
+  ],
+  [OPERATIONS.ARRIVE_AT_LOADING_POINT]: [
+    'AT_LOADING_POINT', 'LOADED', 'DISPATCHED', 'IN_TRANSIT', 'DELIVERED', 'COMPLETED',
+  ],
+  [OPERATIONS.COMPLETE_LOADING]: [
+    'LOADED', 'DISPATCHED', 'IN_TRANSIT', 'DELIVERED', 'COMPLETED',
+  ],
+  [OPERATIONS.DISPATCH]: [
+    'DISPATCHED', 'IN_TRANSIT', 'DELIVERED', 'COMPLETED',
+  ],
+  [OPERATIONS.START_TRANSIT]: [
+    'IN_TRANSIT', 'DELIVERED', 'COMPLETED',
+  ],
+  [OPERATIONS.CANCEL]: [
+    'CANCELLED',
+  ],
+});
+
+/**
+ * Is this vehicle usable for a dispatch?
+ *
+ * Mirrors the predicates TripService.createTrip already applies when it
+ * validates a vehicle assignment — same repository vocabulary, one definition.
+ * `TransportVehicle` has no `is_active` column; availability is
+ * `is_available` plus `current_status`.
+ *
+ * @param {Object} vehicle
+ * @returns {boolean}
+ */
+function isVehicleUsable(vehicle) {
+  if (!vehicle) return false;
+  if (vehicle.is_available === false) return false;
+  if (vehicle.current_status === 'off_road') return false;
+  if (vehicle.current_status === 'maintenance') return false;
+  return true;
+}
+
+/**
+ * Is this driver usable for a dispatch?
+ * `Driver` has no `is_active` column either: `is_available` plus `status`,
+ * where `inactive` is the retired state.
+ *
+ * @param {Object} driver
+ * @returns {boolean}
+ */
+function isDriverUsable(driver) {
+  if (!driver) return false;
+  if (driver.is_available === false) return false;
+  if (driver.status === 'inactive') return false;
+  return true;
+}
+
+class TripOperationalService {
+  /**
+   * @param {Object} [deps]
+   * @param {import('@prisma/client').PrismaClient} [deps.prisma]
+   */
+  constructor(deps = {}) {
+    this.prisma = deps.prisma || defaultPrisma;
+    // PHASE 5 FIX: propagate the injected client into the repositories. Built
+    // with no arguments they fell back to the module-level `prisma` singleton,
+    // so a service under unit test still wrote its timeline/audit rows to the
+    // real database, and any caller that omitted the `tx` argument committed
+    // outside the transaction.
+    this.timelineRepo = new TripTimelineRepository({ prisma: this.prisma });
+    this.auditRepo = new AuditLogRepository({ prisma: this.prisma });
+    this.documentService = new TripDocumentService(deps);
+    this.resourceAvailability = new ResourceAvailabilityService({ prisma: this.prisma });
+  }
+
+  // =========================================================================
+  // LOADING
+  // =========================================================================
+
+  /**
+   * Record the ACTUAL loading facts. Validation only — no status change, so
+   * this can be called while the vehicle is still being loaded.
+   *
+   * @param {number} tripId
+   * @param {Object} input
+   * @param {Object|null} user
+   * @returns {Promise<Object>}
+   */
+  async recordLoadingFacts(tripId, input = {}, user = null) {
+    const trip = await this._loadTrip(tripId);
+
+    const positive = (v, label) => {
+      if (v === undefined || v === null || v === '') return null;
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < 0) {
+        throw new ValidationError(`Invalid ${label} "${v}" (expected a number >= 0)`);
+      }
+      return n;
+    };
+
+    const data = {
+      loading_started_at: this._date(input.loading_started_at, 'loading_started_at'),
+      loading_completed_at: this._date(input.loading_completed_at, 'loading_completed_at'),
+      loading_remarks: input.loading_remarks || null,
+      loaded_by: input.loaded_by || null,
+      // ACTUAL values only. Nothing here touches the Booking's planned
+      // material / quantity / weight.
+      actual_quantity: positive(input.actual_quantity, 'actual_quantity'),
+      actual_quantity_unit: input.actual_quantity_unit || null,
+      actual_weight_kg: positive(input.actual_weight_kg, 'actual_weight_kg'),
+    };
+
+    // Only write the fields the caller actually supplied, so recording one
+    // fact never blanks another that was captured earlier.
+    const patch = {};
+    for (const [key, value] of Object.entries(data)) {
+      if (value !== null && value !== undefined) patch[key] = value;
+    }
+    if (Object.keys(patch).length === 0) {
+      throw new ValidationError('No loading information supplied');
+    }
+
+    const updated = await this.prisma.trip.update({
+      where: { trip_id: trip.trip_id },
+      data: patch,
+    });
+
+    await this.timelineRepo.create({
+      trip_id: trip.trip_id,
+      event_type: 'loading_recorded',
+      description: 'Loading information recorded',
+      reference_type: 'trip',
+      reference_id: trip.trip_id,
+      metadata: { ...patch },
+      created_by: user?.user_id || null,
+    });
+
+    return updated;
+  }
+
+  // =========================================================================
+  // LOADING WORKSPACE
+  // =========================================================================
+
+  /**
+   * Everything the Loading page renders, in one response.
+   *
+   * Mirrors the pattern of TripDispatchService.getWorkspace so the Loading
+   * workspace has a single authoritative data source.
+   *
+   * @param {number} tripId
+   * @returns {Promise<Object>}
+   */
+  async getLoadingWorkspace(tripId) {
+    const trip = await this._loadTrip(tripId, true);
+    const checklist = await this.documentService.getChecklist(trip);
+    const readiness = await this.getDispatchReadiness(tripId);
+    const now = new Date();
+
+    const customer = this._resolveCustomer(trip);
+    const charges = await this._resolveCharges(trip);
+
+    return {
+      trip_id: trip.trip_id,
+      trip_number: trip.trip_number,
+      status: trip.status,
+
+      header: {
+        trip_number: trip.trip_number,
+        customer,
+        route: {
+          from: trip.pickup_location,
+          to: trip.drop_location,
+          distance_km: trip.distance_km ?? null,
+        },
+        vehicle: trip.vehicle
+          ? { vehicle_number: trip.vehicle.vehicle_number, vehicle_type: trip.vehicle.vehicle_type }
+          : null,
+        driver: trip.driver ? { driver_name: trip.driver.driver_name } : null,
+        vendor: trip.transportOwner
+          ? { owner_name: trip.transportOwner.owner_name }
+          : null,
+        current_status: trip.status,
+        expected_delivery_date: trip.expected_delivery_date,
+      },
+
+      readiness: {
+        ready: readiness.ready,
+        blockers: readiness.blockers,
+        checks: readiness.checks,
+        summary: readiness.summary,
+      },
+
+      shipment: {
+        consignor: customer?.name || trip.booking?.customer_name || null,
+        pickup: trip.pickup_location,
+        pickup_city: trip.pickup_city,
+        drop: trip.drop_location,
+        drop_city: trip.drop_city,
+        goods_description: trip.booking?.goods_description || null,
+        planned_quantity: trip.booking?.number_of_items ?? null,
+        planned_quantity_unit: trip.booking?.quantity_unit ?? null,
+        planned_weight_kg: trip.booking?.goods_weight_kg ?? null,
+        actual_quantity: trip.actual_quantity ?? null,
+        actual_quantity_unit: trip.actual_quantity_unit ?? null,
+        actual_weight_kg: trip.actual_weight_kg ?? null,
+        trip_type: trip.source_type,
+        distance_km: trip.distance_km ?? null,
+        expected_delivery_date: trip.expected_delivery_date,
+        value_of_goods: trip.value_of_goods ?? null,
+      },
+
+      vehicle: trip.vehicle
+        ? {
+            vehicle_number: trip.vehicle.vehicle_number,
+            vehicle_type: trip.vehicle.vehicle_type,
+            vehicle_name: trip.vehicle.vehicle_name,
+            body_type: trip.vehicle.body_type,
+            capacity_kg: trip.vehicle.capacity_kg,
+            owner: trip.transportOwner?.owner_name || null,
+            documents: this.evaluateVehicleDocuments(trip.vehicle, now),
+          }
+        : null,
+
+      driver: trip.driver
+        ? {
+            driver_id: trip.driver.driver_id,
+            driver_name: trip.driver.driver_name,
+            mobile: trip.driver.mobile ?? null,
+            status: trip.driver.status ?? null,
+          }
+        : null,
+
+      loading: {
+        completed: Boolean(trip.loading_completed_at),
+        loading_started_at: trip.loading_started_at,
+        completed_at: trip.loading_completed_at,
+        remarks: trip.loading_remarks,
+        loaded_by: trip.loaded_by,
+        actual_quantity: trip.actual_quantity ?? null,
+        actual_quantity_unit: trip.actual_quantity_unit ?? null,
+        actual_weight_kg: trip.actual_weight_kg ?? null,
+        location: trip.pickup_location,
+        sent_to_loading_at: trip.sent_to_loading_at,
+        arrived_at_loading_at: trip.arrived_at_loading_at,
+      },
+
+      documents: checklist,
+
+      charges,
+    };
+  }
+
+  /**
+   * Resolve the customer for the workspace header.
+   * @private
+   */
+  _resolveCustomer(trip) {
+    if (trip.booking?.user) return { kind: 'user', name: `${trip.booking.user.first_name || ''} ${trip.booking.user.last_name || ''}`.trim() };
+    if (trip.user) return { kind: 'user', name: `${trip.user.first_name || ''} ${trip.user.last_name || ''}`.trim() };
+    return null;
+  }
+
+  /**
+   * Resolve additional charges for the shipment.
+   * @private
+   */
+  async _resolveCharges(trip) {
+    // Placeholder - charges are managed separately in financials
+    return { lines: [], total: 0 };
+  }
+
+  // =========================================================================
+  // READINESS
+  // =========================================================================
+
+  /**
+   * Everything that must be true before this trip may be dispatched.
+   *
+   * Returns the blockers rather than throwing, so the UI can show the full
+   * list instead of one error at a time, and so a test can assert on the
+   * exact reason a dispatch was refused.
+   *
+   * @param {number} tripId
+   * @returns {Promise<Object>}
+   */
+  async getDispatchReadiness(tripId) {
+    const trip = await this._loadTrip(tripId, true);
+    const blockers = [];
+
+    // ── 1. Operational position ────────────────────────────────────────────
+    if (trip.status === 'DISPATCHED') {
+      // Already done. Not a blocker, just already satisfied.
+    } else if (trip.status !== 'LOADED') {
+      blockers.push({
+        code: 'NOT_LOADED',
+        message: `Trip is ${trip.status}. Loading must be completed before dispatch.`,
+      });
+    }
+
+    if (trip.status === 'CANCELLED') {
+      blockers.push({ code: 'TRIP_CANCELLED', message: 'Trip has been cancelled.' });
+    }
+
+    // ── 2. Vehicle and driver assigned ─────────────────────────────────────
+    // Neither TransportVehicle nor Driver has an `is_active` column. This
+    // repository already expresses availability through `is_available` plus
+    // the entity's own status, and TripService.createTrip uses exactly these
+    // predicates when it validates an assignment — so dispatch uses the SAME
+    // rules rather than inventing a second definition of "active".
+    if (!trip.vehicle_id) {
+      blockers.push({ code: 'NO_VEHICLE', message: 'No vehicle is assigned to this trip.' });
+    } else if (trip.vehicle && !isVehicleUsable(trip.vehicle)) {
+      blockers.push({ code: 'VEHICLE_INACTIVE', message: 'Assigned vehicle is not available.' });
+    }
+
+    if (!trip.driver_id) {
+      blockers.push({ code: 'NO_DRIVER', message: 'No driver is assigned to this trip.' });
+    } else if (trip.driver && !isDriverUsable(trip.driver)) {
+      blockers.push({ code: 'DRIVER_INACTIVE', message: 'Assigned driver is not active.' });
+    }
+
+    // ── 3. Loading actually completed ──────────────────────────────────────
+    // A LOADED status is only trustworthy if the loading fact was recorded;
+    // this catches a trip that reached LOADED by the legacy short-cut path.
+    if (!trip.loading_completed_at) {
+      blockers.push({
+        code: 'LOADING_NOT_RECORDED',
+        message: 'Loading completion has not been recorded for this trip.',
+      });
+    }
+
+    // ── 4. Mandatory documents ─────────────────────────────────────────────
+    const checklist = await this.documentService.getChecklist(trip);
+    for (const missing of checklist.missing) {
+      blockers.push({
+        code: 'MISSING_DOCUMENT',
+        document_type: missing.document_type,
+        message: `Required document ${missing.document_type} is not present (${missing.document_status}).`,
+      });
+    }
+
+    return {
+      trip_id: trip.trip_id,
+      status: trip.status,
+      ready: blockers.length === 0,
+      already_dispatched: OPERATION_SATISFIED_BY[OPERATIONS.DISPATCH].includes(trip.status),
+      checklist,
+      blockers,
+    };
+  }
+
+  /**
+   * The whole operational picture for a trip: where it is, where it may go
+   * next, and what its paperwork says. The status and the documents are
+   * reported as two separate things, never merged.
+   *
+   * @param {number} tripId
+   * @returns {Promise<Object>}
+   */
+  async getOperationalState(tripId) {
+    const trip = await this._loadTrip(tripId, true);
+    const checklist = await this.documentService.getChecklist(trip);
+    const stage = await this._resolveStage(trip, checklist);
+
+    return {
+      trip_id: trip.trip_id,
+      trip_number: trip.trip_number,
+      status: trip.status,
+      sequence: tripStateMachine.OPERATIONAL_SEQUENCE,
+      step_index: tripStateMachine.stepIndex(trip.status),
+      allowed_next: tripStateMachine.allowedNext(trip.status),
+      is_terminal: tripStateMachine.isTerminal(trip.status),
+
+      // The lifecycle view the Order / Trip Master renders: current stage, the
+      // ONE next action, and the ten rail nodes with their states.
+      //
+      // It is a READ-ONLY projection of `Trip.status`. Nothing in it can change
+      // a status — clicking a stage navigates, and only the named `action`
+      // endpoint (all of which pre-exist) ever moves the trip.
+      stage,
+
+      loading: {
+        // Reuses the existing pickup columns as the loading point — there is
+        // deliberately no second location field.
+        loading_point: trip.pickup_location,
+        loading_city: trip.pickup_city,
+        sent_to_loading_at: trip.sent_to_loading_at,
+        arrived_at_loading_at: trip.arrived_at_loading_at,
+        loading_started_at: trip.loading_started_at,
+        loading_completed_at: trip.loading_completed_at,
+        loading_remarks: trip.loading_remarks,
+        loaded_by: trip.loaded_by,
+        dispatched_at: trip.dispatched_at,
+      },
+
+      // Planned (from the booking, read-only) vs actual (recorded at loading).
+      planned: {
+        material: trip.booking?.goods_description ?? null,
+        quantity: trip.booking?.number_of_items ?? null,
+        quantity_unit: trip.booking?.quantity_unit ?? null,
+        weight_kg: trip.booking?.goods_weight_kg ?? null,
+        weight_unit: trip.booking?.weight_unit ?? null,
+      },
+      actual: {
+        quantity: trip.actual_quantity,
+        quantity_unit: trip.actual_quantity_unit,
+        weight_kg: trip.actual_weight_kg,
+      },
+
+      // A separate object, on purpose. Not part of `status`.
+      documents: checklist,
+    };
+  }
+
+  /**
+   * Build the lifecycle view for a trip.
+   *
+   * Reads the one hire fact the policy needs, then delegates to the PURE
+   * `config/tripStagePolicy.resolveTripStage()` so the API, the page and the
+   * tests all resolve the same stage from the same rule.
+   *
+   * POD is read from the EXISTING document checklist. It is a DOCUMENT state and
+   * is deliberately never folded into `Trip.status`, so the operational status
+   * and the POD state can never be mistaken for one another (§15).
+   *
+   * @private
+   * @param {Object} trip
+   * @param {Object} checklist - already-loaded document checklist
+   * @returns {Promise<Object>}
+   */
+  async _resolveStage(trip, checklist) {
+    // The hire is OPTIONAL context. A caller that supplies a client without a
+    // `vehicleHire` model (older callers and unit-test doubles) must still get a
+    // correct stage — it simply reads as "no hire", which is a true statement
+    // about a trip nothing has hired yet, not an error.
+    const hire = this.prisma.vehicleHire
+      ? await this.prisma.vehicleHire.findUnique({
+          where: { trip_id: trip.trip_id },
+          select: { hire_id: true, status: true },
+        })
+      : null;
+
+    const podItems = (checklist?.items || []).filter(
+      (d) => String(d.document_type).toUpperCase() === 'POD',
+    );
+    // Whether POD is required is a per-trip decision the document policy
+    // already owns. Absent a POD requirement, delivery completes directly.
+    const podRequired = podItems.some((d) => d.required);
+    const podReceived = podItems.some((d) => d.is_present);
+
+    // Check timeline for legacy skip events to mark skipped stages. A client
+    // without the timeline delegate (the repository's unit-double fakes)
+    // simply has no legacy-skip knowledge to mark.
+    const timeline = typeof this.prisma.tripTimeline?.findMany === 'function'
+      ? await this.prisma.tripTimeline.findMany({
+        where: { trip_id: trip.trip_id },
+        select: { metadata: true },
+      })
+      : [];
+
+    const legacySkippedStages = new Set();
+    for (const event of timeline) {
+      try {
+        const meta = typeof event.metadata === 'string' ? JSON.parse(event.metadata) : event.metadata;
+        if (meta && meta.legacy_skip === true && meta.from && meta.to) {
+          // Determine which stages were skipped between from and to
+          const skipped = this._getSkippedStages(meta.from, meta.to);
+          skipped.forEach(s => legacySkippedStages.add(s));
+        }
+      } catch (e) {
+        // Ignore parse errors
+      }
+    }
+
+    return stagePolicy.resolveTripStage({
+      tripStatus: trip.status,
+      hasVehicleHire: Boolean(hire) && hire.status !== 'CANCELLED',
+      podRequired,
+      podReceived,
+      trip: { trip_id: trip.trip_id, trip_number: trip.trip_number },
+      legacySkippedStages: Array.from(legacySkippedStages),
+    });
+  }
+
+  /**
+   * Determine which lifecycle stages were skipped between two trip statuses.
+   * @private
+   */
+  _getSkippedStages(fromStatus, toStatus) {
+    const statusToStage = {
+      PENDING: 'VEHICLE_HIRED',
+      ASSIGNED: 'VEHICLE_HIRED',
+      TO_LOADING_POINT: 'LOADING',
+      AT_LOADING_POINT: 'LOADING',
+      LOADED: 'LOADING',
+      DISPATCHED: 'DISPATCH',
+      IN_TRANSIT: 'TRANSIT',
+      DELIVERED: 'DELIVERY',  // DELIVERED maps to DELIVERY stage (POD comes after)
+      COMPLETED: 'COMPLETED',
+      CANCELLED: 'COMPLETED',
+    };
+
+    const STAGES = [
+      'ENQUIRY', 'QUOTATION', 'ORDER_CONFIRMED', 'VEHICLE_HIRED',
+      'LOADING', 'DISPATCH', 'TRANSIT', 'DELIVERY', 'POD', 'COMPLETED'
+    ];
+
+    const fromStage = statusToStage[fromStatus];
+    const toStage = statusToStage[toStatus];
+
+    if (!fromStage || !toStage) return [];
+
+    const fromIdx = STAGES.indexOf(fromStage);
+    const toIdx = STAGES.indexOf(toStage);
+
+    if (fromIdx < 0 || toIdx < 0 || fromIdx >= toIdx) return [];
+
+    // Return stages strictly between from and to (exclusive)
+    return STAGES.slice(fromIdx + 1, toIdx);
+  }
+
+  // =========================================================================
+  // THE OPERATIONS
+  // =========================================================================
+
+  /** VEHICLE HIRED → TO LOADING POINT */
+  async sendToLoadingPoint(tripId, input = {}, user = null) {
+    return this._perform(tripId, OPERATIONS.SEND_TO_LOADING_POINT, input, user);
+  }
+
+  /** TO LOADING POINT → AT LOADING POINT */
+  async arriveAtLoadingPoint(tripId, input = {}, user = null) {
+    return this._perform(tripId, OPERATIONS.ARRIVE_AT_LOADING_POINT, input, user);
+  }
+
+  /** AT LOADING POINT → LOADED (records the actual loading facts) */
+  async completeLoading(tripId, input = {}, user = null) {
+    const facts = this.validateLoadingFacts(input);
+    return this._perform(tripId, OPERATIONS.COMPLETE_LOADING, facts, user);
+  }
+
+  /** LOADED → DISPATCHED */
+  async dispatch(tripId, input = {}, user = null) {
+    const readiness = await this.getDispatchReadiness(tripId);
+
+    // A repeat of a dispatch that already happened is a success, not an error.
+    if (readiness.already_dispatched) {
+      const trip = await this._loadTrip(tripId);
+      return { trip, idempotent: true, readiness, status: trip.status };
+    }
+
+    if (!readiness.ready) {
+      throw new ValidationError({
+        message: `Trip cannot be dispatched: ${readiness.blockers.map((b) => b.message).join(' ')}`,
+        details: readiness.blockers,
+      });
+    }
+
+    return this._perform(tripId, OPERATIONS.DISPATCH, input, user);
+  }
+
+  /**
+   * DISPATCHED → IN_TRANSIT. The CANONICAL transit step (Phase 5).
+   *
+   * Goes through the same `_perform` engine as every other operation, so it is
+   * validated, atomic with its timeline event and audit entry, and idempotent
+   * by target state. The Phase 4 legacy short-cut
+   * (`PATCH /trips/:id/status` straight to IN_TRANSIT) is untouched and still
+   * works; this is the strict path alongside it, not a replacement.
+   *
+   * @param {number} tripId
+   * @param {Object} [input]
+   * @param {Object|null} user
+   * @returns {Promise<{trip:Object, idempotent:boolean, status:string}>}
+   */
+  async startTransit(tripId, input = {}, user = null) {
+    return this._perform(tripId, OPERATIONS.START_TRANSIT, input, user);
+  }
+
+  /**
+   * Cancel a trip. Terminal — the state machine refuses any further
+   * transition once a trip is CANCELLED.
+   *
+   * The reason is NOT written to a free-text column on the Trip row
+   * (there is none); it is preserved in the append-only timeline event
+   * metadata, which is the audit trail for WHY the trip was cancelled.
+   * Re-cancelling an already-cancelled trip is an idempotent no-op.
+   *
+   * @param {number} tripId
+   * @param {Object} [input] - { reason: string }
+   * @param {Object|null} user
+   * @returns {Promise<{trip:Object, idempotent:boolean, status:string}>}
+   */
+  async cancelTrip(tripId, input = {}, user = null) {
+    const reason = String(input.reason || '').trim();
+    if (!reason) {
+      throw new ValidationError('A cancellation reason is required');
+    }
+    return this._perform(tripId, OPERATIONS.CANCEL, { reason }, user);
+  }
+
+  // =========================================================================
+  // VALIDATION
+  // =========================================================================
+
+  /**
+   * Validate the actual loading facts a caller supplied.
+   * @param {Object} input
+   * @returns {Object}
+   */
+  validateLoadingFacts(input = {}) {
+    const positive = (v, label) => {
+      if (v === undefined || v === null || v === '') return null;
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < 0) {
+        throw new ValidationError(`Invalid ${label} "${v}" (expected a number >= 0)`);
+      }
+      return n;
+    };
+
+    return {
+      loading_started_at: this._date(input.loading_started_at, 'loading_started_at'),
+      loading_completed_at: this._date(input.loading_completed_at, 'loading_completed_at'),
+      loading_remarks: input.loading_remarks || null,
+      loaded_by: input.loaded_by || null,
+      actual_quantity: positive(input.actual_quantity, 'actual_quantity'),
+      actual_quantity_unit: input.actual_quantity_unit || null,
+      actual_weight_kg: positive(input.actual_weight_kg, 'actual_weight_kg'),
+    };
+  }
+
+  _date(value, label) {
+    if (value === undefined || value === null || value === '') return null;
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) {
+      throw new ValidationError(`Invalid ${label} "${value}"`);
+    }
+    return d;
+  }
+
+  // =========================================================================
+  // THE ENGINE
+  // =========================================================================
+
+  /**
+   * Perform one operational transition.
+   *
+   * @param {number} tripId
+   * @param {string} operation - one of OPERATIONS
+   * @param {Object} input - operational facts supplied by the caller
+   * @param {Object|null} user
+   * @returns {Promise<{trip:Object, idempotent:boolean, status:string}>}
+   */
+  async _perform(tripId, operation, input, user) {
+    const trip = await this._loadTrip(tripId, true);
+    const target = OPERATION_TARGET[operation];
+    const satisfiedBy = OPERATION_SATISFIED_BY[operation] || [];
+
+    // ── Idempotency: already done? Return unchanged, write nothing. ────────
+    if (satisfiedBy.includes(trip.status)) {
+      return { trip, idempotent: true, status: trip.status };
+    }
+
+    // ── Server-side transition validation ──────────────────────────────────
+    // The browser never says what the new status is; the operation decides it,
+    // and this is the check that stops a backwards or illegal move.
+    //
+    // PHASE 5 FIX: this is `validateOperationalTransition`, not the permissive
+    // `validateTransition`. These endpoints are the CANONICAL operational path,
+    // so they must refuse the legacy short-cut edges (PENDING/ASSIGNED/DELIVERED
+    // → IN_TRANSIT) that the shipped `PATCH /trips/:id/status` control still
+    // allows. Without this, "Start Transit" was no stricter than the legacy
+    // button it was supposed to sit alongside.
+    tripStateMachine.validateOperationalTransition(trip.status, target);
+
+    const now = new Date();
+    const patch = { status: target };
+    const metadata = {};
+
+    switch (operation) {
+      case OPERATIONS.SEND_TO_LOADING_POINT:
+        patch.sent_to_loading_at = now;
+        metadata.sent_to_loading_at = now;
+        break;
+
+      case OPERATIONS.ARRIVE_AT_LOADING_POINT:
+        patch.arrived_at_loading_at = now;
+        metadata.arrived_at_loading_at = now;
+        break;
+
+      case OPERATIONS.COMPLETE_LOADING: {
+        // `loading_completed_at` defaults to now, which is also what makes the
+        // trip dispatchable: the readiness check demands it.
+        patch.loading_completed_at = input.loading_completed_at || now;
+        if (input.loading_started_at) patch.loading_started_at = input.loading_started_at;
+        if (input.loading_remarks) patch.loading_remarks = input.loading_remarks;
+        if (input.loaded_by) patch.loaded_by = input.loaded_by;
+        if (input.actual_quantity !== null && input.actual_quantity !== undefined) {
+          patch.actual_quantity = input.actual_quantity;
+        }
+        if (input.actual_quantity_unit) patch.actual_quantity_unit = input.actual_quantity_unit;
+        if (input.actual_weight_kg !== null && input.actual_weight_kg !== undefined) {
+          patch.actual_weight_kg = input.actual_weight_kg;
+        }
+        Object.assign(metadata, {
+          actual_quantity: patch.actual_quantity ?? null,
+          actual_weight_kg: patch.actual_weight_kg ?? null,
+          loaded_by: patch.loaded_by ?? null,
+        });
+        break;
+      }
+
+      case OPERATIONS.DISPATCH:
+        patch.dispatched_at = now;
+        metadata.dispatched_at = now;
+        break;
+
+      case OPERATIONS.START_TRANSIT:
+        // Nothing extra to record: the vehicle's position and ETA live on
+        // TripTrackingService, and the movement itself is the status change.
+        break;
+
+      case OPERATIONS.CANCEL:
+        patch.cancelled_at = now;
+        metadata.reason = input.reason || null;
+        metadata.cancelled_at = now;
+        break;
+
+      default:
+        throw new ValidationError(`Unknown operation: ${operation}`);
+    }
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.trip.update({
+        where: { trip_id: trip.trip_id },
+        data: patch,
+      });
+
+      await this.timelineRepo.create({
+        trip_id: trip.trip_id,
+        event_type: 'status_changed',
+        description: `${OPERATION_LABEL[operation]} (${trip.status} → ${target})`,
+        reference_type: 'trip',
+        reference_id: trip.trip_id,
+        metadata: { from: trip.status, to: target, operation, ...metadata },
+        created_by: user?.user_id || null,
+      }, tx);
+
+      // Release resources if cancelling - only if no other active trips
+      let release = { driverReleased: false, vehicleReleased: false };
+      if (operation === OPERATIONS.CANCEL) {
+        release = await this.resourceAvailability.releaseResourcesIfNoActiveTrip(
+          trip.driver_id,
+          trip.vehicle_id,
+          trip.trip_id,
+          tx
+        );
+      }
+
+      await this.auditRepo.create({
+        user_id: user?.user_id || null,
+        user_role: user?.role || 'system',
+        action: 'trip_operational_transition',
+        entity_type: 'Trip',
+        entity_id: trip.trip_id,
+        previous_value: JSON.stringify({ status: trip.status }),
+        new_value: JSON.stringify({
+          status: target,
+          operation,
+          ...metadata,
+          ...(operation === OPERATIONS.CANCEL ? { driver_released: release.driverReleased, vehicle_released: release.vehicleReleased } : {}),
+        }),
+      }, tx);
+
+      // Add timeline event for resources released on cancel
+      if (operation === OPERATIONS.CANCEL && (release.driverReleased || release.vehicleReleased)) {
+        await this.timelineRepo.create({
+          trip_id: trip.trip_id,
+          event_type: 'resources_released',
+          description: [
+            release.driverReleased ? 'Driver released' : null,
+            release.vehicleReleased ? 'Vehicle released' : null,
+          ].filter(Boolean).join(' and '),
+          reference_type: 'trip',
+          reference_id: trip.trip_id,
+          metadata: {
+            operation: 'RELEASE_RESOURCES',
+            driver_released: release.driverReleased,
+            vehicle_released: release.vehicleReleased,
+            driver_id: trip.driver_id,
+            vehicle_id: trip.vehicle_id,
+          },
+          created_by: user?.user_id || null,
+        }, tx);
+      }
+
+      return updated;
+    });
+
+    return { trip: result, idempotent: false, status: target };
+  }
+
+/**
+   * Load a trip, optionally with the relations readiness needs.
+   * @param {number} tripId
+   * @param {boolean} [withRelations]
+   * @returns {Promise<Object>}
+   */
+  async _loadTrip(tripId, withRelations = false) {
+    const id = Number(tripId);
+    if (!Number.isInteger(id) || id <= 0) throw new NotFoundError('Trip not found');
+
+    const trip = await this.prisma.trip.findUnique({
+      where: { trip_id: id },
+      include: withRelations
+        ? {
+            // Only columns that actually exist: TransportVehicle and Driver have
+            // no `is_active`.
+            vehicle: { select: { vehicle_id: true, vehicle_number: true, vehicle_name: true, vehicle_type: true, body_type: true, capacity_kg: true, is_available: true, current_status: true } },
+            driver: { select: { driver_id: true, driver_name: true, mobile: true, is_available: true, status: true } },
+            transportOwner: { select: { owner_id: true, owner_name: true, mobile: true } },
+            user: { select: { user_id: true, first_name: true, last_name: true, email: true, phone: true } },
+            client: { select: { client_id: true, company_name: true } },
+            booking: {
+              select: {
+                goods_description: true,
+                number_of_items: true,
+                quantity_unit: true,
+                goods_weight_kg: true,
+                weight_unit: true,
+                user: { select: { user_id: true, first_name: true, last_name: true, email: true, phone: true } },
+              },
+            },
+          }
+        : undefined,
+    });
+
+    if (!trip) throw new NotFoundError('Trip not found');
+    return trip;
+  }
+
+  // =========================================================================
+  // DOCUMENT HELPERS (shared with TripDispatchService)
+  // =========================================================================
+
+  /**
+   * The vehicle's statutory papers, read from the columns Phase 8 already
+   * added. Read-only: the Vehicle Hire page owns writing them.
+   *
+   * @param {Object|null} vehicle
+   * @param {Date} [now]
+   * @returns {Array<{key,label,number,expiry,state,blocking}>}
+   */
+  evaluateVehicleDocuments(vehicle, now = new Date()) {
+    if (!vehicle) return [];
+    return dispatchPolicy.VEHICLE_DOCUMENTS.map((spec) => {
+      const raw = vehicle[spec.expiry_field];
+      const expiry = parseLooseDate(raw);
+      const state = expiry
+        ? dispatchPolicy.classifyExpiry(expiry, dispatchPolicy.VEHICLE_DOCUMENT_EXPIRING_WITHIN_DAYS, now)
+        : 'NOT_RECORDED';
+      return {
+        key: spec.key,
+        label: spec.label,
+        number: vehicle[spec.number_field] || null,
+        expiry: raw || null,
+        state,
+        blocking: Boolean(spec.blocking),
+      };
+    });
+  }
+
+  /**
+   * Build the document checklist for a trip.
+   * @private
+   */
+  _documentChecklist(trip) {
+    const checklist = this.documentService.getChecklist ? this.documentService.getChecklist(trip) : { items: [], missing: [] };
+    // This is called synchronously but getChecklist is async. For workspace,
+    // the caller should pass the pre-loaded checklist. This is a fallback.
+    return { items: [], missing: [] };
+  }
+
+  /**
+   * Find a document by type(s).
+   * @private
+   */
+  _document(documents, types) {
+    if (!documents || !documents.length) return null;
+    const typeSet = new Set(types.map((t) => String(t).toUpperCase()));
+    return documents.find((d) => typeSet.has(String(d.document_type).toUpperCase())) || null;
+  }
+
+  /**
+   * Summarize a document for workspace payloads.
+   * @private
+   */
+  _documentSummary(doc) {
+    if (!doc) return null;
+    return {
+      document_id: doc.document_id,
+      document_type: doc.document_type,
+      document_status: doc.document_status,
+      reference_number: doc.reference_number,
+      issued_at: doc.issued_at,
+      expires_at: doc.expires_at,
+      file_url: doc.file_url,
+      is_uploaded: Boolean(doc.file_url),
+      verified: doc.is_verified ?? false,
+      verified_by: doc.verified_by ?? null,
+      verified_at: doc.verified_at ?? null,
+    };
+  }
+}
+
+module.exports = TripOperationalService;
+module.exports.TripOperationalService = TripOperationalService;
+module.exports.OPERATIONS = OPERATIONS;
+module.exports.OPERATION_TARGET = OPERATION_TARGET;
