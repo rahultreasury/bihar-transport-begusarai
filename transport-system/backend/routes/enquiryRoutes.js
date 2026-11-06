@@ -20,6 +20,7 @@
 
 const express = require('express');
 const rateLimit = require('express-rate-limit');
+const { ipKeyGenerator } = require('express-rate-limit');
 
 const { optionalAuth } = require('../middleware/optionalAuth');
 const controller = require('../controllers/enquiryController');
@@ -94,7 +95,7 @@ const customerReadLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) =>
-    `${req.ip}|${String(req.params?.idOrNumber || 'unknown').toUpperCase()}`,
+    `${ipKeyGenerator(req.ip)}|${String(req.params?.idOrNumber || 'unknown').toUpperCase()}`,
   message: {
     success: false,
     message:
