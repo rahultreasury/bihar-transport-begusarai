@@ -80,4 +80,64 @@ describe('REV DB', () => {
       /already been reversed/
     );
   });
+
+  test('reversal of a reversal is rejected', async () => {
+    if (!ready) return skip();
+    const ctx = await seedInvoice();
+    const posting = new FinancePostingService({ prisma });
+    const receipt = await posting.recordCustomerReceipt({ amount: 10000, payment_method: 'cash', invoice_id: ctx.invoiceId }, ADMIN);
+    const rev = await posting.reverseTransaction(receipt.transaction.transaction_id, { reason: 'first reversal' }, ADMIN);
+    await assert.rejects(
+      () => posting.reverseTransaction(rev.reversal.transaction_id, { reason: 'reversal of reversal should fail' }, ADMIN),
+      /A reversal transaction cannot be reversed/
+    );
+  });
+
+  test('invoice paid_at cleared on PAID to PARTIALLY_PAID transition', async () => {
+    if (!ready) return skip();
+    const ctx = await seedInvoice();
+    const posting = new FinancePostingService({ prisma });
+
+    // Create partial payment (PARTIALLY_PAID) first
+    await posting.recordCustomerReceipt({ amount: 25000, payment_method: 'cash', invoice_id: ctx.invoiceId }, ADMIN);
+    let invoice = await prisma.invoice.findUnique({ where: { invoice_id: ctx.invoiceId } });
+    assert.equal(invoice.payment_status, 'PARTIALLY_PAID');
+    assert.equal(invoice.paid_at, null, 'paid_at should be null when PARTIALLY_PAID');
+
+    // Full payment to make it PAID
+    await posting.recordCustomerReceipt({ amount: 25000, payment_method: 'cash', invoice_id: ctx.invoiceId }, ADMIN);
+    invoice = await prisma.invoice.findUnique({ where: { invoice_id: ctx.invoiceId } });
+    assert.equal(invoice.payment_status, 'PAID');
+    assert.ok(invoice.paid_at, 'paid_at should be set when PAID');
+
+    // Partial reversal to trigger PARTIALLY_PAID
+    // We need to create another receipt then reverse it
+    const receipt = await posting.recordCustomerReceipt({ amount: 25000, payment_method: 'cash', invoice_id: ctx.invoiceId }, ADMIN);
+    const rev = await posting.reverseTransaction(receipt.transaction.transaction_id, { reason: 'partial reversal' }, ADMIN);
+
+    invoice = await prisma.invoice.findUnique({ where: { invoice_id: ctx.invoiceId } });
+    assert.equal(invoice.payment_status, 'PARTIALLY_PAID');
+    assert.equal(invoice.paid_at, null, 'paid_at should be null when PARTIALLY_PAID');
+  });
+
+  test('invoice paid_at cleared on PAID to UNPAID transition', async () => {
+    if (!ready) return skip();
+    const ctx = await seedInvoice();
+    const posting = new FinancePostingService({ prisma });
+
+    // Create full payment (PAID)
+    await posting.recordCustomerReceipt({ amount: 50000, payment_method: 'cash', invoice_id: ctx.invoiceId }, ADMIN);
+    let invoice = await prisma.invoice.findUnique({ where: { invoice_id: ctx.invoiceId } });
+    assert.equal(invoice.payment_status, 'PAID');
+    assert.ok(invoice.paid_at, 'paid_at should be set when PAID');
+
+    // Full reversal to trigger UNPAID
+    // We need to create another receipt then reverse it
+    const receipt = await posting.recordCustomerReceipt({ amount: 50000, payment_method: 'cash', invoice_id: ctx.invoiceId }, ADMIN);
+    await posting.reverseTransaction(receipt.transaction.transaction_id, { reason: 'full reversal' }, ADMIN);
+
+    invoice = await prisma.invoice.findUnique({ where: { invoice_id: ctx.invoiceId } });
+    assert.equal(invoice.payment_status, 'UNPAID');
+    assert.equal(invoice.paid_at, null, 'paid_at should be null when UNPAID');
+  });
 });

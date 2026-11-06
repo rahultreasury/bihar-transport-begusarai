@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { prisma } = require('../config/prisma');
-const { protect } = require('../middleware/auth');
+const { protect, isDatabaseConnectionError } = require('../middleware/auth');
 const { body, validationResult } = require('express-validator');
 const { validateTransition } = require('../utils/BookingStateMachine');
 const { flattenTripForDriver } = require('../utils/BookingMapper');
@@ -845,7 +845,14 @@ router.get('/stats', protect, async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Get driver stats error:', error);
+    console.error('Get driver stats error:', error.code || error.name, error.message);
+    if (isDatabaseConnectionError(error)) {
+      return res.status(503).json({
+        success: false,
+        message: 'Database temporarily unavailable. Please try again shortly.',
+        errorCode: 'SERVICE_UNAVAILABLE',
+      });
+    }
     res.status(500).json({
       success: false,
       message: 'Server error'
@@ -1224,6 +1231,190 @@ router.get('/me/trips/:id/tracking', protect, async (req, res) => {
     res.json({ success: true, data: tracking });
   } catch (error) {
     driverError(res, error, 'Driver tracking error:');
+  }
+});
+
+/**
+ * POST /api/drivers/complete-profile
+ * Complete driver profile for users with driver role but no driver profile.
+ * This endpoint allows drivers who authenticated but have no driver profile
+ * to create their profile with required operational fields.
+ * @access Private (Driver with role='driver' but no driver profile)
+ */
+router.post('/complete-profile', protect, [
+  body('license_number').notEmpty().withMessage('License number is required'),
+  body('license_expiry').notEmpty().withMessage('License expiry date is required'),
+  body('transport_owner_id')
+    .notEmpty().withMessage('Transport Owner is required. Every driver must belong to exactly one Transport Owner.')
+    .bail()
+    .isInt({ min: 1 }).withMessage('Transport Owner id must be a positive integer.'),
+], async (req, res) => {
+  try {
+    // Validate authentication and driver role
+    if (req.user.role !== 'driver') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only users with driver role can complete driver profile'
+      });
+    }
+
+    // Check for validation errors
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        errors: errors.array()
+      });
+    }
+
+    const { license_number, license_expiry, transport_owner_id } = req.body;
+
+    // Prevent duplicate profiles - check if driver profile already exists
+    const existingDriver = await prisma.driver.findFirst({
+      where: { user_id: req.user.user_id },
+      select: { driver_id: true }
+    });
+
+    if (existingDriver) {
+      return res.status(409).json({
+        success: false,
+        message: 'Driver profile already exists'
+      });
+    }
+
+    // Validate transport_owner_id exists in vehicle_owners
+    const transportOwner = await prisma.vehicleOwner.findUnique({
+      where: { owner_id: parseInt(transport_owner_id, 10) },
+      select: { owner_id: true, owner_name: true }
+    });
+
+    if (!transportOwner) {
+      return res.status(400).json({
+        success: false,
+        message: 'Transport Owner not found'
+      });
+    }
+
+    // Create driver profile in a transaction
+    const newDriver = await prisma.$transaction(async (tx) => {
+      // Create driver profile with authentication-critical fields + provided operational fields
+      const driver = await tx.driver.create({
+        data: {
+          user_id: req.user.user_id,
+          driver_name: `${req.user.first_name} ${req.user.last_name}`.trim(),
+          mobile: req.user.phone,
+          license_number,
+          license_expiry,
+          transport_owner_id: parseInt(transport_owner_id, 10),
+          status: 'available',
+          is_available: true,
+          is_verified: false,
+          driver_code: `DRV-${req.user.user_id}-${Date.now().toString(36).toUpperCase()}`,
+          // Operational fields initialized to defaults
+          current_balance: 0,
+          total_advance: 0,
+          total_expenses: 0,
+          total_paid: 0,
+          total_deliveries: 0,
+          rating: 0,
+          performance_rating: 0,
+        },
+        select: {
+          driver_id: true,
+          user_id: true,
+          driver_name: true,
+          mobile: true,
+          license_number: true,
+          license_expiry: true,
+          transport_owner_id: true,
+          status: true,
+          is_available: true,
+          is_verified: true,
+          driver_code: true,
+          created_at: true,
+        }
+      });
+
+      return driver;
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Driver profile completed successfully',
+      data: {
+        driver: newDriver,
+        transportOwner: {
+          owner_id: transportOwner.owner_id,
+          owner_name: transportOwner.owner_name
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Complete driver profile error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error completing driver profile'
+    });
+  }
+});
+
+/**
+ * GET /api/drivers/profile-status
+ * Check if the authenticated driver has a complete profile.
+ * Returns profile status without requiring a full profile.
+ * @access Private (Driver)
+ */
+router.get('/profile-status', protect, async (req, res) => {
+  try {
+    // Validate authentication and driver role
+    if (req.user.role !== 'driver') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only users with driver role can check profile status'
+      });
+    }
+
+    // Check if driver profile exists
+    const driver = await prisma.driver.findFirst({
+      where: { user_id: req.user.user_id },
+      select: {
+        driver_id: true,
+        driver_name: true,
+        mobile: true,
+        status: true,
+        is_available: true,
+        is_verified: true,
+        driver_code: true,
+        license_number: true,
+        transport_owner_id: true,
+        created_at: true,
+      }
+    });
+
+    const hasProfile = !!driver;
+    const isComplete = hasProfile && !!driver.license_number && !!driver.transport_owner_id;
+
+    res.json({
+      success: true,
+      data: {
+        hasProfile,
+        isComplete,
+        driver: driver || null,
+        user: {
+          user_id: req.user.user_id,
+          email: req.user.email,
+          first_name: req.user.first_name,
+          last_name: req.user.last_name,
+          role: req.user.role,
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Profile status check error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error checking profile status'
+    });
   }
 });
 

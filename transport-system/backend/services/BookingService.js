@@ -25,6 +25,24 @@ const { validateTransition, isTerminal, canCancel, canConfirm, canSendQuote, can
 const { getCustomerCare, buildWhatsAppLink, buildCallLink } = require('../config/customerCare');
 
 /**
+ * Invoice creation policy for `createBooking()`.
+ *
+ * AUTO_IF_ACCEPTED — Preserve existing behaviour: when quote_status is
+ *   ACCEPTED, raise the invoice atomically with the booking. Used by all
+ *   existing online callers (enquiry acceptance, quick booking when accepted).
+ * DEFER — Create the booking but do NOT raise an invoice automatically.
+ *   The invoice can be raised later through the existing invoice workflow.
+ *   Used by manual (admin create order) bookings.
+ * EXPLICIT — Raise an invoice only when the caller explicitly opts in via
+ *   input.createInvoice === true. quote_status ACCEPTED alone is NOT sufficient.
+ */
+const INVOICE_POLICY = Object.freeze({
+  AUTO_IF_ACCEPTED: 'AUTO_IF_ACCEPTED',
+  DEFER: 'DEFER',
+  EXPLICIT: 'EXPLICIT',
+});
+
+/**
  * booking_events.event_payload is a TEXT column holding a JSON string. A row
  * written by an older code path (or hand-edited) may not be valid JSON, and a
  * single bad row must never 500 the whole audit timeline — so a parse failure
@@ -85,6 +103,12 @@ class BookingService {
  * provider can never fail the customer's booking either.
  *
  * @param {Object} input
+ * @param {string} [input.invoicePolicy] - Invoice creation policy.
+ *   'AUTO_IF_ACCEPTED' (default): raise invoice when quote_status is ACCEPTED.
+ *   'DEFER': never raise an invoice automatically.
+ *   'EXPLICIT': raise invoice only when input.createInvoice === true.
+ * @param {boolean} [input.createInvoice] - Explicit opt-in for invoice creation
+ *   when policy is 'EXPLICIT'.
  * @returns {Promise<{booking_id: number}>}
  */
 async createBooking(input) {
@@ -149,8 +173,19 @@ const bookingResult = await prisma.$transaction(async (tx) => {
       //
       // The amount is read back from the PERSISTED booking row, never from
       // `input`, so a browser-supplied amount can never reach the invoice.
+      // Invoice policy: defaults to AUTO_IF_ACCEPTED for full backward
+      // compatibility with all existing online callers. Manual bookings
+      // (Phase 4.2) will pass invoicePolicy: 'DEFER' so no invoice is raised
+      // automatically on an immediately-confirmed booking.
+      const invoicePolicy = input.invoicePolicy || INVOICE_POLICY.AUTO_IF_ACCEPTED;
+      const createInvoiceExplicit = input.createInvoice === true;
+
       let invoiceNumber = null;
-      if (input.quote_status === 'ACCEPTED') {
+      const shouldCreateInvoice =
+        (invoicePolicy === INVOICE_POLICY.AUTO_IF_ACCEPTED && input.quote_status === 'ACCEPTED') ||
+        (invoicePolicy === INVOICE_POLICY.EXPLICIT && createInvoiceExplicit);
+
+      if (shouldCreateInvoice) {
         const persisted = await tx.booking.findUnique({
           where: { booking_id: booking.booking_id },
           select: { final_price: true },

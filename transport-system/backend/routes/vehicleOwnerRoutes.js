@@ -6,7 +6,7 @@
 const express = require('express');
 const router = express.Router();
 const { body, param, validationResult } = require('express-validator');
-const { protect } = require('../middleware/auth');
+const { protect, isDatabaseConnectionError } = require('../middleware/auth');
 const VehicleOwnerService = require('../services/VehicleOwnerService');
 const VendorLedgerService = require('../services/VendorLedgerService');
 const PartnerService = require('../services/PartnerService');
@@ -34,7 +34,14 @@ const handleValidation = (req, res, next) => {
 };
 
 const handleError = (res, error, defaultMsg = 'Server error') => {
-  console.error('Vehicle owner route error:', error);
+  console.error('Vehicle owner route error:', error.code || error.name, error.message);
+  if (isDatabaseConnectionError(error)) {
+    return res.status(503).json({
+      success: false,
+      message: 'Database temporarily unavailable. Please try again shortly.',
+      errorCode: 'SERVICE_UNAVAILABLE',
+    });
+  }
   if (error.code === 'VEHICLE_OWNER_ALREADY_EXISTS') {
     return res.status(409).json({ success: false, message: error.message, data: error.data });
   }

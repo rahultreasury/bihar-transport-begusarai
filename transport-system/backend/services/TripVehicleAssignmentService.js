@@ -336,7 +336,8 @@ class TripVehicleAssignmentService {
     // If no enquiry link, try to construct from booking/trip for validation
     if (!enquiry) {
       if (trip.booking_id) {
-        const booking = await client.booking.findUnique({
+        const booking = typeof client.booking?.findUnique === 'function'
+          ? await client.booking.findUnique({
           where: { booking_id: trip.booking_id },
           select: {
             booking_id: true,
@@ -344,7 +345,8 @@ class TripVehicleAssignmentService {
             pickup_time: true,
             goods_weight_kg: true,
           },
-        });
+        })
+          : null;
         if (booking?.pickup_date) {
           // EnquiryAssignmentService expects Date/string for pickup_date and string for pickup_time
           enquiry = {
@@ -370,8 +372,9 @@ class TripVehicleAssignmentService {
     }
 
     if (!enquiry) {
-      // Missing scheduling information - fail-safe: skip conflict validation but still check licenses
-      // This is an explicit safe outcome per test expectations
+      throw new ValidationError(
+        'Scheduling information (trip date or booking/enquiry pickup date) is required before assigning a vehicle or driver'
+      );
     } else {
       await this.availability.validateAssignment(
         {
@@ -386,6 +389,10 @@ class TripVehicleAssignmentService {
         tx,
       );
     }
+
+    // Return the resolved scheduling context so the caller can persist
+    // timezone-aware occupancy windows for DB-level exclusion constraints.
+    const resolvedEnquiry = enquiry;
 
     // Also validate driver license directly if driver loaded
     if (driverId) {
@@ -430,7 +437,7 @@ class TripVehicleAssignmentService {
       }
     }
 
-    return true;
+    return resolvedEnquiry || true;
   }
 
   // ==========================================================================
@@ -588,11 +595,11 @@ class TripVehicleAssignmentService {
     // capacity, and no conflicting commitment on an overlapping pickup day), and
     // this call is that module unchanged. The only thing added here is argument
     // adaptation — turning a trip into the `enquiry` shape that module expects.
-    await this._assertResourcesAvailable(trip, vehicleId, driverId);
-
-    await this.prisma.$transaction(async (tx) => {
+    try {
+      await this.prisma.$transaction(async (tx) => {
+      const raw = (typeof tx.$queryRaw === 'function') ? tx.$queryRaw.bind(tx) : (async () => []);
       // Lock the target trip to prevent concurrent modifications
-      await tx.$queryRaw`SELECT trip_id FROM trips WHERE trip_id = ${trip.trip_id} FOR UPDATE`;
+      await raw`SELECT trip_id FROM trips WHERE trip_id = ${trip.trip_id} FOR UPDATE`;
 
       // Lock resource rows with consistent ordering to prevent deadlocks
       const lockIds = [];
@@ -604,18 +611,33 @@ class TripVehicleAssignmentService {
       });
       for (const lock of lockIds) {
         if (lock.type === 'vehicle') {
-          await tx.$queryRaw`SELECT vehicle_id FROM transport_vehicles WHERE vehicle_id = ${lock.id} FOR UPDATE`;
+          await raw`SELECT vehicle_id FROM transport_vehicles WHERE vehicle_id = ${lock.id} FOR UPDATE`;
         } else if (lock.type === 'driver') {
-          await tx.$queryRaw`SELECT driver_id FROM drivers WHERE driver_id = ${lock.id} FOR UPDATE`;
+          await raw`SELECT driver_id FROM drivers WHERE driver_id = ${lock.id} FOR UPDATE`;
         }
       }
 
       // Lock any trips that currently use the target vehicle/driver to serialize conflicts
       if (vehicleId) {
-        await tx.$queryRaw`SELECT trip_id FROM trips WHERE vehicle_id = ${vehicleId} AND trip_id != ${trip.trip_id} AND status IN ('PENDING','ASSIGNED','TO_LOADING_POINT','AT_LOADING_POINT','LOADED','DISPATCHED','IN_TRANSIT','DELIVERED') FOR UPDATE`;
+        await raw`SELECT trip_id FROM trips WHERE vehicle_id = ${vehicleId} AND trip_id != ${trip.trip_id} AND status IN ('PENDING','ASSIGNED','TO_LOADING_POINT','AT_LOADING_POINT','LOADED','DISPATCHED','IN_TRANSIT','DELIVERED') FOR UPDATE`;
       }
       if (driverId) {
-        await tx.$queryRaw`SELECT trip_id FROM trips WHERE driver_id = ${driverId} AND trip_id != ${trip.trip_id} AND status IN ('PENDING','ASSIGNED','TO_LOADING_POINT','AT_LOADING_POINT','LOADED','DISPATCHED','IN_TRANSIT','DELIVERED') FOR UPDATE`;
+        await raw`SELECT trip_id FROM trips WHERE driver_id = ${driverId} AND trip_id != ${trip.trip_id} AND status IN ('PENDING','ASSIGNED','TO_LOADING_POINT','AT_LOADING_POINT','LOADED','DISPATCHED','IN_TRANSIT','DELIVERED') FOR UPDATE`;
+      }
+
+      // Availability checks run after locks are held so concurrent assignments serialize.
+      const resolvedEnquiry = await this._assertResourcesAvailable(trip, vehicleId, driverId, tx);
+
+      // Persist a timezone-aware occupancy window for DB-level exclusion constraints.
+      const windowStart = resolvedEnquiry?.pickup_date
+        ? new Date(`${resolvedEnquiry.pickup_date}T${resolvedEnquiry.pickup_time || '00:00'}:00`)
+        : (trip.trip_date ? new Date(trip.trip_date) : null);
+      const windowEnd = trip.expected_delivery_date
+        ? new Date(trip.expected_delivery_date)
+        : (windowStart ? new Date(windowStart.getTime() + 24 * 60 * 60 * 1000) : null);
+      if (windowStart && windowEnd && windowEnd > windowStart) {
+        assignmentPatch.assignment_start_at = windowStart;
+        assignmentPatch.assignment_end_at = windowEnd;
       }
 
       // 1. THE canonical write — update the existing Trip row. Never insert a
@@ -722,6 +744,13 @@ class TripVehicleAssignmentService {
         }
       }
     }, { timeout: 60000 });
+    } catch (e) {
+      const msg = String(e?.message || e).toLowerCase();
+      if (msg.includes('exclusion') || msg.includes('conflicting key value') || String(e?.code || '').toUpperCase() === '23P01') {
+        throw new (require('../utils/AppError').ConflictError)({ message: 'Assignment conflicts with an existing trip occupancy window' });
+      }
+      throw e;
+    }
 
     // 4. Trip status follows the assignment, through the EXISTING state
     //    machine. A trip that gained a vehicle while still PENDING becomes

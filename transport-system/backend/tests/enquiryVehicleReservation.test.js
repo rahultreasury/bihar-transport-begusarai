@@ -148,6 +148,7 @@ function fakePrisma(world) {
         };
       },
       findFirst: async ({ where }) => Object.values(world.enquiries).find((e) => matchMany(where, e)) || null,
+      findMany: async ({ where }) => Object.values(world.enquiries).filter((e) => matchMany(where, e)),
       update: async ({ where, data }) => Object.assign(world.enquiries[where.enquiry_id], data),
       updateMany: async ({ where, data }) => {
         const rows = Object.values(world.enquiries).filter((e) => matchMany(where, e));
@@ -172,6 +173,7 @@ function fakePrisma(world) {
       // `_tripInclude()` asks for vehicle/driver/vendor relations; a real prisma
       // hydrates them, so the fake must too or every assignment reads as null.
       findFirst: async ({ where }) => hydrateTrip(world, world.trips.find((t) => matchMany(where, t))),
+      findMany: async ({ where }) => world.trips.filter((t) => matchMany(where, t)).map((t) => hydrateTrip(world, t)),
       findUnique: async ({ where }) =>
         hydrateTrip(world, world.trips.find((t) => t.trip_id === where.trip_id)),
       create: async ({ data }) => {
@@ -282,9 +284,20 @@ function build() {
   const prisma = fakePrisma(world);
   const availability = new EnquiryAssignmentService({ prisma });
 
-  // A deterministic stand-in for the existing trip-number generator, so the
-  // test does not need the database-backed repository.
-  const tripRepo = { generateTripNumber: async () => `BTBT-TEST-${world.seq.trip}` };
+  // A deterministic stand-in for the trip-number generator. Provisioning now
+  // uses createTripWithCanonicalNumber (PK-derived BTBT-YYYY-NNNNN) via a temp
+  // UUID placeholder, so the mock must implement both steps atomically.
+  const tripRepo = {
+    generateTripNumber: async () => `BTBT-TEST-${world.seq.trip}`,
+    createTripWithCanonicalNumber: async (data, tx) => {
+      const { buildTripNumber } = require('../services/TripNumberService');
+      const { randomUUID } = require('crypto');
+      const tempNumber = `TEMP-${randomUUID()}`;
+      const trip = await tx.trip.create({ data: { ...data, trip_number: tempNumber } });
+      const canonicalNumber = buildTripNumber(trip.trip_id, trip.created_at);
+      return await tx.trip.update({ where: { trip_id: trip.trip_id }, data: { trip_number: canonicalNumber } });
+    },
+  };
 
   const provisioning = new TripProvisioningService({ prisma, tripRepo });
   const assignment = new TripVehicleAssignmentService({ prisma, availability });

@@ -449,11 +449,9 @@ class TripService {
       }
     }
 
-    // Generate trip number
-    const tripNumber = await this.tripRepo.generateTripNumber();
-
-    // Create trip (exclude partner_id - not a Trip model field, used for validation only)
-    const { partner_id: _partnerId, ...tripData } = data;
+    // Create trip (exclude partner_id and trip_number - trip_number is derived
+    // from the database-assigned PK via TripNumberService.buildTripNumber)
+    const { partner_id: _partnerId, trip_number: _tripNumber, ...tripData } = data;
 
     // ── Phase 2: vehicle-hire commercial terms ───────────────────────
     // Validated server-side against the canonical vocabularies. A bad
@@ -517,14 +515,10 @@ class TripService {
         throw err;
       }
 
-      const trip = await tx.trip.create({
-        data: {
-          ...tripData,
-          ...hireTerms,
-          trip_number: tripNumber,
-          status: data.status || 'PENDING',
-        },
-      });
+      const trip = await this.tripRepo.createTripWithCanonicalNumber(
+        { ...tripData, ...hireTerms, status: data.status || 'PENDING' },
+        tx
+      );
 
       return trip;
     });

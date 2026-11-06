@@ -189,7 +189,21 @@ const shipmentFieldClass = (hasError) => [
 // GET /api/enquiries/config/customer-care (backed by the backend's
 // CUSTOMER_CARE_* environment variables). One source of truth, no drift.
 
-function BookTransport() {
+function BookTransport({
+  mode = 'customer',
+  onSubmit,
+  onSubmitSuccess,
+  admin,
+  showAdminIndicator = false,
+  submitLabel = 'Submit Booking',
+  intakeChannel = 'PHONE',
+  source = 'online',
+  initialValues = {},
+  preselectedVehicleId = '',
+  customerNamePrefill = '',
+  customerMobilePrefill = '',
+  disabled = false,
+} = {}) {
   const { user } = useContext(AuthContext);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -217,16 +231,16 @@ function BookTransport() {
   const [priceRange, setPriceRange] = useState(null); // { min, max, label }
 
   // ─── Form state ───────────────────────────────────────────────────────
-  const preselectedFleetVehicle = resolveVehicleParam(vehicleParam);
+  const preselectedFleetVehicle = resolveVehicleParam(preselectedVehicleId || vehicleParam);
   const initialVehicleType = preselectedFleetVehicle || DEFAULT_VEHICLE_ID;
 
   const [formData, setFormData] = useState({
-    pickup_location: pickupFromUrl,
+    pickup_location: pickupFromUrl || '',
     pickup_address: '',
     pickup_city: 'Begusarai',
     pickup_date: getDefaultPickupDate(),
     pickup_time: getDefaultPickupTime(),
-    drop_location: dropFromUrl,
+    drop_location: dropFromUrl || '',
     drop_address: '',
     drop_city: '',
     goods_description: '',
@@ -247,7 +261,8 @@ function BookTransport() {
     // prefill effect below) and always editable, pre-filled or not.
     customer_name: '',
     customer_mobile: '',
-    vehicle_type_required: initialVehicleType
+    vehicle_type_required: initialVehicleType,
+    ...initialValues,
   });
 
   // ─── UI state ─────────────────────────────────────────────────────────
@@ -268,6 +283,84 @@ function BookTransport() {
   // A ref is written immediately, so the second click is dropped before it can
   // reach the API. Released in `finally`, and never before.
   const submitLockRef = useRef(false);
+
+  // Idempotency key for admin manual bookings.
+  // Generated once per logical submission, reused on retry, reset only when
+  // the admin intentionally starts a new booking (form reset or navigation away).
+  // Format: admin-{base36-timestamp}-{20-char-crypto-random} = ~35 chars (meets 32-128 backend requirement)
+  // Persisted in localStorage to survive page refresh during uncertain submission.
+  const STORAGE_KEY = 'bt_admin_booking_idempotency_key';
+  const [idempotencyKey, setIdempotencyKey] = useState(() => {
+    if (mode !== 'admin') return null;
+
+    // Try to restore from localStorage
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored && typeof stored === 'string' && stored.startsWith('admin-')) {
+        // Validate format: should be admin-{base36}-{20chars}
+        const parts = stored.split('-');
+        if (parts.length === 3 && parts[2].length >= 20) {
+          return stored;
+        }
+      }
+    } catch {
+      // localStorage unavailable (private browsing, etc.)
+    }
+
+    // Generate new key
+    const timestamp = Date.now().toString(36);
+    const randomBytes = new Uint8Array(15);
+    crypto.getRandomValues(randomBytes);
+    const randomPart = Array.from(randomBytes)
+      .map(b => b.toString(36).padStart(2, '0'))
+      .join('')
+      .slice(0, 20);
+    const newKey = `admin-${timestamp}-${randomPart}`;
+
+    // Persist immediately
+    try {
+      localStorage.setItem(STORAGE_KEY, newKey);
+    } catch {
+      // Ignore storage errors
+    }
+
+    return newKey;
+  });
+
+  // Persist key to localStorage when it changes (for new key generation)
+  useEffect(() => {
+    if (mode === 'admin' && idempotencyKey) {
+      try {
+        localStorage.setItem(STORAGE_KEY, idempotencyKey);
+      } catch {
+        // Ignore storage errors
+      }
+    }
+  }, [idempotencyKey]);
+
+  // Clear idempotency key on confirmed success or explicit new booking
+  const clearIdempotencyKey = useCallback(() => {
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch {
+      // Ignore storage errors
+    }
+    setIdempotencyKey(null);
+  }, []);
+
+  // Reset idempotency key when form is genuinely reset for a new booking.
+  // This happens when the admin navigates away and back, or explicitly clears.
+  useEffect(() => {
+    if (mode === 'admin') {
+      // Key persists across retries but resets on component unmount/remount
+      // which happens when admin navigates to a new booking page.
+      return () => {
+        // Don't clear on unmount - keep for potential retry after refresh
+        // The key will be cleared on confirmed success or explicit new booking
+      };
+    }
+  }, []);
+
   const [submitSuccess, setSubmitSuccess] = useState(false);
   const [submitSuccessData, setSubmitSuccessData] = useState(null);
   const [showReview, setShowReview] = useState(false);
@@ -1113,8 +1206,13 @@ function BookTransport() {
   // therefore only ever fills an EMPTY field, and it depends on `user` alone, so
   // a re-render can never resurrect an old account value over something the
   // customer has already typed.
+  //
+  // Admin manual bookings are NOT prefilled from the admin's own account — the
+  // admin enters the customer's name and mobile (optionally pre-filled from an
+  // existing customer record via the `customerNamePrefill`/`customerMobilePrefill`
+  // props handled in the effect below).
   useEffect(() => {
-    if (!user) return;
+    if (!user || mode === 'admin') return;
     const name = `${user.first_name || ''} ${user.last_name || ''}`.trim();
     const phone = String(user.phone || '').replace(/\D/g, '').slice(-10);
     setFormData(prev => {
@@ -1130,7 +1228,28 @@ function BookTransport() {
       }
       return changed ? next : prev;
     });
-  }, [user]);
+  }, [user, mode]);
+
+  // Admin-only: optionally pre-fill the customer contact fields from an existing
+  // customer record. Only empty fields are filled, so the admin can always
+  // override. Does not alter the public form in any way.
+  useEffect(() => {
+    if (mode !== 'admin') return;
+    setFormData(prev => {
+      const next = { ...prev };
+      let changed = false;
+      if (!prev.customer_name && customerNamePrefill) {
+        next.customer_name = customerNamePrefill;
+        changed = true;
+      }
+      if (!prev.customer_mobile && customerMobilePrefill) {
+        next.customer_mobile = customerMobilePrefill;
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, customerNamePrefill, customerMobilePrefill]);
 
   // Contact validation. Kept local rather than folded into the shared booking
   // validator because these two fields are specific to the login-free enquiry
@@ -1305,36 +1424,92 @@ function BookTransport() {
       // price is never set here — only an authenticated admin can do that.
       estimated_price_min: estimatedPriceMin || null,
       estimated_price_max: estimatedPriceMax || null,
+
+      // Idempotency key for admin manual bookings. Generated once per logical
+      // submission, reused on retry, never regenerated on network error.
+      ...(mode === 'admin' && idempotencyKey ? { idempotency_key: idempotencyKey } : {}),
     };
 
     submitLockRef.current = true;
     setIsSubmitting(true);
 
     if (import.meta.env.DEV) {
-      console.info('[booking] submission started', { pickup: enquiryPayload.pickup_location, drop: enquiryPayload.drop_location });
+      console.info('[booking] submission started', {
+        pickup: enquiryPayload.pickup_location,
+        drop: enquiryPayload.drop_location,
+        mode,
+      });
     }
 
     try {
-      // AWAITED. The server answers only after the enquiry row, its canonical
-      // number and its audit event are committed, so by the time this resolves
-      // the enquiry genuinely exists and is readable.
-      const response = await enquiryAPI.create(enquiryPayload);
-      const { enquiry, enquiryId, enquiryNumber, bookingId, redirectTo } =
-        extractCreatedEnquiry(response);
+      // Admin manual bookings reuse the SAME enquiry intake endpoint as online
+      // customers — same lifecycle stage (ENQUIRY_SUBMITTED), same quote →
+      // accept → booking → trip workflow. Only source + creator differ.
+      const response =
+        mode === 'admin'
+          ? await onSubmit(enquiryPayload)
+          : await enquiryAPI.create(enquiryPayload);
+      const {
+        enquiry,
+        enquiryId,
+        enquiryNumber,
+        bookingId,
+        bookingNumber,
+        tripId,
+        redirectTo,
+        idempotentReplay,
+      } = extractCreatedEnquiry(response);
 
       if (import.meta.env.DEV) {
         console.info('[booking] POST /enquiries resolved', {
           success: response?.data?.success,
+          mode,
           enquiryId,
           enquiryNumber,
           bookingId,
+          tripId,
+          idempotentReplay,
         });
+      }
+
+      clearBookingDraft();
+
+      if (mode === 'admin') {
+        // Clear the persisted idempotency key on confirmed success
+        clearIdempotencyKey();
+
+        setSubmitSuccessData({
+          enquiry_id: enquiryId,
+          booking_reference: bookingNumber || bookingId,
+          booking_number: bookingNumber || bookingId,
+          status: idempotentReplay ? 'Request already received (duplicate)' : 'Request received',
+          pickup_location: formData.pickup_location,
+          drop_location: formData.drop_location,
+          vehicle: getVehicleName(formData.vehicle_type_required),
+          distance: distanceDisplay,
+          price: fareDisplay,
+          trip_id: tripId,
+        });
+        setSubmitSuccess(true);
+        onSubmitSuccess?.({
+          enquiryId,
+          enquiryNumber,
+          enquiry,
+          source,
+          intakeChannel,
+          adminId: admin?.adminId,
+          adminName: admin?.adminName,
+          bookingId,
+          bookingNumber,
+          tripId,
+          idempotentReplay,
+        });
+        return;
       }
 
       // Navigate ONLY on a confirmed success, and ONLY to the id the backend
       // generated. A failed creation never leaves this page.
       if (response?.data?.success && redirectTo && enquiryNumber) {
-        clearBookingDraft();
         if (import.meta.env.DEV) {
           console.info('[booking] navigation started →', redirectTo);
         }
@@ -1383,6 +1558,27 @@ function BookTransport() {
       setIsSubmitting(false);
     }
   };
+
+  // After a successful admin submission, show the success confirmation first,
+  // then carry the operator into the Booking detail page where the same quote
+  // → confirm lifecycle continues. Falls back to the enquiry workspace if the
+  // backend could not provision a Booking (e.g. no customer account could be
+  // resolved). The public customer flow navigates itself and is unaffected.
+  useEffect(() => {
+    if (mode !== 'admin' || !submitSuccess) return undefined;
+    const bookingNumber =
+      submitSuccessData?.booking_number || submitSuccessData?.bookingReference;
+    const enquiryId = submitSuccessData?.enquiry_id;
+    if (!bookingNumber && !enquiryId) return undefined;
+    const timer = setTimeout(() => {
+      if (bookingNumber) {
+        navigate(`/admin/bookings/${bookingNumber}`);
+      } else {
+        navigate(`/admin/enquiries/${enquiryId}`);
+      }
+    }, 2500);
+    return () => clearTimeout(timer);
+  }, [mode, submitSuccess, submitSuccessData?.booking_number, submitSuccessData?.bookingReference, submitSuccessData?.enquiry_id, navigate]);
 
   // ─── Map center ───────────────────────────────────────────────────────
   const mapCenter = useMemo(() => {
@@ -1795,6 +1991,94 @@ function BookTransport() {
 
   // ─── Main render ──────────────────────────────────────────────────────
   if (submitSuccess) {
+    if (mode === 'admin') {
+      const ref = submitSuccessData?.booking_reference || submitSuccessData?.booking_number || '';
+      return (
+        <main className="w-full min-w-0 overflow-x-clip">
+          <div className="min-h-screen bg-gray-50 py-6 md:py-8">
+            <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 w-full">
+              <div className="text-center py-12">
+                <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                  <svg className="w-8 h-8 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 12l4 4L19 6" />
+                  </svg>
+                </div>
+                <h1 className="text-2xl font-bold text-gray-900 mb-2">Booking request created</h1>
+                <p className="text-gray-600 mb-6">
+                  Your manual booking has been received and enters the same quotation and confirmation workflow as an online booking.
+                </p>
+                <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-8 text-left">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="text-gray-500">Reference</span>
+                      <span className="font-bold text-gray-900 block">{ref}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Status</span>
+                      <span className="font-medium text-gray-900 block capitalize">{submitSuccessData.status}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Source</span>
+                      <span className="font-bold text-amber-700 block">MANUAL</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Created by</span>
+                      <span className="font-medium text-gray-900 block">{admin?.adminName || 'Administrator'}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Pickup</span>
+                      <span className="font-medium text-gray-900 block">{submitSuccessData.pickup_location}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Drop</span>
+                      <span className="font-medium text-gray-900 block">{submitSuccessData.drop_location}</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const bookingNumber =
+                        submitSuccessData?.booking_number ||
+                        submitSuccessData?.bookingReference;
+                      if (bookingNumber) {
+                        navigate(`/admin/bookings/${bookingNumber}`);
+                      } else {
+                        navigate(`/admin/enquiries/${submitSuccessData.enquiry_id}`);
+                      }
+                    }}
+                    className="btn-secondary"
+                  >
+                    Go to Booking
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      clearBookingDraft();
+                      window.location.href = '/admin/orders/create';
+                    }}
+                    className="btn-outline"
+                  >
+                    Create Another
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => navigate('/admin/orders')}
+                    className="btn-secondary"
+                  >
+                    Back to Orders
+                  </button>
+                </div>
+                <p className="mt-6 text-xs text-slate-400 text-center">
+                  You will be taken to the enquiry workspace automatically.
+                </p>
+              </div>
+            </div>
+          </div>
+        </main>
+      );
+    }
     return (
       <main className="w-full min-w-0 overflow-x-clip">
         <div className="min-h-screen bg-gray-50 py-6 md:py-8">
@@ -1882,6 +2166,13 @@ function BookTransport() {
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 w-full">
           {/* Page header */}
           <header className="mb-5 sm:mb-6">
+            {showAdminIndicator && admin && (
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-50 border border-amber-200 text-[11px] font-bold text-amber-800 mb-4">
+                <span className="flex h-2 w-2 rounded-full bg-amber-600" aria-hidden="true"></span>
+                Admin Manual Booking &bull; Source: MANUAL &bull; Created by{' '}
+                {admin?.adminName || 'Administrator'}
+              </div>
+            )}
             <h1 className="text-2xl font-extrabold tracking-tight text-slate-950 sm:text-3xl">
               Book a Vehicle
             </h1>

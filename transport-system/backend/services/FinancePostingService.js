@@ -1460,6 +1460,9 @@ class FinancePostingService {
       const original = await tx.financialTransaction.findUnique({ where: { transaction_id: Number(transactionId) } });
       if (!original) throw new NotFoundError({ message: 'Transaction not found' });
       if (original.status === 'CANCELLED') throw new ValidationError('This transaction is already cancelled');
+      if (original.transaction_type === 'REVERSAL') {
+        throw new ValidationError('A reversal transaction cannot be reversed. Only original payment transactions may be reversed.');
+      }
 
       const existingReversal = await tx.financialTransaction.findFirst({
         where: {

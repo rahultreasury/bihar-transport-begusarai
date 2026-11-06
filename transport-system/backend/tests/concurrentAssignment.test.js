@@ -59,6 +59,19 @@ function makePrismaMock() {
         }
         return null;
       },
+      findMany: async ({ where = {} } = {}) => {
+        const res = [];
+        for (const t of memory.trips.values()) {
+          if (where.vehicle_id !== undefined && t.vehicle_id !== where.vehicle_id) continue;
+          if (where.driver_id !== undefined && t.driver_id !== where.driver_id) continue;
+          if (where.trip_id && where.trip_id.not && t.trip_id === where.trip_id.not) continue;
+          if (where.status && where.status.in && !where.status.in.includes(t.status)) continue;
+          if (where.enquiry_id !== undefined && t.enquiry_id !== where.enquiry_id) continue;
+          if (where.booking_id !== undefined && t.booking_id !== where.booking_id) continue;
+          res.push({ ...t });
+        }
+        return res;
+      },
       update: async ({ where, data }) => {
         const t = memory.trips.get(where.trip_id);
         if (!t) throw new Error('not found');
@@ -91,6 +104,17 @@ function makePrismaMock() {
           return e;
         }
         return null;
+      },
+      findMany: async ({ where = {} } = {}) => {
+        const res = [];
+        for (const e of memory.enquiries.values()) {
+          if (where.enquiry_id && where.enquiry_id.not && e.enquiry_id === where.enquiry_id.not) continue;
+          if (where.assigned_vehicle_id !== undefined && e.assigned_vehicle_id !== where.assigned_vehicle_id) continue;
+          if (where.assigned_driver_id !== undefined && e.assigned_driver_id !== where.assigned_driver_id) continue;
+          if (where.status && where.status.in && !where.status.in.includes(e.status)) continue;
+          res.push({ ...e });
+        }
+        return res;
       },
       update: async ({ where, data }) => {
         const e = memory.enquiries.get(where.enquiry_id);

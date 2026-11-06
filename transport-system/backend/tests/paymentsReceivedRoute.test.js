@@ -35,8 +35,8 @@ test('GET /payments-received filters customer payments only', () => {
 test('AdminFinancials uses getPaymentsReceived for payments tab', () => {
   const fs = require('fs');
   const pageContent = fs.readFileSync(
-    '../frontend/src/pages/AdminFinancials.jsx',
+    '../frontend/src/components/admin-premium/financials/PaymentsTab.jsx',
     'utf8'
   );
-  assert(pageContent.includes('financialAPI.getPaymentsReceived'), 'Should use getPaymentsReceived for payments tab');
+  assert(pageContent.includes('financeAPI.getPaymentsReceived'), 'Should use getPaymentsReceived for payments tab');
 });

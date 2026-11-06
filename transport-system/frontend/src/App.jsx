@@ -41,6 +41,7 @@ const AdminOrders = lazy(() => import('./pages/AdminOrders'));
 const AdminOrderMaster = lazy(() => import('./pages/AdminOrderMaster'));
 const AdminLifecycleDetail = lazy(() => import('./pages/AdminLifecycleDetail'));
 const AdminBookings = lazy(() => import('./pages/AdminBookings'));
+const AdminCreateOrder = lazy(() => import('./pages/AdminCreateOrder'));
 const AdminBookingDetail = lazy(() => import('./pages/AdminBookingDetail'));
 const AdminAssignDriver = lazy(() => import('./pages/AdminAssignDriver'));
 const AdminAssignVehicle = lazy(() => import('./pages/AdminAssignVehicle'));
@@ -275,27 +276,27 @@ function AppContent() {
             </ErrorBoundary>
           }
         />
-        
+
         {/* Customer Routes */}
-        <Route 
-          path="/dashboard" 
+        <Route
+          path="/dashboard"
           element={
-            user 
+            user
               ? <Suspense fallback={<PageLoader label="Loading Dashboard..." />}><Dashboard /></Suspense>
               : <Navigate to="/login" />
-          } 
+          }
         />
-        
+
         {/* Driver Routes */}
-        <Route 
-          path="/driver-dashboard" 
+        <Route
+          path="/driver-dashboard"
           element={
-            user?.role === 'driver' 
+            user?.role === 'driver'
               ? <Suspense fallback={<PageLoader label="Loading Driver Dashboard..." />}><DriverDashboard /></Suspense>
               : <Navigate to="/" />
-          } 
+          }
         />
-        
+
 // Admin Routes
         <Route path="/admin/login" element={<Suspense fallback={<PageLoader label="Loading..." />}><AdminLogin /></Suspense>} />
 
@@ -585,23 +586,33 @@ function AppContent() {
             <ProtectedRoute>
               <Suspense fallback={<PageLoader label="Loading order..." />}><AdminOrderMaster /></Suspense>
             </ProtectedRoute>
-          } 
+          }
         />
-<Route 
-          path="/admin/bookings/:bookingNumber/assign-driver" 
+        {/* CREATE ORDER — standalone full-page ERP workspace. Replaced the modal
+            that previously opened over /admin/bookings. */}
+        <Route
+          path="/admin/orders/create"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageLoader label="Loading Create Order..." />}><AdminCreateOrder /></Suspense>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/bookings/:bookingNumber/assign-driver"
           element={
             <ProtectedRoute>
               <Suspense fallback={<PageLoader label="Loading Driver Assignment..." />}><AdminAssignDriver /></Suspense>
             </ProtectedRoute>
-          } 
+          }
         />
-        <Route 
-          path="/admin/bookings/:bookingNumber/assign-vehicle" 
+        <Route
+          path="/admin/bookings/:bookingNumber/assign-vehicle"
           element={
             <ProtectedRoute>
               <Suspense fallback={<PageLoader label="Loading Vehicle Assignment..." />}><AdminAssignVehicle /></Suspense>
             </ProtectedRoute>
-          } 
+          }
           />
           <Route
             path="/admin/drivers/register-resources"
@@ -673,39 +684,39 @@ function AppContent() {
             <ProtectedRoute>
               <Suspense fallback={<PageLoader label="Loading Reports..." />}><AdminReports /></Suspense>
             </ProtectedRoute>
-          } 
+          }
         />
-        <Route 
-          path="/admin/analytics" 
+        <Route
+          path="/admin/analytics"
           element={
             <ProtectedRoute>
               <Suspense fallback={<PageLoader label="Loading Analytics..." />}><AdminAnalytics /></Suspense>
             </ProtectedRoute>
-          } 
+          }
         />
-        <Route 
-          path="/admin/owners" 
+        <Route
+          path="/admin/owners"
           element={
             <ProtectedRoute>
               <Suspense fallback={<PageLoader label="Loading Transport Owners..." />}><AdminPartners /></Suspense>
             </ProtectedRoute>
-          } 
+          }
         />
-        <Route 
-          path="/admin/owners/:id" 
+        <Route
+          path="/admin/owners/:id"
           element={
             <ProtectedRoute>
               <Suspense fallback={<PageLoader label="Loading Owner Profile..." />}><AdminPartnerProfile /></Suspense>
             </ProtectedRoute>
-          } 
+          }
         />
-        <Route 
-          path="/admin/settlements" 
+        <Route
+          path="/admin/settlements"
           element={
             <ProtectedRoute>
               <Suspense fallback={<PageLoader label="Loading Settlements..." />}><AdminSettlements /></Suspense>
             </ProtectedRoute>
-          } 
+          }
         />
 
         {/* SEO Resource Pages */}

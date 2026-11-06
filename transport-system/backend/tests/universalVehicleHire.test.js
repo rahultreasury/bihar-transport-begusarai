@@ -70,6 +70,8 @@ function buildWorld(seed = {}) {
       enquiry_number: 'BTB-20260930-001430',
       booking_id: 300,
       status: 'CONFIRMED',
+      pickup_date: '2026-10-01',
+      pickup_time: '10:00',
       assigned_vehicle_id: null,
       assigned_driver_id: null,
       assigned_owner_id: null,
@@ -79,6 +81,9 @@ function buildWorld(seed = {}) {
       booking_number: 'BTB-2026-00203',
       quote_status: 'ACCEPTED',
       status: 'confirmed',
+      pickup_date: '2026-10-01',
+      pickup_time: '10:00',
+      goods_weight_kg: 1000,
       vehicle_id: null,
       driver_id: null,
       vehicle_owner_id: null,
@@ -90,6 +95,7 @@ function buildWorld(seed = {}) {
       trip_number: 'BTBT-2026-00007',
       booking_id: 300,
       status: 'PENDING',
+      trip_date: new Date('2026-10-01'),
       vehicle_id: null,
       driver_id: null,
       transport_owner_id: null,
@@ -110,12 +116,19 @@ function buildWorld(seed = {}) {
         if (where.booking_id !== undefined && where.booking_id !== world.booking.booking_id) return null;
         return cloneTrip();
       },
+      findMany: async () => [],
       update: async ({ where, data }) => {
         writes.push({ op: 'trip.update', data: clone(data) });
         Object.assign(world.trip, data);
         return cloneTrip();
       },
       count: async () => 0,
+    },
+    enquiry: {
+      findUnique: async () => null,
+      findFirst: async () => null,
+      findMany: async () => [],
+      update: async () => null,
     },
     vehicleHire: {
       findUnique: async ({ where }) => {
@@ -181,6 +194,12 @@ function buildWorld(seed = {}) {
         if (where.booking_id === world.booking.booking_id) return clone(world.enquiry);
         return null;
       },
+      findFirst: async ({ where }) => {
+        if (where.enquiry_id === world.enquiry.enquiry_id) return clone(world.enquiry);
+        if (where.booking_id === world.booking.booking_id) return clone(world.enquiry);
+        return null;
+      },
+      findMany: async () => [],
       update: async ({ where, data }) => {
         writes.push({ op: 'enquiry.update', data: clone(data) });
         Object.assign(world.enquiry, data);
@@ -686,19 +705,38 @@ function buildProvisioningWorld(booking = {}, tripExists = false) {
     driver: { findUnique: async () => ({ transport_owner_id: 1 }) },
     trip: {
       findFirst: async () => (state.trip ? { ...state.trip } : null),
+      findMany: async () => (state.trip ? [{ ...state.trip }] : []),
       create: async ({ data }) => {
         state.created += 1;
         state.trip = { trip_id: 700 + state.created, ...data };
         return { ...state.trip };
       },
+      update: async ({ where, data }) => {
+        if (state.trip && state.trip.trip_id === where.trip_id) {
+          Object.assign(state.trip, data);
+          return { ...state.trip };
+        }
+        throw new Error(`Trip ${where.trip_id} not found`);
+      },
     },
+    enquiry: { findUnique: async () => null, findFirst: async () => null, findMany: async () => [], update: async () => null },
     $transaction: async (fn) => fn(prisma),
   };
 
   // The real generator is stubbed so the suite needs no sequence table. The
   // production service still goes through TripRepository — never a second
   // numbering scheme.
-  const tripRepo = { generateTripNumber: async () => `BTBT-2026-${9000 + state.created}` };
+  const tripRepo = {
+    generateTripNumber: async () => `BTBT-2026-${9000 + state.created}`,
+    createTripWithCanonicalNumber: async (data, tx) => {
+      const { buildTripNumber } = require('../services/TripNumberService');
+      const { randomUUID } = require('crypto');
+      const tempNumber = `TEMP-${randomUUID()}`;
+      const trip = await tx.trip.create({ data: { ...data, trip_number: tempNumber } });
+      const canonicalNumber = buildTripNumber(trip.trip_id, trip.created_at);
+      return await tx.trip.update({ where: { trip_id: trip.trip_id }, data: { trip_number: canonicalNumber } });
+    },
+  };
 
   return { state, service: new TripProvisioningService({ prisma, tripRepo }) };
 }

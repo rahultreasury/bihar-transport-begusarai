@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { protect, adminOnly } = require('../middleware/auth');
+const { protect, adminOnly, isDatabaseConnectionError } = require('../middleware/auth');
 const { prisma } = require('../config/prisma');
 
 const BookingService = require('../services/BookingService');
@@ -240,25 +240,32 @@ router.get('/dashboard', protect, async (req, res) => {
           completedDeliveries,
           // Canonical financial metrics (single source of truth)
           totalFreight: canonicalFinancials.totalFreight || 0,
-          totalRevenue: canonicalFinancials.totalCustomerCollected || 0,
-          todayRevenue: canonicalFinancials.totalCustomerCollected || 0,
-          totalCommission: canonicalFinancials.totalCommission || 0,
-          totalBtNetProfit: canonicalFinancials.totalBtNetProfit || 0,
-          outstandingPayments: canonicalFinancials.totalCustomerDue || 0,
-          customerDue: canonicalFinancials.totalCustomerDue || 0,
-          ownerOutstanding: canonicalFinancials.totalOwnerPayableRemaining || 0,
-          totalAdvances: canonicalFinancials.totalOwnerAdvances + canonicalFinancials.totalDriverAdvances || 0,
-          totalSettlements: canonicalFinancials.totalOwnerSettlements + canonicalFinancials.totalDriverSettlements || 0,
+          totalRevenue: canonicalFinancials.totalReceived || 0,
+          todayRevenue: canonicalFinancials.todayCollections || 0,
+          totalCommission: canonicalFinancials.totalBtCommission || 0,
+          totalBtNetProfit: canonicalFinancials.netPosition || 0,
+          outstandingPayments: canonicalFinancials.totalReceivable || 0,
+          customerDue: canonicalFinancials.totalReceivable || 0,
+          ownerOutstanding: canonicalFinancials.totalOwnerPayable || 0,
+          totalAdvances: canonicalFinancials.totalAdvances || 0,
+          totalSettlements: canonicalFinancials.totalSettlements || 0,
         },
         recentBookings,
         availableDrivers,
       },
     });
   } catch (error) {
-    console.error('Get dashboard error:', error);
+    console.error('Get dashboard error:', error.code || error.name, error.message);
+    if (isDatabaseConnectionError(error)) {
+      return res.status(503).json({
+        success: false,
+        message: 'Database temporarily unavailable. Please try again shortly.',
+        errorCode: 'SERVICE_UNAVAILABLE',
+      });
+    }
     res.status(500).json({
       success: false,
-      message: 'Server error'
+      message: 'Server error',
     });
   }
 });
@@ -367,7 +374,14 @@ router.get('/vehicles/stats', protect, async (req, res) => {
       data: { total, available, onTrip, maintenance, inactive },
     });
   } catch (error) {
-    console.error('Get vehicle stats error:', error);
+    console.error('Get vehicle stats error:', error.code || error.name, error.message);
+    if (isDatabaseConnectionError(error)) {
+      return res.status(503).json({
+        success: false,
+        message: 'Database temporarily unavailable. Please try again shortly.',
+        errorCode: 'SERVICE_UNAVAILABLE',
+      });
+    }
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
@@ -3230,6 +3244,260 @@ router.get('/global-search', protect, adminOnly, async (req, res) => {
   } catch (err) {
     console.error('Global search error:', err);
     return res.status(500).json({ success: false, message: 'Global search failed' });
+  }
+});
+
+/**
+ * ===============================
+ * Manual Order Creation API
+ * ===============================
+ *
+ * POST /api/admin/orders/manual
+ *   Create a manual order (phone/offline booking) directly.
+ *   This is the primary entry point for the "Create Order" button in
+ *   the Admin Order / Trip Master.
+ *
+ * GET /api/admin/orders/manual/lookups
+ *   Get lookup data for the manual order form (clients, vehicles, etc.)
+ */
+
+// @route   POST /api/admin/orders/manual
+// @desc    Create a manual order from admin phone/offline booking
+// @access  Private (Admin)
+router.post('/orders/manual', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const ManualOrderService = require('../services/ManualOrderService');
+    const service = new ManualOrderService();
+
+    const result = await service.createManualOrder(req.body || {}, {
+      adminId: req.user.user_id,
+      adminName: req.user.full_name || req.user.username || 'Administrator',
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent') || null,
+    });
+
+    const statusCode = result.data && result.data.idempotent ? 200 : 201;
+    return res.status(statusCode).json(result);
+  } catch (err) {
+    console.error('Create manual order error:', err);
+    if (err?.name === 'ValidationError' || err?.code === 'VALIDATION_ERROR') {
+      return res.status(400).json({ success: false, message: err.message });
+    }
+    if (err?.name === 'NotFoundError' || err?.code === 'NOT_FOUND') {
+      return res.status(404).json({ success: false, message: err.message });
+    }
+    // Prisma unique violation on any unique constraint (e.g. concurrent duplicate)
+    if (err?.code === 'P2002') {
+      return res.status(409).json({
+        success: false,
+        message: 'A duplicate order was detected. Please refresh and check the order list.',
+      });
+    }
+    return res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// @route   GET /api/admin/orders/manual/lookups
+// @desc    Get lookup data for manual order form (clients, vehicles, drivers, owners)
+// @access  Private (Admin)
+router.get('/orders/manual/lookups', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const { search = '', limit = 50 } = req.query;
+
+    const [clients, vehicles, drivers, owners] = await Promise.all([
+      // Clients (offline corporate clients)
+      prisma.client.findMany({
+        where: {
+          deleted_at: null,
+          is_active: true,
+          ...(search ? {
+            OR: [
+              { company_name: { contains: search, mode: 'insensitive' } },
+              { client_code: { contains: search, mode: 'insensitive' } },
+              { contact_person: { contains: search, mode: 'insensitive' } },
+              { phone: { contains: search } },
+            ]
+          } : {})
+        },
+        select: {
+          client_id: true,
+          client_code: true,
+          company_name: true,
+          contact_person: true,
+          phone: true,
+          email: true,
+          city: true,
+          state: true,
+          gst_number: true,
+        },
+        orderBy: { company_name: 'asc' },
+        take: parseInt(limit),
+      }),
+
+      // Available vehicles
+      prisma.transportVehicle.findMany({
+        where: {
+          current_status: { notIn: ['maintenance', 'off_road'] },
+          is_available: true,
+          ...(search ? {
+            OR: [
+              { vehicle_number: { contains: search, mode: 'insensitive' } },
+              { vehicle_name: { contains: search, mode: 'insensitive' } },
+              { vehicle_type: { contains: search, mode: 'insensitive' } },
+            ]
+          } : {})
+        },
+        select: {
+          vehicle_id: true,
+          vehicle_number: true,
+          vehicle_name: true,
+          vehicle_type: true,
+          capacity_kg: true,
+          current_status: true,
+          owner_id: true,
+        },
+        orderBy: { vehicle_type: 'asc' },
+        take: parseInt(limit),
+      }),
+
+      // Available drivers with their vehicles
+      prisma.driver.findMany({
+        where: {
+          is_available: true,
+          status: { not: 'inactive' },
+          current_vehicle_id: { not: null }, // Only drivers with registered vehicles
+          ...(search ? {
+            OR: [
+              { driver_name: { contains: search, mode: 'insensitive' } },
+              { mobile: { contains: search, mode: 'insensitive' } },
+              { driver_code: { contains: search, mode: 'insensitive' } },
+            ]
+          } : {})
+        },
+        select: {
+          driver_id: true,
+          driver_code: true,
+          driver_name: true,
+          mobile: true,
+          vehicle_type: true,
+          vehicle_number: true,
+          currentVehicle: {
+            select: {
+              vehicle_id: true,
+              vehicle_number: true,
+              vehicle_type: true,
+              vehicle_name: true,
+              capacity_kg: true,
+            }
+          },
+          transportOwner: {
+            select: {
+              owner_id: true,
+              owner_name: true,
+              company_name: true,
+            }
+          },
+        },
+        orderBy: { driver_name: 'asc' },
+        take: parseInt(limit),
+      }),
+
+      // Transport owners
+      prisma.vehicleOwner.findMany({
+        where: {
+          status: 'active',
+          deleted_at: null,
+          ...(search ? {
+            OR: [
+              { owner_name: { contains: search, mode: 'insensitive' } },
+              { company_name: { contains: search, mode: 'insensitive' } },
+              { owner_code: { contains: search, mode: 'insensitive' } },
+              { mobile: { contains: search } },
+            ]
+          } : {})
+        },
+        select: {
+          owner_id: true,
+          owner_code: true,
+          owner_name: true,
+          company_name: true,
+          mobile: true,
+          city: true,
+        },
+        orderBy: { owner_name: 'asc' },
+        take: parseInt(limit),
+      }),
+    ]);
+
+    // Vehicle types for dropdown
+    const vehicleTypes = [
+      'Truck', 'Tata Ace', 'Tempo', 'Pickup', 'Container',
+      'Trailer', 'Mini Truck', 'LCV', 'HCV', 'Multi-Axle'
+    ];
+
+    // Goods categories for dropdown
+    const goodsCategories = [
+      'General Cargo', 'Industrial Goods', 'Construction Material',
+      'Agricultural Products', 'Automobile Parts', 'Chemicals',
+      'Electronics', 'Furniture', 'Machinery', 'Pipes & Fittings',
+      'Steel & Metal', 'Textiles', 'Food Products', 'Pharmaceuticals',
+      'Other'
+    ];
+
+    // Rate types for dropdown
+    const rateTypes = [
+      { value: 'per_trip', label: 'Per Trip' },
+      { value: 'per_ton', label: 'Per Ton' },
+      { value: 'per_km', label: 'Per KM' },
+      { value: 'fixed', label: 'Fixed Freight' },
+    ];
+
+    // GST types
+    const gstTypes = [
+      { value: 'FORWARD_CHARGE', label: 'Forward Charge' },
+      { value: 'RCM', label: 'Reverse Charge (RCM)' },
+      { value: 'EXEMPT', label: 'Exempt' },
+    ];
+
+    // Payment terms
+    const paymentTerms = [
+      { value: 'full_advance', label: 'Full Payment in Advance' },
+      { value: 'booking_advance_balance', label: 'Booking Amount + Advance After Loading + Balance at Unloading' },
+      { value: 'custom', label: 'Custom Schedule' },
+    ];
+
+    return res.json({
+      success: true,
+      data: {
+        clients,
+        vehicles,
+        drivers,
+        owners,
+        vehicleTypes,
+        goodsCategories,
+        rateTypes,
+        gstTypes,
+        paymentTerms,
+      }
+    });
+  } catch (err) {
+    console.error('Manual order lookups error:', err.code || err.name, err.message);
+    if (isDatabaseConnectionError(err)) {
+      return res.status(503).json({
+        success: false,
+        message: 'Database temporarily unavailable. Please try again shortly.',
+        errorCode: 'SERVICE_UNAVAILABLE',
+      });
+    }
+    return res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 

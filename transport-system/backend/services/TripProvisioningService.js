@@ -44,52 +44,82 @@
 
 const { prisma: defaultPrisma } = require('../config/prisma');
 const TripRepository = require('../repositories/TripRepository');
+const TripFinancialService = require('./TripFinancialService');
+const TripTimelineRepository = require('../repositories/TripTimelineRepository');
 const { ValidationError, NotFoundError } = require('../utils/AppError');
 
 class TripProvisioningService {
   /**
    * @param {Object} [deps]
    * @param {import('@prisma/client').PrismaClient} [deps.prisma]
+   * @param {TripRepository} [deps.tripRepo]
+   * @param {TripFinancialService} [deps.tripFinancialService]
+   * @param {TripTimelineRepository} [deps.timelineRepo]
    */
   constructor(deps = {}) {
     this.prisma = deps.prisma || defaultPrisma;
-    // TripRepository takes its client POSITIONALLY (constructor(tx = null)).
     this.tripRepo = deps.tripRepo || new TripRepository(this.prisma);
+    this.tripFinancialService =
+      deps.tripFinancialService || new TripFinancialService({ prisma: this.prisma });
+    this.timelineRepo =
+      deps.timelineRepo || new TripTimelineRepository({ prisma: this.prisma });
+  }
+
+  /**
+   * Resolve the Prisma client to use: an externally managed transaction client
+   * takes precedence, otherwise the injected/default singleton.
+   *
+   * @param {Object|null} tx - Optional Prisma transaction client
+   * @returns {import('@prisma/client').PrismaClient}
+   * @private
+   */
+  _client(tx = null) {
+    return tx || this.prisma;
   }
 
   /**
    * The ONE operational Trip for a booking — created on demand.
    *
-   * Safe to call repeatedly and from more than one place (order confirmation,
-   * an assignment, the Vehicle Hire list). Every caller converges on the same
-   * single row.
+   * IDEMPOTENT: if a Trip already exists for this booking, it is returned
+   * exactly as-is. Nothing on the existing row is overwritten — not vehicle,
+   * not driver, not status, not source_type, not customer relationships.
+   *
+   * CONCURRENCY: the existence check is re-issued inside the same transaction
+   * as the create, so two concurrent calls converge on one row. Note that
+   * `trips.booking_id` has NO database unique constraint (it is nullable Int?),
+   * so the transactional re-check is the only guard against a double-create.
+   * A migration adding `@@unique([booking_id])` on `Trip` would close this
+   * gap at the database level (see migration requirements).
    *
    * @param {number} bookingId
+   * @param {Object} [options]
+   * @param {Object} [options.tx] - Optional Prisma transaction client
+   * @param {string} [options.sourceType] - Trip source type (defaults to ONLINE_BOOKING)
+   * @param {number} [options.actorId] - User ID who triggered provisioning (for timeline)
    * @returns {Promise<{trip:Object, created:boolean}>}
    */
-  async ensureTripForBooking(bookingId) {
+  async ensureTripForBooking(bookingId, options = {}) {
     const id = Number(bookingId);
     if (!Number.isInteger(id) || id <= 0) {
       throw new ValidationError('A valid bookingId is required');
     }
 
-    const booking = await this.prisma.booking.findUnique({
+    const { tx, sourceType, actorId } = options;
+    const client = this._client(tx);
+
+    const booking = await client.booking.findUnique({
       where: { booking_id: id },
     });
     if (!booking) throw new NotFoundError('Booking not found');
 
-    // Fast path: the trip already exists. The overwhelming majority of calls
-    // land here, so the common case costs exactly one indexed read.
-    const existing = await this.prisma.trip.findFirst({
+    // Fast path: the trip already exists. Return it untouched.
+    const existing = await client.trip.findFirst({
       where: { booking_id: id },
       orderBy: { trip_id: 'asc' },
     });
     if (existing) return { trip: existing, created: false };
 
-    // Only a CONFIRMED order may carry an operational trip. This is the same
-    // rule TripService.createTrip enforces ("no trip before customer
-    // acceptance"), restated rather than re-invented, so a provision call can
-    // never let a truck be dispatched against an unagreed price.
+    // Only a CONFIRMED order may carry an operational trip.
     if (String(booking.quote_status || '').toUpperCase() !== 'ACCEPTED') {
       throw new ValidationError(
         'The customer must accept the quote before an operational trip exists'
@@ -99,18 +129,16 @@ class TripProvisioningService {
     const vehicleId = booking.vehicle_id ?? null;
     const driverId = booking.driver_id ?? null;
 
-    // Resolve the vendor the same way the rest of the repository does: the
-    // vehicle's owner first, then the driver's fleet owner. Never invented.
     let vendorId = booking.vehicle_owner_id ?? null;
     if (!vendorId && vehicleId) {
-      const vehicle = await this.prisma.transportVehicle.findUnique({
+      const vehicle = await client.transportVehicle.findUnique({
         where: { vehicle_id: vehicleId },
         select: { owner_id: true },
       });
       vendorId = vehicle?.owner_id ?? null;
     }
     if (!vendorId && driverId) {
-      const driver = await this.prisma.driver.findUnique({
+      const driver = await client.driver.findUnique({
         where: { driver_id: driverId },
         select: { transport_owner_id: true },
       });
@@ -118,20 +146,13 @@ class TripProvisioningService {
     }
 
     const data = {
-      // Reuse the EXISTING trip-number generator (BTBT-YYYY-NNNNN). Provisioning
-      // must not introduce a second numbering scheme, or two trips could end up
-      // carrying the same identifier.
-      trip_number: await this.tripRepo.generateTripNumber(),
       booking_id: id,
-      source_type: 'ONLINE_BOOKING',
+      source_type: sourceType ?? 'ONLINE_BOOKING',
       user_id: booking.user_id,
       client_id: null,
-      // The assignment the order already carries, if any. NULL is the honest
-      // representation of "waiting for a vehicle".
       transport_owner_id: vendorId,
       vehicle_id: vehicleId,
       driver_id: driverId,
-
       pickup_location: booking.pickup_location,
       pickup_city: booking.pickup_city || booking.pickup_location,
       drop_location: booking.drop_location,
@@ -139,35 +160,76 @@ class TripProvisioningService {
       distance_km: Number.isFinite(Number(booking.estimated_distance_km))
         ? Number(booking.estimated_distance_km)
         : null,
-
       trip_date: this._parsePickupDate(booking.pickup_date),
-      // The CUSTOMER freight, copied from the order. It is not a vehicle hire
-      // figure and is never treated as one.
       freight_amount: Number.isFinite(Number(booking.final_price))
         ? Number(booking.final_price)
         : 0,
       notes: booking.special_instructions || booking.quote_remarks || null,
-
-      // A trip that already carries vehicle AND driver is operationally
-      // ASSIGNED; one without them is WAITING FOR VEHICLE. Both are PENDING-
-      // derived states the existing state machine already defines.
       status: vehicleId && driverId ? 'ASSIGNED' : 'PENDING',
     };
 
-    const trip = await this.prisma.$transaction(async (tx) => {
+    const trip = await client.$transaction(async (txClient) => {
       // Re-check inside the transaction: a concurrent confirmation may have
       // created the trip between our read and this write.
-      const raced = await tx.trip.findFirst({
+      const raced = await txClient.trip.findFirst({
         where: { booking_id: id },
         orderBy: { trip_id: 'asc' },
       });
       if (raced) return raced;
 
-      return tx.trip.create({ data });
+      return this.tripRepo.createTripWithCanonicalNumber(data, txClient);
     });
 
-    const created = trip.booking_id === id && trip.trip_id !== existing?.trip_id;
-    return { trip, created: created && !existing };
+    // --- Post-creation side effects (outside the trip-creation transaction) ---
+    // These are idempotent and safe to retry. They are deliberately NOT inside
+    // the trip-creation transaction so a financial/timeline failure never rolls
+    // back an already-committed Trip.
+
+    // TripFinancial: one DRAFT record per booking, idempotent.
+    try {
+      await this.tripFinancialService.initializeTripFinancial(id, {
+        user_id: actorId ?? booking.user_id,
+        role: 'system',
+      });
+    } catch (finErr) {
+      // Financial init failure must not orphan the Trip. Log and continue;
+      // the caller can retry financial initialization independently.
+      // eslint-disable-next-line no-console
+      console.error(
+        `[TripProvisioningService] TripFinancial init failed for booking ${id}:`,
+        finErr.message
+      );
+    }
+
+    // Timeline: record trip creation exactly once.
+    try {
+      await this.timelineRepo.create(
+        {
+          trip_id: trip.trip_id,
+          event_type: 'trip_created',
+          description: `Trip ${trip.trip_number} provisioned for booking ${id}`,
+          reference_type: 'trip',
+          reference_id: trip.trip_id,
+          metadata: {
+            booking_id: id,
+            source_type: data.source_type,
+            status: data.status,
+            actor_id: actorId ?? null,
+          },
+          created_by: actorId ?? null,
+        },
+        tx
+      );
+    } catch (tlErr) {
+      // Timeline failure must not orphan the Trip.
+      // eslint-disable-next-line no-console
+      console.error(
+        `[TripProvisioningService] Timeline event failed for booking ${id}:`,
+        tlErr.message
+      );
+    }
+
+    return { trip, created: true };
   }
 
   /**
@@ -189,28 +251,33 @@ class TripProvisioningService {
    *   provisioning cannot undo an operator's decision.
    *
    * @param {number} enquiryId
+   * @param {Object} [options]
+   * @param {Object} [options.tx] - Optional Prisma transaction client
    * @returns {Promise<{trip:Object, created:boolean, linked:boolean}|null>}
    *   null when the enquiry does not exist.
    */
-  async ensureTripForEnquiry(enquiryId) {
+  async ensureTripForEnquiry(enquiryId, options = {}) {
     const id = Number(enquiryId);
     if (!Number.isInteger(id) || id <= 0) {
       throw new ValidationError('A valid enquiryId is required');
     }
 
-    const enquiry = await this.prisma.enquiry.findUnique({
+    const { tx } = options;
+    const client = this._client(tx);
+
+    const enquiry = await client.enquiry.findUnique({
       where: { enquiry_id: id },
     });
     if (!enquiry) throw new NotFoundError('Enquiry not found');
 
     // ── Already reserved, or already operational? Either way: return it. ────
     const existing =
-      (await this.prisma.trip.findFirst({
+      (await client.trip.findFirst({
         where: { enquiry_id: id },
         orderBy: { trip_id: 'asc' },
       })) ||
       (enquiry.booking_id
-        ? await this.prisma.trip.findFirst({
+        ? await client.trip.findFirst({
             where: { booking_id: enquiry.booking_id },
             orderBy: { trip_id: 'asc' },
           })
@@ -221,7 +288,7 @@ class TripProvisioningService {
       // reservation trip. Narrowly scoped — only a NULL booking_id is filled,
       // so it can never repoint a trip that already belongs to an order.
       if (enquiry.booking_id && existing.booking_id == null) {
-        const linked = await this.prisma.trip.update({
+        const linked = await client.trip.update({
           where: { trip_id: existing.trip_id },
           data: { booking_id: enquiry.booking_id },
         });
@@ -234,49 +301,45 @@ class TripProvisioningService {
     // The route/dates come from the ENQUIRY (the booking may not exist yet),
     // never invented. No vehicle, no driver, PENDING — which is precisely what
     // "waiting for a vehicle" means.
-    const trip = await this.prisma.$transaction(async (tx) => {
+    const trip = await client.$transaction(async (txClient) => {
       // Re-check inside the transaction: a concurrent provision may have won
       // between our read and this write. The UNIQUE partial index on
       // trips.enquiry_id is the backstop that makes a double-create impossible.
-      const raced = await tx.trip.findFirst({
+      const raced = await txClient.trip.findFirst({
         where: { enquiry_id: id },
         orderBy: { trip_id: 'asc' },
       });
       if (raced) return raced;
 
-      return tx.trip.create({
-        data: {
-          // The EXISTING generator — provisioning must never introduce a second
-          // numbering scheme, or two trips could carry the same identifier.
-          trip_number: await this.tripRepo.generateTripNumber(),
-          enquiry_id: id,
-          booking_id: enquiry.booking_id ?? null,
+      const data = {
+        enquiry_id: id,
+        booking_id: enquiry.booking_id ?? null,
+        transport_owner_id: null,
+        vehicle_id: null,
+        driver_id: null,
 
-          transport_owner_id: null,
-          vehicle_id: null,
-          driver_id: null,
+        pickup_location: enquiry.pickup_location || '',
+        pickup_city: enquiry.pickup_location || '',
+        drop_location: enquiry.drop_location || '',
+        drop_city: enquiry.drop_location || '',
+        distance_km: Number.isFinite(Number(enquiry.distance_km))
+          ? Number(enquiry.distance_km)
+          : null,
 
-          pickup_location: enquiry.pickup_location || '',
-          pickup_city: enquiry.pickup_location || '',
-          drop_location: enquiry.drop_location || '',
-          drop_city: enquiry.drop_location || '',
-          distance_km: Number.isFinite(Number(enquiry.distance_km))
-            ? Number(enquiry.distance_km)
-            : null,
+        trip_date: this._parsePickupDate(enquiry.pickup_date),
+        // The CUSTOMER freight, when the admin has already priced it. NOT a
+        // vehicle-hire figure: the gross hire is agreed on the Vehicle Hire
+        // page. Zero before a price exists is honest, and is overwritten by
+        // the real customer price the moment the quote is saved.
+        freight_amount: Number.isFinite(Number(enquiry.final_quoted_price))
+          ? Number(enquiry.final_quoted_price)
+          : 0,
+        notes: enquiry.special_instructions || null,
 
-          trip_date: this._parsePickupDate(enquiry.pickup_date),
-          // The CUSTOMER freight, when the admin has already priced it. NOT a
-          // vehicle-hire figure: the gross hire is agreed on the Vehicle Hire
-          // page. Zero before a price exists is honest, and is overwritten by
-          // the real customer price the moment the quote is saved.
-          freight_amount: Number.isFinite(Number(enquiry.final_quoted_price))
-            ? Number(enquiry.final_quoted_price)
-            : 0,
-          notes: enquiry.special_instructions || null,
+        status: 'PENDING',
+      };
 
-          status: 'PENDING',
-        },
-      });
+      return this.tripRepo.createTripWithCanonicalNumber(data, txClient);
     });
 
     return { trip, created: true, linked: false };
