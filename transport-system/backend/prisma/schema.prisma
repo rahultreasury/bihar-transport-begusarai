@@ -341,7 +341,7 @@ model Booking {
   quantity_unit               String?
   weight_unit                 String?
   special_instructions        String?
-  idempotency_key             String?                      @unique
+  idempotency_key             String?                      @unique(map: "idx_bookings_idempotency_key")
   bookingAssignments          BookingAssignment[]
   bookingEvents               BookingEvent[]
   booking_quotation_snapshots booking_quotation_snapshots?
