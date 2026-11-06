@@ -26,6 +26,13 @@ function makePrismaMock() {
     enquiry: {
       findUnique: async ({ where }) => where.enquiry_id ? memory.enquiries.get(where.enquiry_id) || null : null,
       findFirst: async () => null,
+      findMany: async ({ where = {} } = {}) => Array.from(memory.enquiries.values()).filter((e) => {
+        if (where.assigned_vehicle_id !== undefined && e.assigned_vehicle_id !== where.assigned_vehicle_id) return false;
+        if (where.assigned_driver_id !== undefined && e.assigned_driver_id !== where.assigned_driver_id) return false;
+        if (where.status && where.status.in && !where.status.in.includes(e.status)) return false;
+        if (where.enquiry_id && where.enquiry_id.not && e.enquiry_id === where.enquiry_id.not) return false;
+        return true;
+      }),
       update: async ({ where, data }) => { const e = memory.enquiries.get(where.enquiry_id); if (e) Object.assign(e, data); return e; },
     },
     trip: {
@@ -52,7 +59,17 @@ function makePrismaMock() {
       },
       create: async ({ data }) => { const id = memory.trips.size + 1; const t = { trip_id: id, ...data }; memory.trips.set(id, t); return t; },
       update: async ({ where, data }) => { const t = memory.trips.get(where.trip_id); if (t) Object.assign(t, data); return t; },
-      findMany: async () => Array.from(memory.trips.values()),
+      findMany: async ({ where = {} } = {}) => {
+        const res = [];
+        for (const t of memory.trips.values()) {
+          if (where.vehicle_id !== undefined && t.vehicle_id !== where.vehicle_id) continue;
+          if (where.driver_id !== undefined && t.driver_id !== where.driver_id) continue;
+          if (where.trip_id && where.trip_id.not && t.trip_id === where.trip_id.not) continue;
+          if (where.status && where.status.in && !where.status.in.includes(t.status)) continue;
+          res.push({ ...t });
+        }
+        return res;
+      },
       count: async () => memory.trips.size,
     },
     booking: { findUnique: async () => null, findFirst: async () => null, findMany: async () => [], update: async () => null },

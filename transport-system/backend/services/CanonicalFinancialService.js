@@ -26,6 +26,18 @@ const CommissionCalculator = require('./CommissionCalculator');
 const TripInvoiceService = require('./TripInvoiceService');
 const { ValidationError, NotFoundError } = require('../utils/AppError');
 
+// Enum values the transaction search box matches exactly (case-insensitive).
+// Enum columns cannot use `contains`, so a term that names a known enum value
+// is matched with equality instead.
+const TRANSACTION_TYPE_SEARCH_VALUES = [
+  'CUSTOMER_PAYMENT', 'DRIVER_ADVANCE', 'FUEL_ADVANCE', 'OWNER_ADVANCE',
+  'DRIVER_SETTLEMENT', 'OWNER_SETTLEMENT', 'COMMISSION', 'ADJUSTMENT',
+  'REFUND', 'CLIENT_PAYMENT', 'TRIP_EXPENSE', 'EXPENSE_REIMBURSEMENT', 'REVERSAL',
+];
+const TRANSACTION_PARTY_SEARCH_VALUES = [
+  'BIHAR_TRANSPORT', 'CUSTOMER', 'CLIENT', 'TRANSPORT_OWNER', 'DRIVER', 'VENDOR', 'OTHER',
+];
+
 class CanonicalFinancialService {
   constructor(options = {}) {
     this.prisma = options.prisma || defaultPrisma;
@@ -449,6 +461,16 @@ class CanonicalFinancialService {
         t.transaction_type === 'DRIVER_SETTLEMENT' ||
         t.transaction_type === 'OWNER_SETTLEMENT'
       ).length,
+
+      // Advance / settlement AMOUNTS (canonical ledger, live money only).
+      // calculateGlobalFinancials accumulates these into the dashboard's
+      // totalAdvances / totalSettlements cards; without them those cards read
+      // 0 even when the ledger holds the money.
+      totalDriverAdvances: txCalc.totalDriverAdvances || 0,
+      totalFuelAdvances: txCalc.totalFuelAdvances || 0,
+      totalOwnerAdvances: txCalc.totalOwnerAdvances || 0,
+      totalDriverSettlements: txCalc.totalDriverSettlements || 0,
+      totalOwnerSettlements: txCalc.totalOwnerSettlements || 0,
     };
   }
 
@@ -523,8 +545,8 @@ class CanonicalFinancialService {
 
     return {
       clientId: client.client_id,
-      companyName: client.companyName,
-      contactPerson: client.contactPerson,
+      companyName: client.company_name,
+      contactPerson: client.contact_person,
       phone: client.phone,
       email: client.email,
       status: client.status,
@@ -954,19 +976,27 @@ class CanonicalFinancialService {
       if (filters.date_to) where.transaction_date.lte = new Date(filters.date_to);
     }
 
-    // SEARCH — one box across party, reference and trip, which is what an
-    // operator actually has to hand when somebody rings with a receipt number.
+    // SEARCH — one box across reference number, notes, trip number and
+    // booking number. Enum columns (transaction_type, from_party, to_party)
+    // cannot use `contains`; they are matched EXACTLY when the term names a
+    // known enum value, so searching "advance" or "DRIVER_ADVANCE" still
+    // finds the advance rows without building an invalid Prisma filter.
     const term = String(filters.search || '').trim();
     if (term) {
-      where.OR = [
+      const or = [
         { reference_number: { contains: term, mode: 'insensitive' } },
-        { from_party: { contains: term, mode: 'insensitive' } },
-        { to_party: { contains: term, mode: 'insensitive' } },
-        { transaction_type: { contains: term, mode: 'insensitive' } },
-        { remarks: { contains: term, mode: 'insensitive' } },
+        { notes: { contains: term, mode: 'insensitive' } },
         { trip: { trip_number: { contains: term, mode: 'insensitive' } } },
         { booking: { booking_number: { contains: term, mode: 'insensitive' } } },
       ];
+      const upper = term.toUpperCase();
+      if (TRANSACTION_TYPE_SEARCH_VALUES.includes(upper)) {
+        or.push({ transaction_type: upper });
+      }
+      if (TRANSACTION_PARTY_SEARCH_VALUES.includes(upper)) {
+        or.push({ from_party: upper }, { to_party: upper });
+      }
+      where.OR = or;
     }
 
     // ORDER BY — only whitelisted columns reach the query builder, so a
@@ -1286,6 +1316,137 @@ class CanonicalFinancialService {
       },
       trips: rows,
       payments,
+      ledger,
+    };
+  }
+
+  /**
+   * The driver-side ledger for ONE driver.
+   *
+   * Mirrors getVendorLedger on the provider side: what the driver has earned
+   * (agreed pay per trip) is a credit, everything BT has already paid out
+   * (advances + settlements, from the canonical ledger) is a debit, and the
+   * running balance is what BT still owes the driver. Trip rows and payment
+   * rows come from the same _computeTripFinancials the dashboard and the
+   * payables list use, so a driver's ledger can never disagree with the
+   * driver payable shown next to it.
+   *
+   * @param {number} driverId
+   * @param {object} [filters]
+   * @returns {Promise<object>}
+   */
+  async getDriverLedger(driverId, filters = {}) {
+    const id = parseInt(driverId, 10);
+    if (!Number.isInteger(id) || id <= 0) {
+      throw new ValidationError({ message: 'A valid driverId is required' });
+    }
+
+    const driver = await this.prisma.driver.findUnique({
+      where: { driver_id: id },
+      select: {
+        driver_id: true,
+        driver_name: true,
+        driver_code: true,
+        mobile: true,
+        transport_owner_id: true,
+        transportOwner: { select: { owner_id: true, owner_name: true, company_name: true } },
+        current_vehicle_id: true,
+        currentVehicle: { select: { vehicle_id: true, vehicle_number: true } },
+      },
+    });
+    if (!driver) throw new NotFoundError({ message: 'Driver not found' });
+
+    const trips = await this.prisma.trip.findMany({
+      where: { driver_id: id },
+      include: { financialTransactions: true, vehicle: true },
+      orderBy: { trip_date: 'asc' },
+    });
+
+    let agreed = 0;
+    let paid = 0;
+    const rows = [];
+    for (const trip of trips) {
+      const f = this._computeTripFinancials(trip);
+      agreed += f.driverAgreedPay;
+      paid += f.driverPaid;
+      rows.push({
+        trip_id: trip.trip_id,
+        trip_number: trip.trip_number,
+        trip_date: trip.trip_date,
+        trip_status: trip.status,
+        vehicle_number: trip.vehicle?.vehicle_number || null,
+        agreed_pay: f.driverAgreedPay,
+        paid: f.driverPaid,
+        due: f.driverDue,
+        status: this._paymentStatus(f.driverAgreedPay, f.driverPaid),
+      });
+    }
+
+    const payments = await this.getTransactions({
+      driver_id: id,
+      transaction_type: { in: ['DRIVER_ADVANCE', 'FUEL_ADVANCE', 'DRIVER_SETTLEMENT'] },
+      orderBy: 'transaction_date',
+      orderDirection: 'asc',
+    });
+
+    // Running balance: each trip's agreed pay increases what BT owes the
+    // driver; every advance/settlement actually paid out reduces it.
+    let running = 0;
+    const ledger = [];
+    for (const r of rows) {
+      running = money.add(running, r.agreed_pay);
+      ledger.push({
+        date: r.trip_date,
+        particulars: `Driver pay · ${r.trip_number}`,
+        trip_id: r.trip_id,
+        trip_number: r.trip_number,
+        debit: null,
+        credit: r.agreed_pay,
+        balance: running,
+      });
+    }
+    for (const p of payments) {
+      // Only money that actually left the business reduces what we owe.
+      const amount = money.fromPaise(money.toPaise(p.amount || 0));
+      running = money.sub(running, amount);
+      ledger.push({
+        date: p.transaction_date,
+        particulars: `${p.transaction_type.replace(/_/g, ' ')} · ${p.reference_number || '—'}`,
+        trip_id: p.trip_id,
+        trip_number: p.trip?.trip_number || null,
+        debit: amount,
+        credit: null,
+        balance: running,
+      });
+    }
+    ledger.sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
+
+    const paymentRows = Array.isArray(payments) ? payments : [];
+
+    return {
+      party: {
+        party_type: 'DRIVER',
+        driver_id: driver.driver_id,
+        name: driver.driver_name,
+        driver_code: driver.driver_code,
+        mobile: driver.mobile,
+        transport_owner: driver.transportOwner
+          ? (driver.transportOwner.company_name || driver.transportOwner.owner_name)
+          : null,
+        vehicle_number: driver.currentVehicle?.vehicle_number || null,
+      },
+      totals: {
+        totalAgreedPay: agreed,
+        totalPaid: paid,
+        outstanding: agreed - paid,
+        tripCount: rows.length,
+        paymentCount: paymentRows.length,
+      },
+      trips: rows,
+      // Alias: the driver profile modal renders the payout rows under
+      // `transactions` (advanceGiven etc.), the ledger view under `payments`.
+      transactions: paymentRows,
+      payments: paymentRows,
       ledger,
     };
   }

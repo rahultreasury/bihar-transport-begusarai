@@ -8,7 +8,7 @@
 
 const express = require('express');
 const router = express.Router();
-const { protect, adminOnly } = require('../middleware/auth');
+const { protect, adminOnly, isDatabaseConnectionError } = require('../middleware/auth');
 const { prisma } = require('../config/prisma');
 const TripService = require('../services/TripService');
 const TripTimelineService = require('../services/TripTimelineService');
@@ -141,7 +141,14 @@ router.get('/', protect, async (req, res) => {
       pagination: result.pagination,
     });
   } catch (error) {
-    console.error('Get trips error:', error);
+    console.error('Get trips error:', error.code || error.name, error.message);
+    if (isDatabaseConnectionError(error)) {
+      return res.status(503).json({
+        success: false,
+        message: 'Database temporarily unavailable. Please try again shortly.',
+        errorCode: 'SERVICE_UNAVAILABLE',
+      });
+    }
     res.status(500).json({ success: false, message: error.message || 'Server error' });
   }
 });
@@ -158,7 +165,14 @@ router.get('/summary', protect, async (req, res) => {
       data: summary,
     });
   } catch (error) {
-    console.error('Get trip summary error:', error);
+    console.error('Get trip summary error:', error.code || error.name, error.message);
+    if (isDatabaseConnectionError(error)) {
+      return res.status(503).json({
+        success: false,
+        message: 'Database temporarily unavailable. Please try again shortly.',
+        errorCode: 'SERVICE_UNAVAILABLE',
+      });
+    }
     res.status(500).json({ success: false, message: error.message || 'Server error' });
   }
 });

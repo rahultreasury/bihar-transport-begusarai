@@ -161,6 +161,10 @@ function makePrisma() {
         const row = db.enquiries.find((r) => matches(where, r));
         return row ? { ...row } : null;
       },
+      findMany: async ({ where } = {}) => {
+        const rows = where ? db.enquiries.filter((r) => matches(where, r)) : db.enquiries;
+        return rows.map((r) => ({ ...r }));
+      },
     },
 
     enquiryEvent: {
@@ -210,6 +214,10 @@ function makePrisma() {
       findUnique: async ({ where }) => {
         const row = findById(db.trips, where, 'trip_id');
         return row ? { ...row } : null;
+      },
+      findMany: async ({ where } = {}) => {
+        const rows = where ? db.trips.filter((t) => matches(where, t)) : db.trips;
+        return rows.map((t) => ({ ...t }));
       },
       create: async ({ data }) => {
         const row = { trip_id: db.seq.trip++, ...data };

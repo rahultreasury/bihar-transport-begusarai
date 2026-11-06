@@ -138,12 +138,25 @@ export function extractCreatedEnquiry(response) {
     data.enquiryNumber || data.enquiry_number || enquiry?.enquiry_number || null;
   const enquiryId = data.enquiryId ?? data.enquiry_id ?? enquiry?.enquiry_id ?? null;
   const bookingId = data.bookingId ?? data.booking_id ?? enquiry?.booking?.booking_id ?? null;
+  const bookingNumber =
+    data.booking_number || data.bookingNumber || enquiry?.booking_number || null;
+  const bookingReference =
+    data.bookingReference || data.booking_reference || enquiry?.booking_reference || null;
+  const tripId = data.tripId ?? data.trip_id ?? enquiry?.trip?.trip_id ?? null;
+  const tripNumber =
+    data.tripNumber || data.trip_number || enquiry?.trip_number || null;
+  const idempotentReplay = data.idempotentReplay === true;
 
   return {
     enquiry,
     enquiryId,
     enquiryNumber,
     bookingId,
+    bookingNumber,
+    bookingReference,
+    tripId,
+    tripNumber,
+    idempotentReplay,
     redirectTo: data.redirect_to || (enquiryNumber ? `/booking/enquiry/${enquiryNumber}` : null),
   };
 }

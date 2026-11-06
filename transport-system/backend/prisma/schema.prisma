@@ -73,52 +73,52 @@ model OtpVerification {
 }
 
 model Driver {
-  driver_id          Int                 @id @default(autoincrement())
-  user_id            Int
-  license_number     String?
-  license_expiry     String?
-  profile_image      String?
-  is_available       Boolean?            @default(true)
-  is_verified        Boolean?            @default(false)
-  rating             Float?              @default(0)
-  total_deliveries   Int?                @default(0)
-  created_at         DateTime?           @default(now())
-  updated_at         DateTime?           @default(now())
-  driver_name        String
-  mobile             String
-  transport_owner_id Int?
-  address            String?
-  alternate_mobile   String?
-  city               String?
-  current_balance    Float?              @default(0)
-  current_vehicle_id Int?                @unique
-  driver_code        String?             @unique
-  joining_date       String?
-  license_class      String?
-  partner_id         Int?
-  performance_rating Float?              @default(0)
-  pincode            String?
-  state              String?             @default("Bihar")
-  status             String?             @default("available")
-  total_advance      Float?              @default(0)
-  total_expenses     Float?              @default(0)
-  total_paid         Float?              @default(0)
-  bookingAssignments BookingAssignment[] @relation("assigned_driver")
-  bookings           Booking[]
-  deliveries         Delivery[]
-  driverAssignments  DriverAssignment[]  @relation("assigned_driver_history")
-  timelineEvents     DriverTimeline[]
-  transactions       DriverTransaction[]
-  currentVehicle     TransportVehicle?   @relation("current_driver_vehicle", fields: [current_vehicle_id], references: [vehicle_id])
-  currentPartner     Partner?            @relation("current_partner_drivers", fields: [partner_id], references: [partner_id])
-  transportOwner     VehicleOwner?       @relation("transport_owner_drivers", fields: [transport_owner_id], references: [owner_id], onDelete: Restrict)
-  user               User                @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
-  assignedEnquiries  Enquiry[]           @relation("enquiry_assigned_driver")
-  reservations       Reservation[]
-  trips                Trip[]
-  vehicleAssignments   VehicleAssignment[] @relation("assigned_driver")
-  vehicleHires         VehicleHire[]
+  driver_id            Int                         @id @default(autoincrement())
+  user_id              Int
+  license_number       String?
+  license_expiry       String?
+  profile_image        String?
+  is_available         Boolean?                    @default(true)
+  is_verified          Boolean?                    @default(false)
+  rating               Float?                      @default(0)
+  total_deliveries     Int?                        @default(0)
+  created_at           DateTime?                   @default(now())
+  updated_at           DateTime?                   @default(now())
+  address              String?
+  alternate_mobile     String?
+  city                 String?
+  current_balance      Float?                      @default(0)
+  driver_code          String?                     @unique
+  driver_name          String
+  joining_date         String?
+  license_class        String?
+  mobile               String
+  pincode              String?
+  state                String?                     @default("Bihar")
+  status               String?                     @default("available")
+  total_advance        Float?                      @default(0)
+  total_expenses       Float?                      @default(0)
+  total_paid           Float?                      @default(0)
+  partner_id           Int?
+  performance_rating   Float?                      @default(0)
+  current_vehicle_id   Int?                        @unique
+  transport_owner_id   Int?
+  bookingAssignments   BookingAssignment[]         @relation("assigned_driver")
+  bookings             Booking[]
+  deliveries           Delivery[]
+  driverAssignments    DriverAssignment[]          @relation("assigned_driver_history")
+  timelineEvents       DriverTimeline[]
+  transactions         DriverTransaction[]
+  currentVehicle       TransportVehicle?           @relation("current_driver_vehicle", fields: [current_vehicle_id], references: [vehicle_id])
+  currentPartner       Partner?                    @relation("current_partner_drivers", fields: [partner_id], references: [partner_id])
+  transportOwner       VehicleOwner?               @relation("transport_owner_drivers", fields: [transport_owner_id], references: [owner_id], onDelete: Restrict)
+  user                 User                        @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+  assignedEnquiries    Enquiry[]                   @relation("enquiry_assigned_driver")
   pumpFuelTransactions PetrolPumpFuelTransaction[]
+  reservations         Reservation[]
+  trips                Trip[]
+  vehicleAssignments   VehicleAssignment[]         @relation("assigned_driver")
+  vehicleHires         VehicleHire[]
 
   @@index([driver_code], map: "idx_drivers_code")
   @@index([user_id], map: "idx_drivers_user")
@@ -192,12 +192,12 @@ model VehicleOwner {
   upi_id            String?
   address           String?
   status            String?              @default("active")
-  owner_type        String?              @default("TRANSPORT_COMPANY")
   notes             String?
   is_active         Boolean?             @default(true)
   created_at        DateTime?            @default(now())
   updated_at        DateTime?            @default(now())
   deleted_at        DateTime?
+  owner_type        String?              @default("TRANSPORT_COMPANY")
   partner_link      Int?                 @unique
   bookings          Booking[]
   drivers           Driver[]             @relation("transport_owner_drivers")
@@ -220,9 +220,9 @@ model VehicleOwner {
 }
 
 model TransportVehicle {
-  vehicle_id             Int                 @id @default(autoincrement())
+  vehicle_id             Int                         @id @default(autoincrement())
   driver_id              Int?
-  vehicle_number         String              @unique
+  vehicle_number         String                      @unique
   vehicle_type           String
   vehicle_name           String?
   capacity_kg            Float?
@@ -237,18 +237,18 @@ model TransportVehicle {
   permit_expiry          String?
   pollution_certificate  String?
   pollution_expiry       String?
-  is_available           Boolean?            @default(true)
-  is_verified            Boolean?            @default(false)
-  current_status         String?             @default("available")
+  is_available           Boolean?                    @default(true)
+  is_verified            Boolean?                    @default(false)
+  current_status         String?                     @default("available")
   base_location          String?
   hourly_rate            Float?
   per_km_rate            Float?
-  created_at             DateTime?           @default(now())
-  updated_at             DateTime?           @default(now())
+  created_at             DateTime?                   @default(now())
+  updated_at             DateTime?                   @default(now())
   body_type              String?
-  owner_id               Int?
   partner_id             Int?
-  vehicle_code           String?             @unique
+  owner_id               Int?
+  vehicle_code           String?                     @unique
   tax_number             String?
   tax_expiry             String?
   fitness_number         String?
@@ -258,16 +258,16 @@ model TransportVehicle {
   bookingAssignments     BookingAssignment[]
   bookings               Booking[]
   deliveries             Delivery[]
-  driver                 Driver?             @relation("current_driver_vehicle")
-  assignedEnquiries      Enquiry[]           @relation("enquiry_assigned_vehicle")
-  requestedEnquiries     Enquiry[]           @relation("enquiry_requested_vehicle")
+  driver                 Driver?                     @relation("current_driver_vehicle")
+  assignedEnquiries      Enquiry[]                   @relation("enquiry_assigned_vehicle")
+  requestedEnquiries     Enquiry[]                   @relation("enquiry_requested_vehicle")
+  pumpFuelTransactions   PetrolPumpFuelTransaction[]
   reservations           Reservation[]
-  owner                  VehicleOwner?       @relation("vehicle_owner", fields: [owner_id], references: [owner_id])
-  sourcePartner          Partner?            @relation("sourced_vehicles", fields: [partner_id], references: [partner_id])
+  owner                  VehicleOwner?               @relation("vehicle_owner", fields: [owner_id], references: [owner_id])
+  sourcePartner          Partner?                    @relation("sourced_vehicles", fields: [partner_id], references: [partner_id])
   trips                  Trip[]
   vehicleAssignments     VehicleAssignment[]
   vehicleHires           VehicleHire[]
-  pumpFuelTransactions   PetrolPumpFuelTransaction[]
 
   @@index([driver_id], map: "idx_vehicles_driver")
   @@index([owner_id], map: "idx_vehicles_owner")
@@ -317,30 +317,31 @@ model Booking {
   driver_assigned_at          DateTime?
   pickup_completed_at         DateTime?
   delivered_at                DateTime?
+  commission_amount           Float?                       @default(0)
+  commission_percentage       Float?                       @default(0)
+  commission_type             String?                      @default("percentage")
+  driver_name_snapshot        String?
+  mobile_snapshot             String?
+  partner_id                  Int?
+  partner_name_snapshot       String?
+  settlement_id               Int?
+  settlement_status           String?                      @default("pending")
+  truck_number_snapshot       String?
+  archived_at                 DateTime?
+  confirmation_source         String?
   quote_accepted_at           DateTime?
   quote_rejected_at           DateTime?
   quote_remarks               String?
   quote_sent_at               DateTime?
   quote_status                String?                      @default("PENDING")
   quote_valid_until           DateTime?
-  confirmation_source         String?
-  archived_at                 DateTime?
-  commission_amount           Float?                       @default(0)
-  commission_percentage       Float?                       @default(0)
-  commission_type             String?                      @default("percentage")
-  driver_name_snapshot        String?
-  driver_payout               Float?
-  mobile_snapshot             String?
-  owner_settlement_amount     Float?
-  partner_id                  Int?
-  partner_name_snapshot       String?
-  settlement_id               Int?
-  settlement_status           String?                      @default("pending")
-  truck_number_snapshot       String?
   vehicle_owner_id            Int?
+  driver_payout               Float?
+  owner_settlement_amount     Float?
   quantity_unit               String?
   weight_unit                 String?
   special_instructions        String?
+  idempotency_key             String?                      @unique(map: "idx_bookings_idempotency_key")
   bookingAssignments          BookingAssignment[]
   bookingEvents               BookingEvent[]
   booking_quotation_snapshots booking_quotation_snapshots?
@@ -469,7 +470,6 @@ model Partner {
   partner_name          String
   owner_name            String
   company_name          String?
-  email                 String?
   mobile                String
   alternate_mobile      String?
   city                  String?
@@ -483,8 +483,6 @@ model Partner {
   address               String?
   status                PartnerStatus        @default(active)
   notes                 String?
-  available_capacity    String?
-  network_locations     String?
   commission_percentage Float?               @default(10)
   commission_type       String?              @default("percentage")
   fixed_commission      Float?               @default(0)
@@ -492,6 +490,9 @@ model Partner {
   created_at            DateTime?            @default(now())
   updated_at            DateTime?            @default(now())
   deleted_at            DateTime?
+  email                 String?
+  available_capacity    String?
+  network_locations     String?
   partner_capability    String?              @default("PARTNER_ONLY")
   bookings              Booking[]
   driverAssignments     DriverAssignment[]   @relation("partner_assignments")
@@ -668,7 +669,7 @@ model PartnerDocument {
 
 model PartnerApplication {
   application_id     Int           @id @default(autoincrement())
-  application_code   String?       @unique
+  application_code   String?       @unique(map: "idx_app_code")
   first_name         String
   last_name          String
   email              String
@@ -684,18 +685,18 @@ model PartnerApplication {
   vehicle_number     String?
   vehicle_type       String?
   number_of_vehicles Int?
-  available_capacity String?
-  network_locations  String?
   status             String        @default("pending")
   reviewed_by        Int?
   reviewed_at        DateTime?
   rejection_reason   String?
   admin_notes        String?
   partner_id         Int?
-  vehicle_owner_id   Int?
   user_id            Int?
   created_at         DateTime?     @default(now())
   updated_at         DateTime?     @default(now())
+  available_capacity String?
+  network_locations  String?
+  vehicle_owner_id   Int?
   partner            Partner?      @relation(fields: [partner_id], references: [partner_id])
   user               User?         @relation(fields: [user_id], references: [user_id])
   vehicleOwner       VehicleOwner? @relation("vehicle_owner_applications", fields: [vehicle_owner_id], references: [owner_id])
@@ -815,29 +816,29 @@ model TripFinancial {
 }
 
 model TripAdvance {
-  advance_id         Int            @id @default(autoincrement())
-  trip_financial_id  Int?
-  booking_id         Int?
-  driver_id          Int?
-  vehicle_id         Int?
-  transport_owner_id Int?
-  amount             Float
-  advance_type       AdvanceType
-  payment_method     String
-  reference_number   String?
-  given_by           Int?
-  given_at           DateTime?      @default(now())
-  notes              String?
-  status             String?        @default("pending")
-  adjusted_amount    Float?         @default(0)
-  adjusted_at        DateTime?
+  advance_id           Int           @id @default(autoincrement())
+  trip_financial_id    Int?
+  booking_id           Int?
+  driver_id            Int?
+  vehicle_id           Int?
+  transport_owner_id   Int?
+  amount               Float
+  advance_type         AdvanceType
+  payment_method       String
+  reference_number     String?
+  given_by             Int?
+  given_at             DateTime?     @default(now())
+  notes                String?
+  status               String?       @default("pending")
+  created_at           DateTime?     @default(now())
+  updated_at           DateTime?     @default(now())
+  trip_id              Int?
+  adjusted_amount      Float?        @default(0)
+  adjusted_at          DateTime?
   adjustment_reference String?
-  created_at         DateTime?      @default(now())
-  updated_at         DateTime?      @default(now())
-  trip_id            Int?
-  booking            Booking?       @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
-  tripFinancial      TripFinancial? @relation(fields: [trip_financial_id], references: [trip_financial_id], onDelete: Cascade)
-  trip               Trip?          @relation(fields: [trip_id], references: [trip_id], onDelete: Cascade)
+  booking              Booking?       @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
+  tripFinancial        TripFinancial? @relation(fields: [trip_financial_id], references: [trip_financial_id], onDelete: Cascade)
+  trip                 Trip?         @relation(fields: [trip_id], references: [trip_id], onDelete: Cascade)
 
   @@index([trip_financial_id], map: "idx_trip_advance_financial")
   @@index([booking_id], map: "idx_trip_advance_booking")
@@ -897,36 +898,39 @@ model CommissionRecord {
 }
 
 model FinancialTransaction {
-  transaction_id     Int                      @id @default(autoincrement())
-  trip_financial_id  Int
-  booking_id         Int?
-  vehicle_id         Int?
-  driver_id          Int?
-  transport_owner_id Int?
-  transaction_type   FinancialTransactionType
-  amount             Float
-  direction          TransactionDirection
-  payment_method     String?
-  reference_number   String?
-  status             PaymentStatus            @default(PAID)
-  metadata           String?
-  created_by         Int?
-  created_at         DateTime?                @default(now())
-  updated_at         DateTime?                @default(now())
-  purpose            String?
-  transaction_date   DateTime?
-  notes              String?
-  trip_id            Int?
-  client_id          Int?
-  from_party         TransactionParty?
-  to_party           TransactionParty?
-  invoice_id         Int?
-  voucher_number     String?                  @unique
-  idempotency_key    String?                  @unique
-  booking            Booking?                 @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
-  invoices           Invoice?                 @relation(fields: [invoice_id], references: [invoice_id], onUpdate: NoAction)
-  tripFinancial      TripFinancial            @relation(fields: [trip_financial_id], references: [trip_financial_id], onDelete: Cascade)
-  trip               Trip?                    @relation(fields: [trip_id], references: [trip_id], onDelete: Cascade)
+  transaction_id              Int                      @id @default(autoincrement())
+  trip_financial_id           Int
+  booking_id                  Int?
+  vehicle_id                  Int?
+  driver_id                   Int?
+  transport_owner_id          Int?
+  transaction_type            FinancialTransactionType
+  amount                      Float
+  direction                   TransactionDirection
+  payment_method              String?
+  reference_number            String?
+  status                      PaymentStatus            @default(PAID)
+  metadata                    String?
+  created_by                  Int?
+  created_at                  DateTime?                @default(now())
+  updated_at                  DateTime?                @default(now())
+  from_party                  TransactionParty?
+  to_party                    TransactionParty?
+  purpose                     String?
+  transaction_date            DateTime?
+  notes                       String?
+  trip_id                     Int?
+  client_id                   Int?
+  invoice_id                  Int?
+  idempotency_key             String?                  @unique
+  voucher_number              String?                  @unique
+  reversal_of_transaction_id  Int?                     @unique
+  reversal_of                 FinancialTransaction?    @relation("ReversalOriginal", fields: [reversal_of_transaction_id], references: [transaction_id], onDelete: Restrict)
+  reversal                    FinancialTransaction?    @relation("ReversalOriginal")
+  booking                     Booking?                 @relation(fields: [booking_id], references: [booking_id], onDelete: Cascade)
+  invoices                    Invoice?                 @relation(fields: [invoice_id], references: [invoice_id], onUpdate: NoAction)
+  tripFinancial               TripFinancial            @relation(fields: [trip_financial_id], references: [trip_financial_id], onDelete: Cascade)
+  trip                        Trip?                    @relation(fields: [trip_id], references: [trip_id], onDelete: Cascade)
 
   @@index([trip_financial_id], map: "idx_financial_tx_financial")
   @@index([booking_id], map: "idx_financial_tx_booking")
@@ -940,26 +944,19 @@ model FinancialTransaction {
   @@map("financial_transactions")
 }
 
-enum OpeningBalancePartyType {
-  CUSTOMER
-  VENDOR
-  DRIVER
-  PETROL_PUMP
-}
-
 /// Opening balances are deliberately a separate record from current-period
 /// transactions. Positive amount = the party owes Bihar Transport (receivable);
 /// negative amount = Bihar Transport owes the party (payable).
 model PartyOpeningBalance {
-  opening_id   Int                    @id @default(autoincrement())
-  party_type   OpeningBalancePartyType
-  party_id     Int
-  amount       Float
-  as_of_date   DateTime
-  notes        String?
-  created_by   Int?
-  created_at   DateTime               @default(now())
-  updated_at   DateTime               @default(now())
+  opening_id Int                     @id @default(autoincrement())
+  party_type OpeningBalancePartyType
+  party_id   Int
+  amount     Float
+  as_of_date DateTime
+  notes      String?
+  created_by Int?
+  created_at DateTime                @default(now())
+  updated_at DateTime                @default(now())
 
   @@unique([party_type, party_id, as_of_date], map: "uniq_opening_balance_party_date")
   @@index([party_type, party_id], map: "idx_opening_balance_party")
@@ -1003,8 +1000,8 @@ model AuditLog {
 }
 
 model Trip {
-  trip_id                   Int                       @id @default(autoincrement())
-  trip_number               String                    @unique
+  trip_id                   Int                         @id @default(autoincrement())
+  trip_number               String                      @unique
   booking_id                Int?
   user_id                   Int?
   transport_owner_id        Int?
@@ -1015,25 +1012,21 @@ model Trip {
   drop_location             String
   drop_city                 String
   distance_km               Float?
-  expected_delivery_date    DateTime?
-  trip_delivered_date       DateTime?
   freight_amount            Float
   driver_payment            Float?
   owner_payment             Float?
   notes                     String?
-  status                    TripStatus                @default(PENDING)
+  status                    TripStatus                  @default(PENDING)
   trip_date                 DateTime?
-  created_at                DateTime?                 @default(now())
-  updated_at                DateTime?                 @default(now())
+  created_at                DateTime?                   @default(now())
+  updated_at                DateTime?                   @default(now())
   completed_at              DateTime?
   cancelled_at              DateTime?
+  expected_delivery_date    DateTime?
+  trip_delivered_date       DateTime?
+  source_type               TripSourceType              @default(ONLINE_BOOKING)
   client_id                 Int?
-  source_type               TripSourceType            @default(ONLINE_BOOKING)
-  billing_to                VehicleHireBillingTo?
-  business_model            VehicleHireBusinessModel?
-  rate_basis                VehicleHireRateBasis?
-  commission_type           String?
-  commission_percentage     Float?
+  commercial_terms          Json?
   sent_to_loading_at        DateTime?
   arrived_at_loading_at     DateTime?
   loading_started_at        DateTime?
@@ -1045,6 +1038,14 @@ model Trip {
   actual_quantity_unit      String?
   actual_weight_kg          Float?
   documents_required        Json?
+  pod_required              Boolean?
+  insurance_required        Boolean?
+  value_of_goods            Float?
+  billing_to                VehicleHireBillingTo?
+  business_model            VehicleHireBusinessModel?
+  rate_basis                VehicleHireRateBasis?
+  commission_type           String?
+  commission_percentage     Float?
   current_latitude          Float?
   current_longitude         Float?
   location_updated_at       DateTime?
@@ -1061,12 +1062,12 @@ model Trip {
   delivered_quantity_unit   String?
   delivered_weight_kg       Float?
   enquiry_id                Int?
-  pod_required              Boolean?
-  insurance_required        Boolean?
-  value_of_goods            Float?
+  assignment_start_at       DateTime?                   @db.Timestamptz(6)
+  assignment_end_at         DateTime?                   @db.Timestamptz(6)
   ewayBill                  EwayBill?
   financialTransactions     FinancialTransaction[]
   invoices                  Invoice[]
+  pumpFuelTransactions      PetrolPumpFuelTransaction[]
   tripAdvances              TripAdvance[]
   dispatch                  TripDispatch?
   documents                 TripDocument[]
@@ -1078,13 +1079,12 @@ model Trip {
   tripSettlements           TripSettlement[]
   timeline                  TripTimeline[]
   trip_vehicle_changes      trip_vehicle_changes[]
-  pumpFuelTransactions      PetrolPumpFuelTransaction[]
-  booking                   Booking?                  @relation(fields: [booking_id], references: [booking_id])
-  client                    Client?                   @relation(fields: [client_id], references: [client_id])
-  driver                    Driver?                   @relation(fields: [driver_id], references: [driver_id], onDelete: Restrict)
-  transportOwner            VehicleOwner?             @relation(fields: [transport_owner_id], references: [owner_id], onDelete: Restrict)
-  user                      User?                     @relation(fields: [user_id], references: [user_id])
-  vehicle                   TransportVehicle?         @relation(fields: [vehicle_id], references: [vehicle_id], onDelete: Restrict)
+  booking                   Booking?                    @relation(fields: [booking_id], references: [booking_id])
+  client                    Client?                     @relation(fields: [client_id], references: [client_id])
+  driver                    Driver?                     @relation(fields: [driver_id], references: [driver_id], onDelete: Restrict)
+  transportOwner            VehicleOwner?               @relation(fields: [transport_owner_id], references: [owner_id], onDelete: Restrict)
+  user                      User?                       @relation(fields: [user_id], references: [user_id], onDelete: Restrict)
+  vehicle                   TransportVehicle?           @relation(fields: [vehicle_id], references: [vehicle_id], onDelete: Restrict)
   vehicleHire               VehicleHire?
 
   @@index([trip_number], map: "idx_trips_number")
@@ -1156,9 +1156,9 @@ model TripExpense {
   updated_at       DateTime?         @default(now())
   paid_by          ExpensePaidBy     @default(BIHAR_TRANSPORT)
   receipt          String?
+  paid_to          TransactionParty? @default(VENDOR)
   payment_method   String?
   reference_number String?
-  paid_to          TransactionParty? @default(VENDOR)
   trip             Trip              @relation(fields: [trip_id], references: [trip_id], onDelete: Cascade)
 
   @@index([expense_type], map: "idx_trip_expenses_type")
@@ -1172,13 +1172,13 @@ model TripPayment {
   trip_id          Int
   amount           Float
   payment_type     TripPaymentType
-  payment_category TripPaymentCategory @default(CLIENT_PAYMENT)
   payment_date     DateTime?           @default(now())
   payment_method   String?
   reference        String?
   notes            String?
   created_at       DateTime?           @default(now())
   updated_at       DateTime?           @default(now())
+  payment_category TripPaymentCategory @default(CLIENT_PAYMENT)
   trip             Trip                @relation(fields: [trip_id], references: [trip_id], onDelete: Cascade)
 
   @@index([payment_type], map: "idx_trip_payments_type")
@@ -1276,6 +1276,7 @@ model Enquiry {
   customer_mobile                               String
   customer_email                                String?
   session_key                                   String?
+  idempotency_key                               String?            @unique(map: "idx_enquiries_idempotency_key")
   pickup_location                               String
   pickup_address                                String?
   pickup_latitude                               Float?
@@ -1388,7 +1389,6 @@ model TripDispatch {
   actual_quantity      Float?
   actual_quantity_unit String?
   actual_weight_kg     Float?
-  invoice_id           Int?           @unique
   eway_bill_id         Int?           @unique
   insurance_id         Int?           @unique
   pod_required         Boolean        @default(false)
@@ -1396,6 +1396,7 @@ model TripDispatch {
   created_by           Int?
   created_at           DateTime?      @default(now())
   updated_at           DateTime?      @default(now())
+  invoice_id           Int?           @unique
   ewayBill             EwayBill?      @relation(fields: [eway_bill_id], references: [eway_bill_id], onUpdate: NoAction)
   insurance            TripInsurance? @relation(fields: [insurance_id], references: [insurance_id], onUpdate: NoAction)
   invoices             Invoice?       @relation(fields: [invoice_id], references: [invoice_id], onUpdate: NoAction)
@@ -1643,6 +1644,190 @@ model trip_vehicle_changes {
   @@index([trip_id, sequence], map: "idx_vehicle_change_trip_seq")
 }
 
+model PetrolPump {
+  pump_id           Int                         @id @default(autoincrement())
+  pump_name         String
+  pump_code         String?                     @unique
+  owner_name        String?
+  contact_number    String?
+  address           String?
+  city              String?
+  state             String?                     @default("Bihar")
+  gst_number        String?
+  pan_number        String?
+  bank_name         String?
+  bank_account      String?
+  bank_ifsc         String?
+  credit_limit      Decimal?                    @default(0) @db.Decimal(14, 2)
+  opening_balance   Decimal?                    @default(0) @db.Decimal(14, 2)
+  current_balance   Decimal?                    @default(0) @db.Decimal(14, 2)
+  status            String?                     @default("active")
+  is_active         Boolean?                    @default(true)
+  notes             String?
+  created_at        DateTime?                   @default(now())
+  updated_at        DateTime?                   @default(now())
+  bills             PetrolPumpBill[]
+  fuel_transactions PetrolPumpFuelTransaction[]
+  payments          PetrolPumpPayment[]
+
+  @@index([pump_name], map: "idx_petrol_pump_name")
+  @@index([pump_code], map: "idx_petrol_pump_code")
+  @@index([status], map: "idx_petrol_pump_status")
+  @@index([is_active], map: "idx_petrol_pump_active")
+  @@map("petrol_pumps")
+}
+
+model PetrolPumpFuelTransaction {
+  transaction_id Int               @id @default(autoincrement())
+  pump_id        Int
+  trip_id        Int?
+  vehicle_id     Int?
+  driver_id      Int?
+  fuel_date      DateTime          @default(now())
+  fuel_type      FuelType          @default(DIESEL)
+  litres         Decimal           @db.Decimal(10, 3)
+  rate_per_litre Decimal           @db.Decimal(10, 2)
+  total_amount   Decimal           @db.Decimal(14, 2)
+  invoice_number String?
+  receipt_number String?
+  bill_id        Int?
+  is_billed      Boolean           @default(false)
+  remarks        String?
+  supporting_doc String?
+  created_by     Int?
+  created_at     DateTime?         @default(now())
+  updated_at     DateTime?         @default(now())
+  bill           PetrolPumpBill?   @relation(fields: [bill_id], references: [bill_id])
+  driver         Driver?           @relation(fields: [driver_id], references: [driver_id])
+  pump           PetrolPump        @relation(fields: [pump_id], references: [pump_id])
+  trip           Trip?             @relation(fields: [trip_id], references: [trip_id])
+  vehicle        TransportVehicle? @relation(fields: [vehicle_id], references: [vehicle_id])
+
+  @@unique([pump_id, receipt_number], map: "uniq_pp_fuel_pump_receipt")
+  @@index([pump_id], map: "idx_pp_fuel_pump")
+  @@index([trip_id], map: "idx_pp_fuel_trip")
+  @@index([vehicle_id], map: "idx_pp_fuel_vehicle")
+  @@index([driver_id], map: "idx_pp_fuel_driver")
+  @@index([fuel_date], map: "idx_pp_fuel_date")
+  @@index([bill_id], map: "idx_pp_fuel_bill")
+  @@index([is_billed], map: "idx_pp_fuel_billed")
+  @@index([pump_id, fuel_date], map: "idx_pp_fuel_pump_date")
+  @@index([pump_id, is_billed, fuel_date], map: "idx_pp_fuel_pump_unbilled")
+  @@map("petrol_pump_fuel_transactions")
+}
+
+model PetrolPumpBill {
+  bill_id            Int                         @id @default(autoincrement())
+  bill_number        String                      @unique
+  pump_id            Int
+  bill_date          DateTime                    @default(now())
+  period_start       DateTime
+  period_end         DateTime
+  fuel_total         Decimal                     @default(0) @db.Decimal(14, 2)
+  adjustment_amount  Decimal                     @default(0) @db.Decimal(14, 2)
+  bill_amount        Decimal                     @default(0) @db.Decimal(14, 2)
+  paid_amount        Decimal                     @default(0) @db.Decimal(14, 2)
+  outstanding_amount Decimal                     @default(0) @db.Decimal(14, 2)
+  status             PetrolPumpBillStatus        @default(PENDING)
+  due_date           DateTime?
+  remarks            String?
+  approved_by        Int?
+  approved_at        DateTime?
+  created_by         Int?
+  created_at         DateTime?                   @default(now())
+  updated_at         DateTime?                   @default(now())
+  pump               PetrolPump                  @relation(fields: [pump_id], references: [pump_id])
+  transactions       PetrolPumpFuelTransaction[]
+  payments           PetrolPumpPayment[]
+
+  @@index([pump_id], map: "idx_pp_bill_pump")
+  @@index([bill_number], map: "idx_pp_bill_number")
+  @@index([bill_date], map: "idx_pp_bill_date")
+  @@index([status], map: "idx_pp_bill_status")
+  @@index([pump_id, period_start, period_end], map: "idx_pp_bill_pump_period")
+  @@map("petrol_pump_bills")
+}
+
+model PetrolPumpPayment {
+  payment_id       Int                     @id @default(autoincrement())
+  payment_number   String                  @unique
+  pump_id          Int
+  bill_id          Int?
+  amount           Decimal                 @db.Decimal(14, 2)
+  payment_date     DateTime                @default(now())
+  payment_method   PetrolPumpPaymentMethod @default(BANK_TRANSFER)
+  reference_number String?
+  bank_name        String?
+  voucher_number   String?
+  remarks          String?
+  idempotency_key  String?                 @unique
+  created_by       Int?
+  created_at       DateTime?               @default(now())
+  updated_at       DateTime?               @default(now())
+  bill             PetrolPumpBill?         @relation(fields: [bill_id], references: [bill_id])
+  pump             PetrolPump              @relation(fields: [pump_id], references: [pump_id])
+
+  @@unique([pump_id, reference_number], map: "uniq_pp_payment_pump_ref")
+  @@index([pump_id, payment_date], map: "idx_pp_payment_pump_date")
+  @@index([pump_id], map: "idx_pp_payment_pump")
+  @@index([bill_id], map: "idx_pp_payment_bill")
+  @@index([payment_date], map: "idx_pp_payment_date")
+  @@index([payment_number], map: "idx_pp_payment_number")
+  @@map("petrol_pump_payments")
+}
+
+model AccountingAccount {
+  account_id   Int           @id @default(autoincrement())
+  account_code String        @unique
+  account_name String
+  account_type String
+  is_active    Boolean       @default(true)
+  created_at   DateTime      @default(now())
+  lines        JournalLine[]
+
+  @@index([account_type], map: "idx_accounting_accounts_type")
+  @@map("accounting_accounts")
+}
+
+model JournalEntry {
+  journal_id   Int           @id @default(autoincrement())
+  reference    String        @unique
+  posting_date DateTime
+  source_type  String
+  source_id    Int?
+  currency     String        @default("INR")
+  status       String        @default("POSTED")
+  created_by   Int?
+  created_at   DateTime      @default(now())
+  lines        JournalLine[]
+
+  @@index([source_type, source_id], map: "idx_journal_entries_source")
+  @@index([posting_date], map: "idx_journal_entries_date")
+  @@map("journal_entries")
+}
+
+model JournalLine {
+  line_id     Int               @id @default(autoincrement())
+  journal_id  Int
+  account_id  Int
+  direction   String
+  amount      Decimal           @db.Decimal(14, 2)
+  description String?
+  account     AccountingAccount @relation(fields: [account_id], references: [account_id])
+  journal     JournalEntry      @relation(fields: [journal_id], references: [journal_id], onDelete: Cascade)
+
+  @@index([journal_id], map: "idx_journal_lines_journal")
+  @@index([account_id], map: "idx_journal_lines_account")
+  @@map("journal_lines")
+}
+
+enum OpeningBalancePartyType {
+  CUSTOMER
+  VENDOR
+  DRIVER
+  PETROL_PUMP
+}
+
 enum UserRole {
   customer
   driver
@@ -1771,6 +1956,7 @@ enum TripSourceType {
   ONLINE_BOOKING
   OFFLINE_CLIENT
   DIRECT
+  MANUAL
 }
 
 enum TripStatus {
@@ -2019,180 +2205,19 @@ enum PetrolPumpPaymentMethod {
   OTHER
 }
 
-model PetrolPump {
-  pump_id           Int                    @id @default(autoincrement())
-  pump_name         String
-  pump_code         String?                @unique
-  owner_name        String?
-  contact_number    String?
-  address           String?
-  city              String?
-  state             String?                @default("Bihar")
-  gst_number        String?
-  pan_number        String?
-  bank_name         String?
-  bank_account      String?
-  bank_ifsc         String?
-  credit_limit      Decimal?               @db.Decimal(14, 2) @default(0)
-  opening_balance   Decimal?               @db.Decimal(14, 2) @default(0)
-  current_balance   Decimal?               @db.Decimal(14, 2) @default(0)
-  status            String?                @default("active")
-  is_active         Boolean?               @default(true)
-  notes             String?
-  created_at        DateTime?              @default(now())
-  updated_at        DateTime?              @default(now())
-  fuel_transactions PetrolPumpFuelTransaction[]
-  bills             PetrolPumpBill[]
-  payments          PetrolPumpPayment[]
-
-  @@index([pump_name], map: "idx_petrol_pump_name")
-  @@index([pump_code], map: "idx_petrol_pump_code")
-  @@index([status], map: "idx_petrol_pump_status")
-  @@index([is_active], map: "idx_petrol_pump_active")
-  @@map("petrol_pumps")
-}
-
-model PetrolPumpFuelTransaction {
-  transaction_id    Int                    @id @default(autoincrement())
-  pump_id           Int
-  trip_id           Int?
-  vehicle_id        Int?
-  driver_id         Int?
-  fuel_date         DateTime               @default(now())
-  fuel_type         FuelType               @default(DIESEL)
-  litres            Decimal                @db.Decimal(10, 3)
-  rate_per_litre    Decimal                @db.Decimal(10, 2)
-  total_amount      Decimal                @db.Decimal(14, 2)
-  invoice_number    String?
-  receipt_number    String?
-  bill_id           Int?
-  bill              PetrolPumpBill?        @relation(fields: [bill_id], references: [bill_id], onDelete: SetNull)
-  is_billed         Boolean                @default(false)
-  remarks           String?
-  supporting_doc    String?
-  created_by        Int?
-  created_at        DateTime?              @default(now())
-  updated_at        DateTime?              @default(now())
-  pump              PetrolPump            @relation(fields: [pump_id], references: [pump_id], onDelete: Restrict)
-  trip              Trip?                 @relation(fields: [trip_id], references: [trip_id], onDelete: SetNull)
-  vehicle           TransportVehicle?     @relation(fields: [vehicle_id], references: [vehicle_id], onDelete: SetNull)
-  driver            Driver?               @relation(fields: [driver_id], references: [driver_id], onDelete: SetNull)
-
-  @@index([pump_id], map: "idx_pp_fuel_pump")
-  @@index([trip_id], map: "idx_pp_fuel_trip")
-  @@index([vehicle_id], map: "idx_pp_fuel_vehicle")
-  @@index([driver_id], map: "idx_pp_fuel_driver")
-  @@index([fuel_date], map: "idx_pp_fuel_date")
-  @@index([bill_id], map: "idx_pp_fuel_bill")
-  @@index([is_billed], map: "idx_pp_fuel_billed")
-  @@index([pump_id, fuel_date], map: "idx_pp_fuel_pump_date")
-  @@index([pump_id, is_billed, fuel_date], map: "idx_pp_fuel_pump_unbilled")
-  @@unique([pump_id, receipt_number], map: "uniq_pp_fuel_pump_receipt")
-  @@map("petrol_pump_fuel_transactions")
-}
-
-model PetrolPumpBill {
-  bill_id           Int                          @id @default(autoincrement())
-  bill_number       String                       @unique
-  pump_id           Int
-  bill_date         DateTime                     @default(now())
-  period_start      DateTime
-  period_end        DateTime
-  fuel_total        Decimal                      @db.Decimal(14, 2) @default(0)
-  adjustment_amount Decimal                      @db.Decimal(14, 2) @default(0)
-  bill_amount       Decimal                      @db.Decimal(14, 2) @default(0)
-  paid_amount       Decimal                      @db.Decimal(14, 2) @default(0)
-  outstanding_amount Decimal                     @db.Decimal(14, 2) @default(0)
-  status            PetrolPumpBillStatus         @default(PENDING)
-  due_date          DateTime?
-  remarks           String?
-  approved_by       Int?
-  approved_at       DateTime?
-  created_by        Int?
-  created_at        DateTime?                    @default(now())
-  updated_at        DateTime?                    @default(now())
-  pump              PetrolPump                   @relation(fields: [pump_id], references: [pump_id], onDelete: Restrict)
-  transactions      PetrolPumpFuelTransaction[]
-  payments          PetrolPumpPayment[]
-
-  @@index([pump_id], map: "idx_pp_bill_pump")
-  @@index([bill_number], map: "idx_pp_bill_number")
-  @@index([bill_date], map: "idx_pp_bill_date")
-  @@index([status], map: "idx_pp_bill_status")
-  @@index([pump_id, period_start, period_end], map: "idx_pp_bill_pump_period")
-  @@map("petrol_pump_bills")
-}
-
-model PetrolPumpPayment {
-  payment_id        Int                          @id @default(autoincrement())
-  payment_number    String                       @unique
-  pump_id           Int
-  bill_id           Int?
-  amount            Decimal                      @db.Decimal(14, 2)
-  payment_date      DateTime                     @default(now())
-  payment_method    PetrolPumpPaymentMethod      @default(BANK_TRANSFER)
-  reference_number  String?
-  bank_name         String?
-  voucher_number    String?
-  remarks           String?
-  idempotency_key   String?                      @unique
-  created_by        Int?
-  created_at        DateTime?                    @default(now())
-  updated_at        DateTime?                    @default(now())
-  pump              PetrolPump                   @relation(fields: [pump_id], references: [pump_id], onDelete: Restrict)
-  bill              PetrolPumpBill?              @relation(fields: [bill_id], references: [bill_id], onDelete: SetNull)
-
-  @@unique([pump_id, reference_number], map: "uniq_pp_payment_pump_ref")
-  @@index([pump_id, payment_date], map: "idx_pp_payment_pump_date")
-
-  @@index([pump_id], map: "idx_pp_payment_pump")
-  @@index([bill_id], map: "idx_pp_payment_bill")
-  @@index([payment_date], map: "idx_pp_payment_date")
-  @@index([payment_number], map: "idx_pp_payment_number")
-  @@map("petrol_pump_payments")
-}
-
-model AccountingAccount {
-  account_id   Int            @id @default(autoincrement())
-  account_code String         @unique
-  account_name String
-  account_type String
-  is_active    Boolean        @default(true)
-  created_at   DateTime       @default(now())
-  lines        JournalLine[]
-
-  @@index([account_type], map: "idx_accounting_accounts_type")
-  @@map("accounting_accounts")
-}
-
-model JournalEntry {
-  journal_id    Int           @id @default(autoincrement())
-  reference     String        @unique
-  posting_date  DateTime
-  source_type   String
-  source_id     Int?
-  currency      String        @default("INR")
-  status        String        @default("POSTED")
-  created_by    Int?
-  created_at    DateTime      @default(now())
-  lines         JournalLine[]
-
-  @@index([source_type, source_id], map: "idx_journal_entries_source")
-  @@index([posting_date], map: "idx_journal_entries_date")
-  @@map("journal_entries")
-}
-
-model JournalLine {
-  line_id      Int            @id @default(autoincrement())
-  journal_id   Int
-  account_id   Int
-  direction    String
-  amount       Decimal        @db.Decimal(14, 2)
-  description  String?
-  journal      JournalEntry   @relation(fields: [journal_id], references: [journal_id], onDelete: Cascade)
-  account      AccountingAccount @relation(fields: [account_id], references: [account_id], onDelete: Restrict)
-
-  @@index([journal_id], map: "idx_journal_lines_journal")
-  @@index([account_id], map: "idx_journal_lines_account")
-  @@map("journal_lines")
+enum trip_expense_type {
+  DRIVER
+  DIESEL
+  TOLL
+  LOADING
+  UNLOADING
+  OWNER
+  MAINTENANCE
+  LABOUR
+  DOCUMENTATION
+  PARKING
+  LOCAL_TRANSPORT
+  CUSTOMER_RELATED
+  COMMUNICATION
+  OTHER
 }

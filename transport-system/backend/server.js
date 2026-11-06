@@ -1,6 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
 const dotenv = require('dotenv');
 const compression = require('compression');
 const helmet = require('helmet');
@@ -115,10 +117,27 @@ app.use(helmet({
 
 // In development, allow all origins to avoid CORS friction between
 // frontend (5173/5174) and backend (3000). In production, restrict to
-// FRONTEND_URL if provided.
+// explicitly approved origins from FRONTEND_URLS (comma-separated) or FRONTEND_URL.
 const isDev = process.env.NODE_ENV !== 'production';
+
+function getAllowedOrigins() {
+  if (isDev) {
+    return '*';
+  }
+  // Support multiple origins via FRONTEND_URLS (comma-separated)
+  // Fallback to single FRONTEND_URL for backward compatibility
+  const urls = process.env.FRONTEND_URLS
+    ? process.env.FRONTEND_URLS.split(',').map(u => u.trim()).filter(Boolean)
+    : (process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []);
+  if (urls.length === 0) {
+    console.warn('[cors] WARNING: No FRONTEND_URLS or FRONTEND_URL configured in production. CORS will reject all origins.');
+    return false; // Reject all
+  }
+  return urls;
+}
+
 app.use(cors({
-  origin: isDev ? '*' : (process.env.FRONTEND_URL || '*'),
+  origin: getAllowedOrigins(),
   credentials: true,
 }));
 
@@ -358,16 +377,28 @@ app.get('/api/ready', async (req, res, next) => {
   try {
     const result = await testPrismaConnection();
     if (result.success) {
-      // Check for failed/unfinished migrations
+      // Check migration consistency.
+      //
+      // A migration only blocks readiness when it is UNFINISHED AND
+      // UNRESOLVED (finished_at IS NULL AND rolled_back_at IS NULL).
+      // Records with rolled_back_at set are NORMAL Prisma history: they are
+      // failed attempts that were reconciled with
+      // `prisma migrate resolve --rolled-back` (or duplicate historical
+      // attempts). Treating them as failures would report the database as
+      // not-ready forever and — because this handler also clears the shared
+      // dbReady flag — would make the /api middleware reject every other
+      // request with 503.
       let migrationStatus = 'unknown';
+      let checksumStatus = 'unknown';
+      let checksumMismatches = [];
       try {
         const { prisma } = require('./config/prisma');
-        const failedMigrations = await prisma.$queryRaw`
-          SELECT migration_name, finished_at, rolled_back_at
+        const unfinishedMigrations = await prisma.$queryRaw`
+          SELECT migration_name
           FROM "_prisma_migrations"
-          WHERE finished_at IS NULL OR rolled_back_at IS NOT NULL
+          WHERE finished_at IS NULL AND rolled_back_at IS NULL
         `;
-        if (failedMigrations.length > 0) {
+        if (unfinishedMigrations.length > 0) {
           migrationStatus = 'failed_or_unfinished';
           dbReady = false;
           res.status(503).json({
@@ -378,12 +409,50 @@ app.get('/api/ready', async (req, res, next) => {
               database: 'connected',
               dbReady: false,
               migrationStatus,
-              failedMigrations: failedMigrations.map(m => m.migration_name),
+              failedMigrations: unfinishedMigrations.map(m => m.migration_name),
             },
             timestamp: new Date().toISOString(),
           });
           return;
         }
+
+        // Verify applied migrations still match their on-disk SQL files
+        // (Prisma P2030 hazard: a migration file modified after it was
+        // applied). Rolled-back records are excluded — their files may
+        // legitimately differ from the version that originally failed.
+        //
+        // Checksum mismatches are REPORTED but do NOT block readiness:
+        // several historical migrations were edited after application (to
+        // add IF NOT EXISTS guards), so their recorded checksums are stale
+        // while the applied database state is verified correct
+        // (prisma migrate diff against the live database is empty). A hard
+        // failure here would clear dbReady and make the /api middleware
+        // reject every request with 503. The mismatches are reconciled by
+        // updating the recorded checksums (approved migration-history
+        // maintenance), after which this reports 'ok'.
+        const appliedMigrations = await prisma.$queryRaw`
+          SELECT migration_name, checksum
+          FROM "_prisma_migrations"
+          WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL
+        `;
+        const migrationsDir = path.join(__dirname, 'prisma', 'migrations');
+        checksumMismatches = [];
+        for (const row of appliedMigrations) {
+          const expected = Buffer.isBuffer(row.checksum)
+            ? row.checksum.toString('hex')
+            : String(row.checksum);
+          let actual = null;
+          try {
+            const file = path.join(migrationsDir, row.migration_name, 'migration.sql');
+            actual = crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+          } catch (readErr) {
+            actual = 'FILE_MISSING';
+          }
+          if (actual !== expected) {
+            checksumMismatches.push(row.migration_name);
+          }
+        }
+        checksumStatus = checksumMismatches.length > 0 ? 'mismatch' : 'ok';
         migrationStatus = 'ok';
       } catch (migErr) {
         // _prisma_migrations table might not exist yet (fresh DB)
@@ -398,6 +467,8 @@ app.get('/api/ready', async (req, res, next) => {
           database: 'connected',
           dbReady: true,
           migrationStatus,
+          checksumStatus,
+          checksumMismatches,
         },
         timestamp: new Date().toISOString(),
       });

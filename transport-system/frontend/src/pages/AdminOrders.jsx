@@ -249,6 +249,14 @@ export default function AdminOrders() {
     loadCounts();
   }, [load, loadCounts]);
 
+  // Open the Manual Order page. It renders the same booking form as the public
+  // website and submitting creates an enquiry (source MANUAL, authenticated
+  // admin as creator) that enters the SAME lifecycle as an online booking:
+  // enquiry → quote → accept → Booking → Trip. Never a separate manual order.
+  const handleCreateOrder = useCallback(() => {
+    navigate('/admin/orders/create');
+  }, [navigate]);
+
   // Stage tab counts, all sourced from the lifecycle API.
   const stageCounts = useMemo(() => {
     const counts = {};
@@ -467,7 +475,7 @@ export default function AdminOrders() {
               </button>
               <button
                 type="button"
-                onClick={() => navigate('/admin/enquiries')}
+                onClick={handleCreateOrder}
                 className="inline-flex h-10 items-center gap-2 rounded-[10px] bg-[#15345B] px-4 text-[13px] font-semibold text-white shadow-[0_5px_14px_-8px_rgba(21,52,91,0.8)] transition-colors hover:bg-[#102B4C] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#15345B]/30 focus-visible:ring-offset-2"
               >
                 <Plus className="h-4 w-4" aria-hidden="true" />

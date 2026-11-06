@@ -241,6 +241,7 @@ class BookingRepository {
         quote_remarks: data.quote_remarks != null ? data.quote_remarks : null,
         quote_sent_at: data.quote_sent_at || null,
         quote_accepted_at: data.quote_accepted_at || null,
+        idempotency_key: data.idempotency_key || null,
       },
     });
     return { booking_id: booking.booking_id };

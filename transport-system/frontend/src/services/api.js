@@ -42,6 +42,13 @@ api.interceptors.response.use(
       }
     }
 
+    // Mark service-unavailable (503) responses so the UI can show a temporary
+    // outage message WITHOUT logging the user out. A database outage is not an
+    // authentication failure.
+    if (error.response?.status === 503) {
+      error._isServiceUnavailable = true;
+    }
+
     // Only handle 401 on protected routes, not auth endpoints (login/signup)
     const authPaths = ['/auth/login', '/auth/admin-login', '/auth/partner-login', '/auth/signup', '/auth/driver-signup', '/auth/admin/me'];
     const requestUrl = error.config?.url || '';
@@ -53,14 +60,19 @@ api.interceptors.response.use(
     // there would throw the customer off a page they never needed an account for.
     const isEnquiryRequest = requestUrl.includes('/enquiries');
 
+    // A genuine 401 invalidates the session. Never clear auth for 503 (database
+    // outage), network errors, or timeouts — those are transient and the stored
+    // token remains valid once the backend recovers.
     if (error.response?.status === 401 && !isAuthRequest && !isEnquiryRequest) {
       // Clear persisted auth + dispatch auth:changed so AuthContext clears
       // runtime state, then let ProtectedRoute redirect to /login.
       clearStoredAuth();
       // guard against a hard reload loop: only hard-navigate if we are not
-      // already on an auth-related page.
+      // already on an auth-related page, and only navigate once to prevent
+      // multiple simultaneous failed requests from triggering repeated redirects.
       const currentPath = window.location.pathname || '';
-      if (!currentPath.startsWith('/login')) {
+      if (!currentPath.startsWith('/login') && !window.__bt_logging_out) {
+        window.__bt_logging_out = true;
         window.location.href = '/login';
       }
     }
@@ -199,6 +211,15 @@ getDriversWithVehicles: (params) => api.get('/admin/drivers/drivers-with-vehicle
   sendQuote: (bookingId, data) => api.post(`/admin/bookings/${bookingId}/send-quote`, data),
   // Send quote using already-assigned driver (no driver selection needed)
   sendAdminQuote: (bookingId, data) => api.post(`/admin/bookings/${bookingId}/quote`, data),
+
+  // ---------------------------------------------------------------------------
+  // MANUAL ORDER CREATION
+  // ---------------------------------------------------------------------------
+  // Create a manual order (phone/offline booking) directly from admin dashboard.
+  // This is the primary entry point for the "Create Order" button in the
+  // Admin Order / Trip Master.
+  createManualOrder: (data) => api.post('/admin/orders/manual', data),
+  getManualOrderLookups: (params) => api.get('/admin/orders/manual/lookups', { params }),
 
   // ---------------------------------------------------------------------------
   // ENQUIRY WORKFLOW (the six-stage admin rail)

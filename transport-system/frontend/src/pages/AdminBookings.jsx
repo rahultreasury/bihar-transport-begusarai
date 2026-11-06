@@ -39,6 +39,7 @@ import useBookingSelection from '../components/admin-premium/booking/useBookingS
 import { resolveOrder, STAGE_INDEX, ORDER_STAGE_FILTERS } from '../utils/orderStatus';
 import { Button } from '../components/admin-premium/ui/AdminUI';
 import PremiumKpiCard from '../components/admin-premium/booking/PremiumKpiCard';
+import ManualOrderForm from '../components/admin-premium/orders/ManualOrderForm';
 
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: '▦' },
@@ -90,6 +91,9 @@ const [selectedBooking, setSelectedBooking] = useState(null);
   const [sendingQuote, setSendingQuote] = useState(false);
   const [quoteError, setQuoteError] = useState('');
   const [quoteSuccess, setQuoteSuccess] = useState('');
+
+  // Manual order creation modal state
+  const [manualOrderModalOpen, setManualOrderModalOpen] = useState(false);
 
   // Toast helper
   const showToast = useCallback((message, type = 'success') => {
@@ -411,11 +415,31 @@ const handleAssignDriver = useCallback((row) => {
   navigate(`/admin/bookings/${encodeURIComponent(id)}/assign-driver`);
 }, [navigate, bookingIdentifier]);
 
-// Create order — navigate to the existing enquiry intake workflow, which is the
-// entry point for creating a new order (enquiry → quotation → booking).
+// Create order — open the manual order creation form. On success the created
+// order appears in Order / Trip Master and Vehicle Hire automatically.
 const handleCreateOrder = useCallback(() => {
-  navigate('/admin/enquiries');
-}, [navigate]);
+  setManualOrderModalOpen(true);
+}, []);
+
+const handleManualOrderCreated = useCallback(
+  (created) => {
+    setManualOrderModalOpen(false);
+    const bookingNumber = created.booking?.booking_number || created.booking_number || '—';
+    showToast(`✓ Manual order ${bookingNumber} created successfully`, 'success');
+    fetchBookings(pagination.page);
+    fetchStats();
+    fetchLifecycleSummary();
+    if (created.trip?.trip_id) {
+      navigate(`/admin/trips/${encodeURIComponent(created.trip.trip_id)}/vehicle-hire`);
+    } else if (created.trip_number) {
+      showToast(
+        `Trip ${created.trip_number} is ready for vehicle assignment in Vehicle Hire`,
+        'info'
+      );
+    }
+  },
+  [fetchBookings, fetchStats, fetchLifecycleSummary, pagination.page, showToast]
+);
 
 // Review trips — filter to trips waiting for vehicle/loading (ORDER_CONFIRMED stage)
 const handleReviewTrips = useCallback(() => {
@@ -550,6 +574,21 @@ const handleReviewTrips = useCallback(() => {
           )}
         </div>
       )
+    },
+    {
+      key: 'order_source',
+      header: 'Order Source',
+      render: (r) => {
+        const source = String(r.confirmation_source || r.source_type || '').toUpperCase();
+        const manual = source === 'MANUAL';
+        return (
+          <span
+            className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-0.5 text-[10px] font-medium leading-none ${manual ? 'bg-amber-50 text-amber-700 border-amber-100' : 'bg-gray-50 text-gray-700 border-gray-100'}`}
+          >
+            {manual ? 'Manual' : 'Online'}
+          </span>
+        );
+      }
     },
     {
       key: 'customer',
@@ -1548,6 +1587,12 @@ const handleReviewTrips = useCallback(() => {
             </div>
           </div>
         )}
+        {/* Manual Order Creation Form */}
+        <ManualOrderForm
+          open={manualOrderModalOpen}
+          onClose={() => setManualOrderModalOpen(false)}
+          onSuccess={handleManualOrderCreated}
+        />
       </div>
     </AdminShell>
   );

@@ -108,7 +108,8 @@ function buildCtx(req) {
  * never observe a partially-created enquiry.
  */
 const createEnquiry = asyncHandler(async (req, res) => {
-  const { enquiry, accessToken } = await enquiryService.createEnquiry(req.body || {}, buildCtx(req));
+  const result = await enquiryService.createEnquiry(req.body || {}, buildCtx(req));
+  const { enquiry, accessToken, bookingId, booking_number, bookingReference, tripId, tripNumber, idempotentReplay } = result;
 
   // Read AFTER the creating transaction has committed (see the note above).
   // Return the freshly-shaped customer DTO so the confirmation page can render
@@ -120,19 +121,28 @@ const createEnquiry = asyncHandler(async (req, res) => {
   // Pre-booking: no Booking row exists until the customer accepts a quote, so
   // this is null today. Returned explicitly so the contract does not change when
   // a booking starts being created inline.
-  const bookingId = enquiry.booking_id != null ? enquiry.booking_id : null;
+  const resolvedBookingId = bookingId ?? enquiry.booking_id != null ? enquiry.booking_id : null;
 
-  res.status(201).json({
+  const statusCode = idempotentReplay ? 200 : 201;
+  const message = idempotentReplay
+    ? 'Your transport request was already received (duplicate submission). Returned the existing enquiry.'
+    : 'Your transport request has been received';
+
+  res.status(statusCode).json({
     success: true,
-    message: 'Your transport request has been received',
+    message,
     data: {
       // ── Identifiers, straight from the database ──────────────────────────
       enquiryId: enquiry.enquiry_id,
       enquiry_id: enquiry.enquiry_id,
       enquiryNumber,
       enquiry_number: enquiryNumber,
-      bookingId,
-      booking_id: bookingId,
+      bookingId: resolvedBookingId,
+      booking_id: resolvedBookingId,
+      booking_number: booking_number,
+      booking_reference: bookingReference,
+      tripId,
+      tripNumber,
       // ── The complete, renderable enquiry ────────────────────────────────
       enquiry: toCustomerEnquiry(fresh, events),
       // A guest receives a scoped token so they can return to this enquiry
@@ -142,6 +152,7 @@ const createEnquiry = asyncHandler(async (req, res) => {
       token_expires_at: accessToken ? accessToken.expiresAt : null,
       // Where the frontend should send the customer.
       redirect_to: `/booking/enquiry/${enquiryNumber}`,
+      idempotentReplay: idempotentReplay || false,
     },
   });
 });

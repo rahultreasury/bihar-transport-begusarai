@@ -247,15 +247,31 @@ router.get('/transactions', protect, adminOnly, async (req, res) => {
   try {
     const transactions = await canonicalFinancialService.getTransactions(req.query || {});
     const rows = Array.isArray(transactions) ? transactions : (transactions.rows || []);
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       data: rows,
       rows: rows,
-      pagination: transactions.pagination 
+      pagination: transactions.pagination
     });
   } catch (error) {
     console.error('Get transactions error:', error);
+    res.status(error.statusCode || 500).json({ success: false, message: error.message || 'Server error' });
+  }
+});
+
+/**
+ * GET /api/admin/financials/transactions/ledger
+ * Paginated canonical transaction ledger with the same filters as
+ * /transactions. Backs financialAPI.getLedger (the transaction ledger view);
+ * served by the same getTransactions query so the two can never disagree.
+ */
+router.get('/transactions/ledger', protect, adminOnly, async (req, res) => {
+  try {
+    const ledger = await canonicalFinancialService.getTransactions(req.query || {});
+    res.json({ success: true, data: ledger });
+  } catch (error) {
+    console.error('Get transaction ledger error:', error);
     res.status(error.statusCode || 500).json({ success: false, message: error.message || 'Server error' });
   }
 });

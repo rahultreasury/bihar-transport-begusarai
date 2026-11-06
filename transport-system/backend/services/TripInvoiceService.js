@@ -172,6 +172,7 @@ class TripInvoiceService {
       payment_status: paymentStatus,
       ...(enumStatus !== invoice.status ? { status: enumStatus } : {}),
       ...(paymentStatus === 'PAID' && !invoice.paid_at ? { paid_at: now } : {}),
+      ...((paymentStatus === 'PARTIALLY_PAID' || paymentStatus === 'UNPAID') && invoice.paid_at ? { paid_at: null } : {}),
       updated_at: now,
     };
 

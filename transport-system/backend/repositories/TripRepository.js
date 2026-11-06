@@ -547,6 +547,11 @@ class TripRepository {
 
   /**
    * Generate next trip number.
+   *
+   * @deprecated Use {@link createTripWithCanonicalNumber} instead.
+   * MAX+1 generation is not safe under concurrent creation — two concurrent
+   * calls can read the same MAX(trip_number) and issue duplicate numbers,
+   * causing a unique-constraint violation on `trip_number`.
    */
   async generateTripNumber() {
     const year = new Date().getFullYear();
@@ -568,6 +573,38 @@ class TripRepository {
     }
 
     return `${prefix}${String(nextNumber).padStart(5, '0')}`;
+  }
+
+  /**
+   * Create a trip with a canonical BTBT-YYYY-NNNNN trip number derived from the
+   * database-assigned PK. Uses a cryptographically secure UUID as a temporary
+   * placeholder so the unique constraint on `trip_number` is never violated,
+   * even under concurrent creation.
+   *
+   * The temporary identifier is never committed as the final trip number:
+   * the Trip is created inside the transaction with the UUID placeholder, the
+   * autoincrement trip_id is read back, and the canonical number is written
+   * using the same transaction client before commit.
+   *
+   * @param {Object} data - Trip creation data (trip_number must NOT be included)
+   * @param {Object=} tx - Prisma transaction client (defaults to this.tx)
+   * @returns {Promise<Object>} The created trip with canonical trip_number
+   */
+  async createTripWithCanonicalNumber(data, tx = null) {
+    const client = tx || this.tx;
+    const { buildTripNumber } = require('../services/TripNumberService');
+    const { randomUUID } = require('crypto');
+
+    const tempNumber = `TEMP-${randomUUID()}`;
+    const trip = await client.trip.create({
+      data: { ...data, trip_number: tempNumber },
+    });
+
+    const canonicalNumber = buildTripNumber(trip.trip_id, trip.created_at);
+    return await client.trip.update({
+      where: { trip_id: trip.trip_id },
+      data: { trip_number: canonicalNumber },
+    });
   }
 
   /**

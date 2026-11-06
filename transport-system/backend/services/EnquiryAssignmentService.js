@@ -409,7 +409,7 @@ class EnquiryAssignmentService {
 
     // (a) Another live ENQUIRY already holds this vehicle.
     const excludeEnqIdNum = excludeEnquiryId !== undefined && excludeEnquiryId !== null ? Number(excludeEnquiryId) : NaN;
-    const otherEnquiry = await client.enquiry.findFirst({
+    const otherEnquiries = await client.enquiry.findMany({
       where: {
         ...(Number.isFinite(excludeEnqIdNum) ? { enquiry_id: { not: excludeEnqIdNum } } : {}),
         assigned_vehicle_id: Number(vehicleId),
@@ -418,7 +418,7 @@ class EnquiryAssignmentService {
       select: { enquiry_id: true, enquiry_number: true, pickup_date: true, pickup_time: true, status: true },
     });
 
-    if (otherEnquiry) {
+    for (const otherEnquiry of otherEnquiries) {
       const ow = pickupWindow(otherEnquiry.pickup_date, otherEnquiry.pickup_time);
       if (rangesOverlap(start, end, ow.start, ow.end)) {
         throw new ConflictError({
@@ -435,17 +435,33 @@ class EnquiryAssignmentService {
     // trip. Without it, changing the vehicle on a trip that already holds a
     // driver reports that driver as "already on active trip <own trip>" — the
     // consignment blocking itself.
-    const activeTrip = await client.trip.findFirst({
+    const activeTrips = await client.trip.findMany({
       where: {
         vehicle_id: Number(vehicleId),
         status: { in: ACTIVE_TRIP_STATUSES },
         ...(excludeTripId ? { trip_id: { not: Number(excludeTripId) } } : {}),
       },
-      select: { trip_id: true, trip_number: true, trip_date: true, status: true },
+      select: { trip_id: true, trip_number: true, trip_date: true, assignment_start_at: true, assignment_end_at: true, status: true },
     });
 
-// An active trip blocks this enquiry when it falls on the SAME calendar day.
-    if (activeTrip && activeTrip.trip_date) {
+    for (const activeTrip of activeTrips) {
+      if (activeTrip.assignment_start_at && activeTrip.assignment_end_at) {
+        const twStart = new Date(activeTrip.assignment_start_at);
+        const twEnd = new Date(activeTrip.assignment_end_at);
+        if (rangesOverlap(start, end, twStart, twEnd)) {
+          throw new ConflictError({
+            message: `This driver is already on active trip ${activeTrip.trip_number}.`,
+          });
+        }
+        continue;
+      }
+      if (!activeTrip.trip_date) {
+        throw new ConflictError({
+          message:
+            `This vehicle is already on active trip ${activeTrip.trip_number}, ` +
+            'which has no schedulable date. Resolve that trip before assigning it here.',
+        });
+      }
       const tw = tripWindow(activeTrip.trip_date);
       if (rangesOverlap(start, end, tw.start, tw.end)) {
         throw new ConflictError({
@@ -474,7 +490,7 @@ class EnquiryAssignmentService {
     const { start, end } = pickupWindow(pickupDate, pickupTime);
 
     const excludeEnqIdNum2 = excludeEnquiryId !== undefined && excludeEnquiryId !== null ? Number(excludeEnquiryId) : NaN;
-    const otherEnquiry = await client.enquiry.findFirst({
+    const otherEnquiries = await client.enquiry.findMany({
       where: {
         ...(Number.isFinite(excludeEnqIdNum2) ? { enquiry_id: { not: excludeEnqIdNum2 } } : {}),
         assigned_driver_id: Number(driverId),
@@ -483,7 +499,7 @@ class EnquiryAssignmentService {
       select: { enquiry_id: true, enquiry_number: true, pickup_date: true, pickup_time: true, status: true },
     });
 
-    if (otherEnquiry) {
+    for (const otherEnquiry of otherEnquiries) {
       const ow = pickupWindow(otherEnquiry.pickup_date, otherEnquiry.pickup_time);
       if (rangesOverlap(start, end, ow.start, ow.end)) {
         throw new ConflictError({
@@ -494,7 +510,7 @@ class EnquiryAssignmentService {
       }
     }
 
-    const activeTrip = await client.trip.findFirst({
+    const activeTrips = await client.trip.findMany({
       where: {
         driver_id: Number(driverId),
         status: { in: ACTIVE_TRIP_STATUSES },
@@ -504,8 +520,14 @@ class EnquiryAssignmentService {
       select: { trip_id: true, trip_number: true, trip_date: true, status: true },
     });
 
-// Same calendar-day rule as the vehicle check.
-    if (activeTrip && activeTrip.trip_date) {
+    for (const activeTrip of activeTrips) {
+      if (!activeTrip.trip_date) {
+        throw new ConflictError({
+          message:
+            `This driver is already on active trip ${activeTrip.trip_number}, ` +
+            'which has no schedulable date. Resolve that trip before assigning it here.',
+        });
+      }
       const tw = tripWindow(activeTrip.trip_date);
       if (rangesOverlap(start, end, tw.start, tw.end)) {
         throw new ConflictError({
