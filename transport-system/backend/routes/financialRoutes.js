@@ -140,17 +140,17 @@ router.get('/payments-received', protect, adminOnly, async (req, res) => {
         in: ['CUSTOMER_PAYMENT', 'CLIENT_PAYMENT']
       }
     });
-    
+
     const rows = Array.isArray(transactions) ? transactions : (transactions.rows || []);
     const totalReceived = rows.reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0);
-    
-    res.json({ 
-      success: true, 
-      data: { 
-        payments: rows, 
+
+    res.json({
+      success: true,
+      data: {
+        payments: rows,
         totalReceived,
-        pagination: transactions.pagination 
-      } 
+        pagination: transactions.pagination
+      }
     });
   } catch (error) {
     console.error('Get payments received error:', error);
@@ -170,9 +170,9 @@ router.get('/advances', protect, adminOnly, async (req, res) => {
         in: ['DRIVER_ADVANCE', 'OWNER_ADVANCE', 'FUEL_ADVANCE']
       }
     });
-    
+
     const rows = Array.isArray(transactions) ? transactions : (transactions.rows || []);
-    
+
     // Calculate summary
     const summary = {
       totalDriverAdvance: 0,
@@ -180,7 +180,7 @@ router.get('/advances', protect, adminOnly, async (req, res) => {
       totalOwnerAdvance: 0,
       totalAll: 0
     };
-    
+
     rows.forEach(tx => {
       const amount = Number(tx.amount) || 0;
       summary.totalAll += amount;
@@ -192,7 +192,7 @@ router.get('/advances', protect, adminOnly, async (req, res) => {
         summary.totalOwnerAdvance += amount;
       }
     });
-    
+
     res.json({ success: true, data: { advances: rows, summary, pagination: transactions.pagination } });
   } catch (error) {
     console.error('Get advances error:', error);
@@ -212,16 +212,16 @@ router.get('/settlements', protect, adminOnly, async (req, res) => {
         in: ['DRIVER_SETTLEMENT', 'OWNER_SETTLEMENT']
       }
     });
-    
+
     const rows = Array.isArray(transactions) ? transactions : (transactions.rows || []);
-    
+
     // Calculate summary
     const summary = {
       totalDriverSettlement: 0,
       totalOwnerSettlement: 0,
       totalAll: 0
     };
-    
+
     rows.forEach(tx => {
       const amount = Number(tx.amount) || 0;
       summary.totalAll += amount;
@@ -231,7 +231,7 @@ router.get('/settlements', protect, adminOnly, async (req, res) => {
         summary.totalOwnerSettlement += amount;
       }
     });
-    
+
     res.json({ success: true, data: { settlements: rows, summary, pagination: transactions.pagination } });
   } catch (error) {
     console.error('Get settlements error:', error);

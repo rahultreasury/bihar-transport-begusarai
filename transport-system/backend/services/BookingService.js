@@ -453,10 +453,10 @@ const bookingResult = await prisma.$transaction(async (tx) => {
 
       return { ok: true };
     });
- 
+
     // Provision the operational trip for this booking (idempotent).
     await this.tripProvisioningService.ensureTripForBooking(bookingId);
- 
+
     return {
       ok: result.ok,
       status: 'confirmed',
@@ -782,12 +782,12 @@ const bookingResult = await prisma.$transaction(async (tx) => {
 
       return { invoice_number: invoiceNumber };
     });
- 
+
     // Provision the operational trip for this booking (idempotent).
     // This creates the Trip record and links it to the booking, enabling
     // the Vehicle Hire workflow and operational lifecycle.
     await this.tripProvisioningService.ensureTripForBooking(bookingId);
- 
+
     if (result.alreadyAccepted) {
       return {
         ok: true,
@@ -798,7 +798,7 @@ const bookingResult = await prisma.$transaction(async (tx) => {
         confirmation_source: 'CUSTOMER',
       };
     }
- 
+
     return {
       ok: true,
       quote_status: 'ACCEPTED',

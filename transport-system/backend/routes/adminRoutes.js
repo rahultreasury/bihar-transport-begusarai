@@ -72,33 +72,86 @@ const getDocumentStatusWhere = (documentStatus) => {
   const today = new Date();
   const expiringAt = new Date(today);
   expiringAt.setDate(today.getDate() + 30);
-  // Expiry fields are stored as strings in TransportVehicle, so use ISO
-  // strings for Prisma's StringFilter comparisons.
-  const todayValue = today.toISOString();
-  const expiringAtValue = expiringAt.toISOString();
+  // Expiry fields are stored as strings in TransportVehicle. Compare on the
+  // date part only so both "YYYY-MM-DD" and full ISO timestamps behave the
+  // same way.
+  const todayValue = today.toISOString().slice(0, 10);
+  const expiringAtValue = expiringAt.toISOString().slice(0, 10);
+
+  // These are the documents the hire gate treats as critical. National
+  // permit is conditional: it only counts when the vehicle actually holds
+  // one (an intra-state truck is not required to have it).
+  const CRITICAL_EXPIRY_FIELDS = ['insurance_expiry', 'fitness_expiry', 'permit_expiry'];
+
+  const after = (field, value) => ({
+    AND: [
+      { [field]: { not: null } },
+      { [field]: { not: '' } },
+      { [field]: { gt: value } },
+    ],
+  });
+  const onOrBefore = (field, value) => ({
+    AND: [
+      { [field]: { not: null } },
+      { [field]: { not: '' } },
+      { [field]: { lte: value } },
+    ],
+  });
+  const between = (field, from, to) => ({
+    AND: [
+      { [field]: { not: null } },
+      { [field]: { not: '' } },
+      { [field]: { gt: from } },
+      { [field]: { lte: to } },
+    ],
+  });
+  const isMissing = (field) => ({
+    OR: [{ [field]: null }, { [field]: '' }],
+  });
+  const nationalPermitHeld = {
+    AND: [
+      { national_permit_number: { not: null } },
+      { national_permit_number: { not: '' } },
+    ],
+  };
 
   if (documentStatus === 'valid') {
     return {
       AND: [
-        { insurance_expiry: { gt: todayValue } },
-        { permit_expiry: { gt: todayValue } },
+        ...CRITICAL_EXPIRY_FIELDS.map((field) => after(field, expiringAtValue)),
+        {
+          OR: [
+            { national_permit_number: null },
+            { national_permit_number: '' },
+            {
+              AND: [
+                { national_permit_expiry: { not: null } },
+                { national_permit_expiry: { not: '' } },
+                { national_permit_expiry: { gt: expiringAtValue } },
+              ],
+            },
+          ],
+        },
       ],
     };
   }
 
   if (documentStatus === 'expiring') {
     return {
-      OR: [
+      AND: [
+        // Every critical document must currently be valid (not expired and
+        // not missing) for the vehicle to be classified as "expiring".
+        ...CRITICAL_EXPIRY_FIELDS.map((field) => after(field, todayValue)),
         {
-          AND: [
-            { insurance_expiry: { gt: todayValue } },
-            { insurance_expiry: { lte: expiringAtValue } },
-          ],
-        },
-        {
-          AND: [
-            { permit_expiry: { gt: todayValue } },
-            { permit_expiry: { lte: expiringAtValue } },
+          OR: [
+            ...CRITICAL_EXPIRY_FIELDS.map((field) => between(field, todayValue, expiringAtValue)),
+            {
+              AND: [
+                nationalPermitHeld,
+                { national_permit_expiry: { gt: todayValue } },
+                { national_permit_expiry: { lte: expiringAtValue } },
+              ],
+            },
           ],
         },
       ],
@@ -108,13 +161,99 @@ const getDocumentStatusWhere = (documentStatus) => {
   if (documentStatus === 'expired') {
     return {
       OR: [
-        { insurance_expiry: { lte: todayValue } },
-        { permit_expiry: { lte: todayValue } },
+        ...CRITICAL_EXPIRY_FIELDS.map((field) => onOrBefore(field, todayValue)),
+        {
+          AND: [
+            nationalPermitHeld,
+            { national_permit_expiry: { not: null } },
+            { national_permit_expiry: { not: '' } },
+            { national_permit_expiry: { lte: todayValue } },
+          ],
+        },
+      ],
+    };
+  }
+
+  if (documentStatus === 'missing') {
+    return {
+      OR: [
+        ...CRITICAL_EXPIRY_FIELDS.map((field) => isMissing(field)),
+        {
+          AND: [
+            nationalPermitHeld,
+            { OR: [{ national_permit_expiry: null }, { national_permit_expiry: '' }] },
+          ],
+        },
       ],
     };
   }
 
   return null;
+};
+
+const CRITICAL_DOCUMENTS = [
+  { key: 'insurance', numberField: 'insurance_number', expiryField: 'insurance_expiry', label: 'Insurance' },
+  { key: 'fitness', numberField: 'fitness_number', expiryField: 'fitness_expiry', label: 'Fitness' },
+  { key: 'permit', numberField: 'permit_number', expiryField: 'permit_expiry', label: 'Permit' },
+];
+
+/**
+ * Compute the per-document state and the aggregate status for one vehicle.
+ * Returns: valid | expiring | expired | missing.
+ * National permit is conditional on the vehicle holding one.
+ */
+const computeDocumentStatus = (vehicle, now = new Date()) => {
+  if (!vehicle) return { status: 'missing', documents: [] };
+
+  const todayValue = now.toISOString().slice(0, 10);
+  const expiringAt = new Date(now);
+  expiringAt.setDate(now.getDate() + 30);
+  const expiringAtValue = expiringAt.toISOString().slice(0, 10);
+
+  const documents = CRITICAL_DOCUMENTS.map((doc) => {
+    const expiry = vehicle[doc.expiryField] ? String(vehicle[doc.expiryField]).slice(0, 10) : null;
+    let status = 'missing';
+    if (expiry) {
+      if (expiry <= todayValue) status = 'expired';
+      else if (expiry <= expiringAtValue) status = 'expiring';
+      else status = 'valid';
+    }
+    return {
+      key: doc.key,
+      label: doc.label,
+      document_number: vehicle[doc.numberField] || null,
+      expiry_date: expiry,
+      status,
+    };
+  });
+
+  // Conditional national permit: only evaluated when a number or expiry exists.
+  if (vehicle.national_permit_number || vehicle.national_permit_expiry) {
+    const expiry = vehicle.national_permit_expiry
+      ? String(vehicle.national_permit_expiry).slice(0, 10)
+      : null;
+    let status = 'missing';
+    if (expiry) {
+      if (expiry <= todayValue) status = 'expired';
+      else if (expiry <= expiringAtValue) status = 'expiring';
+      else status = 'valid';
+    }
+    documents.push({
+      key: 'national_permit',
+      label: 'National Permit',
+      document_number: vehicle.national_permit_number || null,
+      expiry_date: expiry,
+      status,
+    });
+  }
+
+  const rank = { missing: 4, expired: 3, expiring: 2, valid: 1 };
+  const worst = documents.reduce(
+    (acc, doc) => (rank[doc.status] > rank[acc] ? doc.status : acc),
+    'valid'
+  );
+
+  return { status: worst, documents };
 };
 
 const parsePositiveInt = (value, fallback = null) => {
@@ -124,10 +263,47 @@ const parsePositiveInt = (value, fallback = null) => {
 
 const mapDomainErrorToHttp = (err, res) => {
   if (err?.name === 'ValidationError' || err?.code === 'VALIDATION_ERROR') {
-    return res.status(400).json({ success: false, message: err?.message || 'Validation failed' });
+    return res.status(400).json({ success: false, message: err?.message || 'Validation failed', errorCode: err?.code });
   }
   if (err?.name === 'NotFoundError' || err?.code === 'NOT_FOUND') {
-    return res.status(404).json({ success: false, message: err?.message || 'Not found' });
+    return res.status(404).json({ success: false, message: err?.message || 'Not found', errorCode: err?.code });
+  }
+  if (['DRIVER_NOT_FOUND', 'VEHICLE_NOT_FOUND', 'VEHICLE_OWNER_NOT_FOUND'].includes(err?.code)) {
+    return res.status(404).json({ success: false, message: err?.message || 'Not found', errorCode: err?.code });
+  }
+  if ([
+    'VEHICLE_ALREADY_EXISTS',
+    'DRIVER_ALREADY_EXISTS',
+    'DRIVER_LICENSE_EXISTS',
+    'DRIVER_OWNER_MISMATCH',
+    'DRIVER_PARTNER_MISMATCH',
+    'DRIVER_HAS_ACTIVE_TRIP',
+    'DRIVER_INACTIVE',
+    'VEHICLE_ALREADY_ASSIGNED',
+    'VEHICLE_NOT_ASSIGNABLE',
+    'VEHICLE_OWNER_MISMATCH',
+    'VEHICLE_DRIVER_CONFLICT',
+  ].includes(err?.code)) {
+    return res.status(409).json({
+      success: false,
+      message: err?.message || 'Conflict',
+      errorCode: err?.code,
+      ...(err?.data ? { data: err.data } : {}),
+    });
+  }
+  if (err?.code === 'P2002') {
+    const target = Array.isArray(err.meta?.target) ? err.meta.target : [];
+    if (target.includes('vehicle_number')) {
+      return res.status(409).json({
+        success: false,
+        message: 'A vehicle with this number already exists',
+        errorCode: 'VEHICLE_ALREADY_EXISTS',
+      });
+    }
+    return res.status(409).json({
+      success: false,
+      message: 'Could not complete the operation due to a conflicting unique value.',
+    });
   }
   return res.status(500).json({ success: false, message: 'Internal server error' });
 };
@@ -478,8 +654,11 @@ router.get('/vehicles/:id', protect, async (req, res) => {
     }
 
     // Flatten the response
+    const documentState = computeDocumentStatus(vehicle);
     const response = {
       ...vehicle,
+      document_status: documentState.status,
+      documents: documentState.documents,
       owner_name: vehicle.owner?.owner_name ?? null,
       owner_phone: vehicle.owner?.mobile ?? null,
       driver_name: vehicle.driver ? `${vehicle.driver.user.first_name} ${vehicle.driver.user.last_name}` : null,
@@ -545,7 +724,7 @@ router.get('/vehicles', protect, async (req, res) => {
     const documentStatus = String(req.query.document_status || req.query.doc_status || '').trim().toLowerCase();
 
     const allowedStatuses = ['available', 'on_trip', 'assigned', 'maintenance', 'inactive'];
-    const allowedDocumentStatuses = ['valid', 'expiring', 'expired'];
+    const allowedDocumentStatuses = ['valid', 'expiring', 'expired', 'missing'];
     if (status && !allowedStatuses.includes(status)) {
       return res.status(400).json({ success: false, message: `Invalid vehicle status: ${status}` });
     }
@@ -638,6 +817,7 @@ router.get('/vehicles', protect, async (req, res) => {
     // Flatten Prisma result to match the existing admin API response.
     const flattened = vehicles.map((v) => {
       const driver = v.driver;
+      const documentState = computeDocumentStatus(v);
       return {
         vehicle_id: v.vehicle_id,
         driver_id: v.driver_id,
@@ -658,6 +838,14 @@ router.get('/vehicles', protect, async (req, res) => {
         permit_expiry: v.permit_expiry,
         pollution_certificate: v.pollution_certificate,
         pollution_expiry: v.pollution_expiry,
+        tax_number: v.tax_number,
+        tax_expiry: v.tax_expiry,
+        fitness_number: v.fitness_number,
+        fitness_expiry: v.fitness_expiry,
+        national_permit_number: v.national_permit_number,
+        national_permit_expiry: v.national_permit_expiry,
+        document_status: documentState.status,
+        documents: documentState.documents,
         is_available: v.is_available,
         is_verified: v.is_verified,
         current_status: v.current_status,
@@ -1129,10 +1317,7 @@ try {
   if (error.code === 'VEHICLE_ALREADY_EXISTS') {
     return res.status(409).json({ success: false, message: error.message, data: error.data });
   }
-  if (error.message.includes('required') || error.message.includes('Invalid')) {
-    return res.status(400).json({ success: false, message: error.message });
-  }
-  res.status(500).json({ success: false, message: error.message || 'Server error' });
+  return mapDomainErrorToHttp(error, res);
 }
 });
 
@@ -1175,18 +1360,11 @@ router.put('/vehicles/:id', protect, async (req, res) => {
       return res.status(409).json({
         success: false,
         message: error.message || 'Vehicle number already exists',
+        errorCode: error.code,
+        ...(error.data ? { data: error.data } : {}),
       });
     }
-    if (error.code === 'VALIDATION_ERROR' || error.message.includes('Invalid') || error.message.includes('must be')) {
-      return res.status(400).json({
-        success: false,
-        message: error.message,
-      });
-    }
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-    });
+    return mapDomainErrorToHttp(error, res);
   }
 });
 
@@ -1222,7 +1400,7 @@ router.post('/vehicles/:id/assign-driver', protect, async (req, res) => {
     if (error.code === 'NOT_FOUND') {
       return res.status(404).json({ success: false, message: error.message || 'Vehicle not found' });
     }
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
+    return mapDomainErrorToHttp(error, res);
   }
 });
 
@@ -1252,7 +1430,7 @@ router.post('/vehicles/:id/remove-driver', protect, async (req, res) => {
     if (error.code === 'NOT_FOUND') {
       return res.status(404).json({ success: false, message: error.message || 'Vehicle not found' });
     }
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
+    return mapDomainErrorToHttp(error, res);
   }
 });
 

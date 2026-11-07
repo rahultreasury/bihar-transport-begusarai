@@ -78,14 +78,14 @@ function readTripId(req, res) {
 /**
  * Convert the authenticated req.user (from JWT) into the principal format
  * expected by TripDeliveryService.getDelivery and similar methods.
- * 
+ *
  * The service expects principal with:
  * - {kind: 'admin', role} for admin/super_admin/operator
  * - {kind: 'customer', userId} for customer role
  * - {kind: 'driver', driverId} for driver role (resolved from user_id)
  * - {kind: 'partner', partnerId} for partner role
  * - {kind: 'owner', ownerId} for partner/owner role
- * 
+ *
  * This function resolves the actual profile (driver/partner) from the database
  * rather than relying solely on the role field, since the role field may not
  * accurately reflect the user's current profile.

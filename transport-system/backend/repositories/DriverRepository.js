@@ -7,6 +7,7 @@
 
 const prismaModule = require('../config/prisma');
 const driverOwnerGuard = require('../services/driverOwnerGuard');
+const { normalizeMobile, normalizeIdentifier, parsePagination } = require('../utils/resourceValidation');
 
 // Lazy prisma accessor — keeps the binding fresh so tests can swap
 // `config/prisma.prisma` for a stub without reloading this module.
@@ -180,9 +181,90 @@ class DriverRepository {
    */
   async findByMobile(mobile, tx = null) {
     const client = tx || db();
+    const canonical = normalizeMobile(mobile);
+    if (!canonical) return null;
+
+    // Compare on the canonical 10-digit form so a stored value written by an
+    // older path ("+91 98765 43210") still blocks a duplicate registration.
+    // The raw query is static SQL (no user input interpolated into SQL text),
+    // so it stays parameterised and injection-safe.
+    if (typeof client.$queryRaw === 'function') {
+      const rows = await client.$queryRaw`
+        SELECT *
+        FROM drivers
+        WHERE (
+          CASE
+            WHEN length(regexp_replace(COALESCE(mobile, ''), '[^0-9]', '', 'g')) = 12
+             AND left(regexp_replace(COALESCE(mobile, ''), '[^0-9]', '', 'g'), 2) = '91'
+              THEN substr(regexp_replace(COALESCE(mobile, ''), '[^0-9]', '', 'g'), 3)
+            WHEN length(regexp_replace(COALESCE(mobile, ''), '[^0-9]', '', 'g')) = 11
+             AND left(regexp_replace(COALESCE(mobile, ''), '[^0-9]', '', 'g'), 1) = '0'
+              THEN substr(regexp_replace(COALESCE(mobile, ''), '[^0-9]', '', 'g'), 2)
+            ELSE regexp_replace(COALESCE(mobile, ''), '[^0-9]', '', 'g')
+          END
+        ) = ${canonical}
+        ORDER BY driver_id ASC
+        LIMIT 1
+      `;
+      return rows[0] || null;
+    }
+
     return await client.driver.findFirst({
-      where: { mobile: mobile },
+      where: { mobile: canonical },
     });
+  }
+
+  /**
+   * Find a driver by licence number, optionally excluding one driver row.
+   * Licence numbers are compared in canonical form (uppercase, separators
+   * removed) so "BR01-2020-458796" and "br012020458796" collide correctly.
+   */
+  async findByLicenseNumber(licenseNumber, excludeDriverId = null, tx = null) {
+    const client = tx || db();
+    const canonical = normalizeIdentifier(licenseNumber);
+    if (!canonical) return null;
+    const excludeId = Number.isInteger(Number(excludeDriverId))
+      ? Number(excludeDriverId)
+      : -1;
+
+    if (typeof client.$queryRaw === 'function') {
+      const rows = await client.$queryRaw`
+        SELECT *
+        FROM drivers
+        WHERE driver_id <> ${excludeId}
+          AND license_number IS NOT NULL
+          AND regexp_replace(UPPER(license_number), '[^A-Z0-9]', '', 'g') = ${canonical}
+        ORDER BY driver_id ASC
+        LIMIT 1
+      `;
+      return rows[0] || null;
+    }
+
+    return await client.driver.findFirst({
+      where: {
+        driver_id: { not: excludeId },
+        license_number: { equals: canonical, mode: 'insensitive' },
+      },
+    });
+  }
+
+  /**
+   * True when the driver has at least one operationally active trip.
+   * Uses the authoritative operational-trip definition so the answer matches
+   * the dashboard "on trip" count and the list filters.
+   */
+  async hasOperationalActiveTrips(driverId, tx = null) {
+    const client = tx || db();
+    if (!client.trip || typeof client.trip.findFirst !== 'function') return false;
+    const { getOperationalActiveTripWhere } = require('../utils/operationalTripStatus');
+    const activeTrip = await client.trip.findFirst({
+      where: {
+        driver_id: Number(driverId),
+        ...getOperationalActiveTripWhere(),
+      },
+      select: { trip_id: true },
+    });
+    return Boolean(activeTrip);
   }
 
   /**
@@ -211,9 +293,10 @@ class DriverRepository {
     let effectiveSortBy = sortBy || sort_by || 'created_at';
     let effectiveSortOrder = sortOrder || sort_order || 'desc';
 
-    const parsedPage = parseInt(page) || 1;
-    const take = Math.max(1, parseInt(limit) || 20);
-    const skip = (parsedPage - 1) * take;
+    const { page: parsedPage, limit: take, skip } = parsePagination({ page, limit }, {
+      defaultLimit: 20,
+      maxLimit: 100,
+    });
 
     const { getDriverWithOperationalActiveTripsWhere } = require('../utils/operationalTripStatus');
     const operationalActiveTripWhere = getDriverWithOperationalActiveTripsWhere();
@@ -366,9 +449,13 @@ db().driver.findMany({
               },
             },
             // Include the first operational active trip's vehicle for drivers
-            // who have no profile vehicle but have an active trip with a vehicle
+            // who have no profile vehicle but have an active trip with a vehicle.
+            // NOTE: `operationalActiveTripWhere` is a Driver-level where clause
+            // ({ trips: { some: ... } }). The nested `include.trips.where` needs
+            // the inner TripWhereInput, otherwise Prisma rejects it with
+            // "Unknown argument 'trips'".
             trips: {
-              where: operationalActiveTripWhere,
+              where: operationalActiveTripWhere.trips.some,
               take: 1,
               orderBy: { created_at: 'desc' },
               select: {
@@ -403,7 +490,7 @@ db().driver.findMany({
 return {
       drivers: result.drivers,
       pagination: {
-        page: parseInt(page),
+        page: parsedPage,
         limit: take,
         total: result.total,
         pages: Math.ceil(result.total / take),
@@ -428,8 +515,10 @@ return {
       onlyAvailable = false,
     } = filters;
 
-    const skip = (page - 1) * limit;
-    const take = parseInt(limit);
+    const { page: parsedPage, limit: take, skip } = parsePagination({ page, limit }, {
+      defaultLimit: 20,
+      maxLimit: 100,
+    });
 
     const where = {};
 
@@ -496,7 +585,7 @@ return {
     return {
       drivers: result.drivers,
       pagination: {
-        page: parseInt(page),
+        page: parsedPage,
         limit: take,
         total: result.total,
         pages: Math.ceil(result.total / take),
@@ -528,8 +617,10 @@ return {
       min_rating = 0,
     } = filters;
 
-    const skip = (page - 1) * limit;
-    const take = parseInt(limit);
+    const { page: parsedPage, limit: take, skip } = parsePagination({ page, limit }, {
+      defaultLimit: 20,
+      maxLimit: 100,
+    });
 
     const where = {};
 
@@ -717,7 +808,7 @@ const drivers = result.drivers.map((d) => {
     return {
       drivers,
       pagination: {
-        page: parseInt(page),
+        page: parsedPage,
         limit: take,
         total: result.total,
         pages: Math.ceil(result.total / take),
@@ -838,7 +929,10 @@ const drivers = result.drivers.map((d) => {
    */
   async getTrips(driverId, filters = {}) {
     const { page = 1, limit = 20, status = '' } = filters;
-    const skip = (page - 1) * limit;
+    const { page: parsedPage, limit: take, skip } = parsePagination({ page, limit }, {
+      defaultLimit: 20,
+      maxLimit: 100,
+    });
 
     const where = { driver_id: driverId };
     if (status) {
@@ -858,7 +952,7 @@ const drivers = result.drivers.map((d) => {
         },
         orderBy: { created_at: 'desc' },
         skip,
-        take: parseInt(limit),
+        take,
       }),
       db().booking.count({ where }),
     ]);
@@ -885,10 +979,10 @@ const drivers = result.drivers.map((d) => {
       revenue: revenueAgg._sum.final_price || 0,
       totalDistance: distanceAgg._sum.estimated_distance_km || 0,
       pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
+        page: parsedPage,
+        limit: take,
         total,
-        pages: Math.ceil(total / parseInt(limit)),
+        pages: Math.ceil(total / take),
       },
     };
   }
@@ -1012,14 +1106,17 @@ const drivers = result.drivers.map((d) => {
    */
   async getTransactions(driverId, filters = {}) {
     const { page = 1, limit = 50 } = filters;
-    const skip = (page - 1) * limit;
+    const { page: parsedPage, limit: take, skip } = parsePagination({ page, limit }, {
+      defaultLimit: 50,
+      maxLimit: 100,
+    });
 
     const [transactions, total] = await Promise.all([
       db().driverTransaction.findMany({
         where: { driver_id: driverId },
         orderBy: { transaction_date: 'desc' },
         skip,
-        take: parseInt(limit),
+        take,
       }),
       db().driverTransaction.count({ where: { driver_id: driverId } }),
     ]);
@@ -1048,10 +1145,10 @@ const drivers = result.drivers.map((d) => {
         currentBalance: driver?.current_balance || 0,
       },
       pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
+        page: parsedPage,
+        limit: take,
         total,
-        pages: Math.ceil(total / parseInt(limit)),
+        pages: Math.ceil(total / take),
       },
     };
   }

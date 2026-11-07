@@ -641,7 +641,7 @@ class CanonicalFinancialService {
         }
         // Today's payments (advances + settlements paid out)
         if (this._isLiveMoney(tx) &&
-            (tx.transaction_type === 'DRIVER_ADVANCE' || tx.transaction_type === 'OWNER_ADVANCE' || 
+            (tx.transaction_type === 'DRIVER_ADVANCE' || tx.transaction_type === 'OWNER_ADVANCE' ||
              tx.transaction_type === 'FUEL_ADVANCE' || tx.transaction_type === 'DRIVER_SETTLEMENT' ||
              tx.transaction_type === 'OWNER_SETTLEMENT') &&
             tx.transaction_date &&

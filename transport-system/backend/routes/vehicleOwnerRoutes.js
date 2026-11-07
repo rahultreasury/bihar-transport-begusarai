@@ -11,6 +11,7 @@ const VehicleOwnerService = require('../services/VehicleOwnerService');
 const VendorLedgerService = require('../services/VendorLedgerService');
 const PartnerService = require('../services/PartnerService');
 const ConnectionService = require('../services/ConnectionService');
+const { normalizeMobile, isValidMobile } = require('../utils/resourceValidation');
 
 const vehicleOwnerService = new VehicleOwnerService();
 const vendorLedgerService = new VendorLedgerService();
@@ -42,8 +43,46 @@ const handleError = (res, error, defaultMsg = 'Server error') => {
       errorCode: 'SERVICE_UNAVAILABLE',
     });
   }
-  if (error.code === 'VEHICLE_OWNER_ALREADY_EXISTS') {
-    return res.status(409).json({ success: false, message: error.message, data: error.data });
+
+  const validationCodes = ['VALIDATION_ERROR', 'NO_RESOURCES'];
+  const notFoundCodes = [
+    'VEHICLE_OWNER_NOT_FOUND',
+    'VEHICLE_NOT_FOUND',
+    'DRIVER_NOT_FOUND',
+    'PARTNER_NOT_FOUND',
+  ];
+  const conflictCodes = [
+    'VEHICLE_OWNER_ALREADY_EXISTS',
+    'VEHICLE_OWNER_HAS_DEPENDENCIES',
+    'VEHICLE_ALREADY_EXISTS',
+    'DRIVER_ALREADY_EXISTS',
+    'DRIVER_LICENSE_EXISTS',
+    'DRIVER_OWNER_MISMATCH',
+    'DRIVER_PARTNER_MISMATCH',
+    'DRIVER_INACTIVE',
+    'DRIVER_HAS_ACTIVE_TRIP',
+    'VEHICLE_NOT_ASSIGNABLE',
+    'VEHICLE_ALREADY_ASSIGNED',
+  ];
+
+  if (validationCodes.includes(error.code)) {
+    return res.status(400).json({
+      success: false,
+      message: error.message || 'Validation failed',
+      errorCode: error.code,
+      ...(error.data ? { data: error.data } : {}),
+    });
+  }
+  if (notFoundCodes.includes(error.code)) {
+    return res.status(404).json({ success: false, message: error.message || 'Not found', errorCode: error.code });
+  }
+  if (conflictCodes.includes(error.code)) {
+    return res.status(409).json({
+      success: false,
+      message: error.message || 'Conflict',
+      errorCode: error.code,
+      ...(error.data ? { data: error.data } : {}),
+    });
   }
   if (error.code === 'P2002') {
     // Prisma P2002 is a unique-constraint violation. The constraint that
@@ -53,7 +92,18 @@ const handleError = (res, error, defaultMsg = 'Server error') => {
     // collision and must NOT be misreported to the user as a duplicate mobile.
     const target = Array.isArray(error.meta?.target) ? error.meta.target : [];
     if (target.includes('mobile')) {
-      return res.status(409).json({ success: false, message: 'A vehicle owner with this mobile already exists' });
+      return res.status(409).json({
+        success: false,
+        message: 'A vehicle owner with this mobile already exists',
+        errorCode: 'VEHICLE_OWNER_ALREADY_EXISTS',
+      });
+    }
+    if (target.includes('vehicle_number')) {
+      return res.status(409).json({
+        success: false,
+        message: 'A vehicle with this number already exists',
+        errorCode: 'VEHICLE_ALREADY_EXISTS',
+      });
     }
     return res.status(500).json({
       success: false,
@@ -108,11 +158,15 @@ router.get('/:id', protect, adminCheck, async (req, res) => {
 // Create vehicle owner
 router.post('/', protect, adminCheck, [
   body('owner_name').trim().notEmpty().withMessage('Please enter the owner\'s name.'),
-  body('mobile').trim().notEmpty().withMessage('Phone number is required.')
-    .matches(/^[6-9]\d{9}$/).withMessage('Please enter a valid 10-digit phone number.'),
+  body('mobile').custom((value) => {
+    if (!isValidMobile(normalizeMobile(value))) {
+      throw new Error('Please enter a valid 10-digit phone number.');
+    }
+    return true;
+  }),
   body('city').trim().notEmpty().withMessage('City is required.'),
   body('owner_type').optional().isIn(['TRANSPORT_COMPANY', 'INDIVIDUAL_OWNER', 'DRIVER_OWNER']).withMessage('Valid owner type is required'),
-  body('driver_id').optional().isInt({ min: 1 }).withMessage('Valid driver ID is required'),
+  body('driver_id').optional({ values: 'falsy' }).isInt({ min: 1 }).withMessage('Valid driver ID is required'),
   body('driver_name').optional().trim().notEmpty().withMessage('Driver name is required'),
   body('license_number').optional().trim().notEmpty().withMessage('Driving licence number is required'),
 ], handleValidation, async (req, res) => {

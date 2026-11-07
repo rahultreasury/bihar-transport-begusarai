@@ -32,20 +32,47 @@ after(async () => {
 
 function skip() { return { skip: skipReason }; }
 
+
+/**
+ * Generate a valid Indian vehicle registration number.
+ * Format: BR + 2-digit RTO (01-99) + 1-2 letters (A-Z) + 4 digits
+ * e.g., BR01AB1234, BR09A1234, BR12CD5678
+ */
+function generateVehicleNumber(prefix, uniqueId) {
+  const numeric = String(uniqueId).replace(/\D/g, '').slice(-8).padStart(8, '0');
+  const rto = String(Number(numeric.slice(0, 2)) % 99 + 1).padStart(2, '0');
+  const seriesNum = Number(numeric.slice(2, 4)) % 676;
+  const series = String.fromCharCode(65 + Math.floor(seriesNum / 26)) + String.fromCharCode(65 + (seriesNum % 26));
+  const num = numeric.slice(4, 8);
+  return `BR${rto}${series}${num}`;
+}
+
+/**
+ * Generate a unique valid mobile number (10 digits, starting with 6-9).
+ */
+function generateMobile(uniqueId) {
+  const numeric = String(uniqueId).replace(/\D/g, '');
+  // Need 10 digits total: first digit 6-9 + 9 more digits
+  // Take last 10 digits, if fewer pad with zeros
+  const tenDigits = numeric.slice(-10).padStart(10, '0');
+  const firstDigit = String(6 + (Number(tenDigits[0]) % 4)); // 6,7,8,9
+  return firstDigit + tenDigits.slice(1);
+}
+
 async function seedInvoice() {
-  const d = `${process.pid}-${Date.now().toString(36)}`;
-  const owner = await prisma.vehicleOwner.create({ data: { owner_name: `SET Owner ${d}`, mobile: '9999999999', owner_type: 'TRANSPORT_COMPANY' } });
+  const uniqueId = `${process.pid}${Date.now()}${Math.floor(Math.random() * 1e8).toString().padStart(8, "0")}`;
+  const owner = await prisma.vehicleOwner.create({ data: { owner_name: `SET Owner ${uniqueId}`, mobile: generateMobile(uniqueId), owner_type: 'TRANSPORT_COMPANY' } });
   created.owners.push(owner.owner_id);
-  const vehicle = await prisma.transportVehicle.create({ data: { vehicle_number: `SET${d}`.slice(0,20), vehicle_type: 'TRUCK', owner_id: owner.owner_id } });
+  const vehicle = await prisma.transportVehicle.create({ data: { vehicle_number: generateVehicleNumber("SET", uniqueId), vehicle_type: 'TRUCK', owner_id: owner.owner_id } });
   created.vehicles.push(vehicle.vehicle_id);
-  const user = await prisma.user.create({ data: { first_name: 'SET', last_name: 'Cust', email: `set.${d}@example.test`, phone: String(Math.floor(Math.random()*1e10)).padStart(10,'0'), password_hash: 'x' } });
+  const user = await prisma.user.create({ data: { first_name: 'SET', last_name: 'Cust', email: `set.${uniqueId}@example.test`, phone: generateMobile(uniqueId + '1'), password_hash: 'x' } });
   created.users.push(user.user_id);
-  const driverUser = await prisma.user.create({ data: { first_name: 'SET', last_name: 'Drv', email: `setd.${d}@example.test`, phone: String(Math.floor(Math.random()*1e10)).padStart(10,'0'), password_hash: 'x' } });
+  const driverUser = await prisma.user.create({ data: { first_name: 'SET', last_name: 'Drv', email: `setd.${uniqueId}@example.test`, phone: generateMobile(uniqueId + '2'), password_hash: 'x' } });
   created.users.push(driverUser.user_id);
-  const driver = await prisma.driver.create({ data: { user_id: driverUser.user_id, driver_name: `SET Drv ${d}`, mobile: '7777777777', transport_owner_id: owner.owner_id } });
+  const driver = await prisma.driver.create({ data: { user_id: driverUser.user_id, driver_name: `SET Drv ${uniqueId}`, mobile: generateMobile(uniqueId + '3'), transport_owner_id: owner.owner_id } });
   created.drivers.push(driver.driver_id);
   const booking = await prisma.booking.create({ data: {
-    user_id: user.user_id, booking_number: `SET-BK-${d}`, booking_reference: `SET-BK-${d}`,
+    user_id: user.user_id, booking_number: `SET-BK-${uniqueId}`, booking_reference: `SET-BK-${uniqueId}`,
     driver_id: driver.driver_id, vehicle_id: vehicle.vehicle_id, vehicle_owner_id: owner.owner_id,
     pickup_location: 'A', drop_location: 'B', pickup_city: 'A', drop_city: 'B',
     pickup_state: 'Bihar', drop_state: 'Bihar', pickup_date: '2026-10-05', pickup_time: '10:00:00',
@@ -53,14 +80,14 @@ async function seedInvoice() {
   } });
   created.bookings.push(booking.booking_id);
   const trip = await prisma.trip.create({ data: {
-    trip_number: `SET-T-${d}`, source_type: 'ONLINE_BOOKING', booking_id: booking.booking_id, user_id: user.user_id,
+    trip_number: `SET-T-${uniqueId}`, source_type: 'ONLINE_BOOKING', booking_id: booking.booking_id, user_id: user.user_id,
     transport_owner_id: owner.owner_id, vehicle_id: vehicle.vehicle_id, driver_id: driver.driver_id,
     pickup_location: 'A', pickup_city: 'A', drop_location: 'B', drop_city: 'B',
     freight_amount: 50000, driver_payment: 1000, status: 'IN_TRANSIT',
   } });
   created.trips.push(trip.trip_id);
   const invoice = await prisma.invoice.create({ data: {
-    booking_id: booking.booking_id, trip_id: trip.trip_id, invoice_number: `SET-INV-${d}`,
+    booking_id: booking.booking_id, trip_id: trip.trip_id, invoice_number: `SET-INV-${uniqueId}`,
     final_price: 50000, grand_total: 50000, total_amount: 50000, status: 'GENERATED', payment_status: 'UNPAID',
   } });
   created.invoices.push(invoice.invoice_id);
