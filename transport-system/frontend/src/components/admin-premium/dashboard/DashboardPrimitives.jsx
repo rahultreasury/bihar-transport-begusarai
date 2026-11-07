@@ -351,22 +351,30 @@ export function DashboardMetricCard({
         ) : null}
 
         <div className={`min-w-0 ${compact ? 'pt-1.5' : 'pt-0.5 sm:pt-2.5'}`}>
-          <p
-            className={`font-extrabold uppercase leading-tight tracking-[0.015em] text-[#0B2B52] ${labelSize}`}
-          >
-            {label}
-          </p>
-          {layout !== 'financial' && caption ? (
+          <div className="flex min-w-0 items-start gap-2 flex-wrap">
             <p
-              className={`text-[#718096] ${
+              className={`font-extrabold uppercase leading-tight tracking-[0.015em] text-[#0B2B52] ${labelSize} flex-shrink-0`}
+            >
+              {label}
+            </p>
+            {layout !== 'financial' && caption ? (
+              <p className={`text-[#718096] ${
                 compact
                   ? 'mt-0 text-[11px] leading-tight sm:text-[11.5px]'
                   : 'mt-0.5 text-[11.5px] leading-snug sm:text-[12px]'
-              }`}
-            >
-              {caption}
-            </p>
-          ) : null}
+              } flex-shrink-0`}>
+                {caption}
+              </p>
+            ) : null}
+            {layout === 'operations' && status && !loading && !error ? (
+              <span
+                className={`mb-1 inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3 text-[12px] font-bold ${palette.pillBg} ${palette.pillText}`}
+              >
+                <span className={`h-[7px] w-[7px] rounded-full ${palette.dot}`} aria-hidden="true" />
+                {status}
+              </span>
+            ) : null}
+          </div>
         </div>
       </div>
 
@@ -413,7 +421,7 @@ export function DashboardMetricCard({
             )}
           </div>
 
-          {status && !loading && !error ? (
+          {layout !== 'operations' && status && !loading && !error ? (
             <span
               className={`mb-1 inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3 text-[12px] font-bold ${palette.pillBg} ${palette.pillText}`}
             >
@@ -525,8 +533,9 @@ export function DashboardHero({
     >
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_20%_0%,#FFFFFF_0%,#F5FAFF_48%,#EAF4FF_100%)]" />
 
-      {/* Desktop artwork: right-anchored, width capped so the truck stays clear
-          of the heading column while the bridge and skyline reach the edge. */}
+      {/* Desktop artwork: right-anchored at bottom, original proportions preserved.
+          No cropping - complete truck, map, bridge and landscape visible.
+          Radial gradient fills the area above the image naturally. */}
       <div className="pointer-events-none absolute inset-0 hidden xl:block">
         <img
           src="/assets/bihar-transport-operations-hero.webp"
@@ -537,7 +546,7 @@ export function DashboardHero({
           aria-hidden="true"
           loading="eager"
           decoding="async"
-          className="absolute bottom-0 right-0 h-auto w-[min(1166px,calc(100%_-_610px))] max-w-none"
+          className="absolute top-0 right-0 h-auto w-[min(1166px,calc(100%_-_610px))] max-w-none"
         />
       </div>
 

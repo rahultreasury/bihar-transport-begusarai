@@ -1512,6 +1512,12 @@ class FinancePostingService {
         },
       });
 
+      // Mark original transaction as REFUNDED so it's excluded from invoice reconciliation
+      await tx.financialTransaction.update({
+        where: { transaction_id: original.transaction_id },
+        data: { status: 'REFUNDED' },
+      });
+
       if (original.invoice_id) {
         await TripInvoiceService.reconcileInvoiceStatus({ prisma: tx, invoiceId: original.invoice_id, now });
       }

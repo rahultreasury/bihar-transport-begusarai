@@ -787,8 +787,8 @@ const handleReviewTrips = useCallback(() => {
     <AdminShell navItems={NAV_ITEMS} activeKey="bookings" onNav={(k) => {}}>
       <div className="space-y-6" ref={tableRef}>
         {/* Hero Header — compact premium composition matching reference screenshot 2 */}
-        <div className="relative overflow-hidden rounded-[16px] border border-slate-200/80 bg-gradient-to-r from-white via-white to-sky-50 shadow-[0_24px_50px_-38px_rgba(23,54,93,0.95)]">
-          <div className="absolute -right-8 -top-12 hidden lg:block h-[190px] w-[420px] opacity-90">
+        <div className="relative -mx-4 -mt-4 overflow-hidden rounded-[16px] border border-slate-200/80 bg-gradient-to-r from-white via-white to-sky-50 shadow-[0_24px_50px_-38px_rgba(23,54,93,0.95)] sm:-mx-6 lg:-mx-8 lg:-mt-5">
+          <div className="absolute -right-8 top-0 hidden lg:block h-[190px] w-[420px] opacity-90">
             <img
               src="/bihar-transport-hero.jpg"
               alt="Bihar Transport fleet illustration"

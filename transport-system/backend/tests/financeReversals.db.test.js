@@ -125,22 +125,19 @@ describe('REV DB', () => {
     const ctx = await seedInvoice();
     const posting = new FinancePostingService({ prisma });
 
-    // Create partial payment (PARTIALLY_PAID) first
-    await posting.recordCustomerReceipt({ amount: 25000, payment_method: 'cash', invoice_id: ctx.invoiceId }, ADMIN);
+    // Create two partial payments to make it PAID (25000 + 25000 = 50000)
+    const receipt1 = await posting.recordCustomerReceipt({ amount: 25000, payment_method: 'cash', invoice_id: ctx.invoiceId }, ADMIN);
     let invoice = await prisma.invoice.findUnique({ where: { invoice_id: ctx.invoiceId } });
     assert.equal(invoice.payment_status, 'PARTIALLY_PAID');
     assert.equal(invoice.paid_at, null, 'paid_at should be null when PARTIALLY_PAID');
 
-    // Full payment to make it PAID
-    await posting.recordCustomerReceipt({ amount: 25000, payment_method: 'cash', invoice_id: ctx.invoiceId }, ADMIN);
+    const receipt2 = await posting.recordCustomerReceipt({ amount: 25000, payment_method: 'cash', invoice_id: ctx.invoiceId }, ADMIN);
     invoice = await prisma.invoice.findUnique({ where: { invoice_id: ctx.invoiceId } });
     assert.equal(invoice.payment_status, 'PAID');
     assert.ok(invoice.paid_at, 'paid_at should be set when PAID');
 
-    // Partial reversal to trigger PARTIALLY_PAID
-    // We need to create another receipt then reverse it
-    const receipt = await posting.recordCustomerReceipt({ amount: 25000, payment_method: 'cash', invoice_id: ctx.invoiceId }, ADMIN);
-    const rev = await posting.reverseTransaction(receipt.transaction.transaction_id, { reason: 'partial reversal' }, ADMIN);
+    // Reverse the first receipt to trigger PARTIALLY_PAID
+    const rev = await posting.reverseTransaction(receipt1.transaction.transaction_id, { reason: 'partial reversal' }, ADMIN);
 
     invoice = await prisma.invoice.findUnique({ where: { invoice_id: ctx.invoiceId } });
     assert.equal(invoice.payment_status, 'PARTIALLY_PAID');
@@ -152,15 +149,13 @@ describe('REV DB', () => {
     const ctx = await seedInvoice();
     const posting = new FinancePostingService({ prisma });
 
-    // Create full payment (PAID)
-    await posting.recordCustomerReceipt({ amount: 50000, payment_method: 'cash', invoice_id: ctx.invoiceId }, ADMIN);
+    // Full payment to make it PAID
+    const receipt = await posting.recordCustomerReceipt({ amount: 50000, payment_method: 'cash', invoice_id: ctx.invoiceId }, ADMIN);
     let invoice = await prisma.invoice.findUnique({ where: { invoice_id: ctx.invoiceId } });
     assert.equal(invoice.payment_status, 'PAID');
     assert.ok(invoice.paid_at, 'paid_at should be set when PAID');
 
     // Full reversal to trigger UNPAID
-    // We need to create another receipt then reverse it
-    const receipt = await posting.recordCustomerReceipt({ amount: 50000, payment_method: 'cash', invoice_id: ctx.invoiceId }, ADMIN);
     await posting.reverseTransaction(receipt.transaction.transaction_id, { reason: 'full reversal' }, ADMIN);
 
     invoice = await prisma.invoice.findUnique({ where: { invoice_id: ctx.invoiceId } });

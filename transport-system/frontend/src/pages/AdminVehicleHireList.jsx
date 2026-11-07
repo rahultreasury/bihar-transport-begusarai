@@ -988,55 +988,57 @@ export default function AdminVehicleHireList() {
 
   /* ── RENDER ───────────────────────────────────────────────────────────── */
   return (
-    <AdminShell activeKey="vehicle-hire" workspace navItems={DEFAULT_NAV_ITEMS}>
-      <div className="bt-vh w-full min-w-0 px-4 pb-2 pt-3 sm:px-6 lg:px-8">
+    <AdminShell activeKey="vehicle-hire" navItems={DEFAULT_NAV_ITEMS} fullBleed>
+      <div className="bt-vh w-full min-w-0 px-4 sm:px-5 lg:px-6 xl:px-8 2xl:px-10 pb-4">
 
-        {/* ── Breadcrumb ─────────────────────────────────────────────────── */}
-        <nav aria-label="Breadcrumb" className="mb-1.5 flex items-center gap-1.5 text-[10.5px] text-[#7C8CA3]">
-          <button
-            type="button"
-            onClick={() => navigate('/admin')}
-            className="flex h-5 w-5 items-center justify-center rounded text-[#7C8CA3] transition-colors hover:bg-white hover:text-[#0B2B52]"
-            aria-label="Back to dashboard"
+        {/* ── HERO (with integrated breadcrumb) ────────────────────────────
+            Starts immediately below header. Breadcrumb positioned as overlay
+            in hero's upper area for zero gap. */}
+        <section className="relative mb-3 h-[120px] overflow-hidden rounded-[14px] bg-[#F6FAFF] sm:h-[128px] lg:h-[136px]">
+
+          {/* ── Breadcrumb overlay at top of hero ───────────────────────── */}
+          <nav
+            aria-label="Breadcrumb"
+            className="absolute top-2 left-4 right-4 z-20 flex items-center gap-1.5 text-[10px] text-[#7C8CA3] sm:top-2.5 sm:left-5 sm:right-5 lg:left-6 lg:right-6"
           >
-            <ArrowLeft className="h-3 w-3" strokeWidth={2} aria-hidden="true" />
-          </button>
-          <span>Operations</span>
-          <ChevronRight className="h-3 w-3 text-[#B6C2D2]" strokeWidth={2} aria-hidden="true" />
-          <span className="font-semibold text-[#0B2B52]">Vehicle Hire</span>
-        </nav>
-
-        {/* ── HERO ─────────────────────────────────────────────────────────
-            Full workspace width. The existing Order / Trip Master artwork is
-            right-anchored and fades into the page surface, so the heading keeps
-            a protected reading column at every desktop width. */}
-        <section className="relative mb-1 h-[148px] overflow-hidden rounded-[16px] bg-[#F6FAFF] sm:h-[156px]">
+            <button
+              type="button"
+              onClick={() => navigate('/admin')}
+              className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-[#7C8CA3] transition-colors hover:bg-white/70 hover:text-[#0B2B52]"
+              aria-label="Back to dashboard"
+            >
+              <ArrowLeft className="h-2.5 w-2.5" strokeWidth={2} aria-hidden="true" />
+            </button>
+            <span className="truncate bg-white/60 px-1.5 py-0.5 rounded text-[#7C8CA3]">Operations</span>
+            <ChevronRight className="h-2.5 w-2.5 shrink-0 text-[#B6C2D2]" strokeWidth={2} aria-hidden="true" />
+            <span className="font-semibold text-[#0B2B52] bg-white/60 px-1.5 py-0.5 rounded">Vehicle Hire</span>
+          </nav>
           <img
             src="/assets/bihar-transport-operations-hero.webp"
             srcSet="/assets/bihar-transport-operations-hero.webp 1x, /assets/bihar-transport-operations-hero@2x.webp 2x"
             alt=""
-            className="pointer-events-none absolute inset-0 h-full w-full max-w-none object-cover object-[58%_45%] opacity-30 sm:left-auto sm:right-0 sm:top-1/2 sm:h-full sm:w-[60%] sm:-translate-y-1/2 sm:object-[50%_45%] sm:opacity-100 lg:w-[62%] xl:w-[min(1166px,80%)]"
+            className="pointer-events-none absolute inset-0 h-full w-full max-w-none object-cover object-[50%_40%] opacity-25 sm:left-auto sm:right-0 sm:top-1/2 sm:h-full sm:w-[55%] sm:-translate-y-1/2 sm:object-[50%_40%] sm:opacity-90 lg:w-[58%] xl:w-[min(1000px,75%)]"
           />
-          <div className="pointer-events-none absolute inset-y-0 left-0 w-[94%] bg-gradient-to-r from-[#F8FBFE] via-[#F8FBFE]/95 to-transparent sm:w-[56%]" />
-          <div className="pointer-events-none absolute inset-y-0 right-0 w-[26%] bg-gradient-to-l from-[#F8FBFE]/80 via-[#F8FBFE]/20 to-transparent" />
+          <div className="pointer-events-none absolute inset-y-0 left-0 w-[94%] bg-gradient-to-r from-[#F8FBFE] via-[#F8FBFE]/95 to-transparent sm:w-[52%]" />
+          <div className="pointer-events-none absolute inset-y-0 right-0 w-[28%] bg-gradient-to-l from-[#F8FBFE]/80 via-[#F8FBFE]/20 to-transparent" />
           <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-[#F8FBFE] to-transparent" />
 
-          <div className="relative z-10 flex h-full items-center px-4 sm:px-6 lg:px-8">
+          <div className="relative z-10 flex h-full items-center px-2 sm:px-3 lg:px-4 xl:px-5">
             <div className="flex min-w-0 items-center gap-3 sm:gap-4">
               <Truck className="h-8 w-8 shrink-0 text-[#0B2B52] sm:h-10 sm:w-10" strokeWidth={1.6} aria-hidden="true" />
               <div className="min-w-0">
-                <h1 className="text-[30px] font-extrabold leading-none tracking-[-0.03em] text-[#0B2B52] sm:text-[36px] lg:text-[38px]">
+                <h1 className="text-[28px] font-extrabold leading-none tracking-[-0.03em] text-[#0B2B52] sm:text-[32px] lg:text-[36px] xl:text-[38px]">
                   Vehicle Hire
                 </h1>
-                <p className="mt-1.5 max-w-[280px] text-[11px] leading-snug text-[#5B6B82] sm:max-w-[320px] sm:text-[13px] lg:max-w-[380px] xl:max-w-[520px]">
+                <p className="mt-1 max-w-[300px] text-[11px] leading-snug text-[#5B6B82] sm:max-w-[350px] sm:text-[12px] lg:max-w-[420px] xl:max-w-[560px]">
                   Hire vehicles for confirmed orders. Manage contract and commission hiring in one place.
                 </p>
               </div>
             </div>
           </div>
 
-          <div className="absolute right-4 top-4 z-10 hidden items-start gap-5 lg:flex lg:right-8 lg:top-5">
-            <p className="text-right text-[17px] font-bold leading-[1.25] text-[#0B2B52] lg:text-[19px]">
+          <div className="absolute right-4 top-3 z-10 hidden items-start gap-4 lg:flex lg:right-6 lg:top-4">
+            <p className="text-right text-[15px] font-bold leading-[1.25] text-[#0B2B52] lg:text-[17px] xl:text-[19px]">
               Moving
               <br />
               Bihar Forward
@@ -1058,7 +1060,7 @@ export default function AdminVehicleHireList() {
         </section>
 
         {/* ── SIX KPI CARDS ──────────────────────────────────────────────── */}
-        <div className="mb-4 grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-6">
+        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
           {KPI_CARDS.map((card) => {
             const Icon = card.icon;
             const active = statusFilter === kpiFilter(card);
@@ -1070,28 +1072,28 @@ export default function AdminVehicleHireList() {
                 onClick={() => applyStatusFilter(kpiFilter(card))}
                 aria-pressed={active}
                 className={[
-                  'group flex h-[112px] min-w-0 flex-col justify-between rounded-[13px] border px-3 py-2.5 text-left transition-all duration-150 sm:h-[122px] sm:px-3.5 sm:py-3 xl:h-[128px]',
+                  'group flex h-[104px] min-w-0 flex-col justify-between rounded-[12px] border px-3 py-2.5 text-left transition-all duration-150 sm:h-[112px] sm:px-3.5 sm:py-3 md:h-[116px] lg:h-[120px] xl:h-[124px]',
                   card.bg,
                   card.border,
                   active ? 'ring-2 ring-[#1764E8]/15' : 'hover:-translate-y-0.5 hover:shadow-[0_10px_24px_-18px_rgba(16,43,76,0.35)]',
                 ].join(' ')}
               >
                 <div className="flex min-w-0 items-start gap-2 sm:gap-2.5">
-                  <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] sm:h-[33px] sm:w-[33px] sm:rounded-[9px] ${card.iconBg} ${card.iconColor}`}>
-                    <Icon className="h-4 w-4 sm:h-[17px] sm:w-[17px]" strokeWidth={2} aria-hidden="true" />
+                  <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-[7px] sm:h-[28px] sm:w-[28px] sm:rounded-[8px] ${card.iconBg} ${card.iconColor}`}>
+                    <Icon className="h-3.5 w-3.5 sm:h-[14px] sm:w-[14px]" strokeWidth={2} aria-hidden="true" />
                   </span>
                   <span className="min-w-0">
-                    <span className="block text-[11px] font-bold leading-tight text-[#0B2B52] sm:text-[12.5px]">
+                    <span className="block text-[10px] font-bold leading-tight text-[#0B2B52] sm:text-[11px] lg:text-[11.5px]">
                       {card.label}
                     </span>
-                    <span className="mt-0.5 block text-[8.5px] leading-tight text-[#7C8CA3] sm:text-[9.5px]">
+                    <span className="mt-0.5 block text-[8px] leading-tight text-[#7C8CA3] sm:text-[8.5px] lg:text-[9px]">
                       {card.sub}
                     </span>
                   </span>
                 </div>
 
                 <div className="flex items-end justify-between gap-2">
-                  <span className="block whitespace-nowrap text-[21px] font-extrabold leading-none tracking-[-0.03em] text-[#0B2B52] tabular-nums sm:text-[26px] xl:text-[27px]">
+                  <span className="block whitespace-nowrap text-[20px] font-extrabold leading-none tracking-[-0.03em] text-[#0B2B52] tabular-nums sm:text-[23px] md:text-[24px] lg:text-[25px] xl:text-[26px]">
                     {kpiValue(card.key)}
                   </span>
                   <span className={`hidden h-[20px] w-[20px] shrink-0 items-center justify-center rounded-full sm:flex ${card.iconBg} ${card.iconColor} transition-transform group-hover:translate-x-0.5`}>
@@ -1104,9 +1106,9 @@ export default function AdminVehicleHireList() {
         </div>
 
         {/* ── FILTER PANEL ───────────────────────────────────────────────── */}
-        <section className="mb-5 rounded-[14px] border border-[#E7EDF5] bg-white p-4 shadow-[0_1px_2px_rgba(16,43,76,0.04)]">
-          <div className="flex flex-wrap items-center gap-2.5">
-            <div className="relative w-full min-w-0 sm:w-[480px] sm:flex-none xl:w-[520px]">
+        <section className="mb-4 rounded-[12px] border border-[#E7EDF5] bg-white p-3 shadow-[0_1px_2px_rgba(16,43,76,0.04)]">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative w-full min-w-0 sm:w-[380px] md:w-[420px] lg:w-[460px] xl:w-[500px] flex-1 sm:flex-none">
               <Search
                 className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#94A3B8]"
                 strokeWidth={2}
@@ -1125,7 +1127,7 @@ export default function AdminVehicleHireList() {
               />
             </div>
 
-            <div className="relative w-full sm:w-[158px]">
+            <div className="relative w-full sm:w-[140px] md:w-[150px] lg:w-[155px]">
               <CalendarDays
                 className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#94A3B8]"
                 strokeWidth={2}
@@ -1144,7 +1146,7 @@ export default function AdminVehicleHireList() {
               />
             </div>
 
-            <div className="relative w-full sm:w-[158px]">
+            <div className="relative w-full sm:w-[140px] md:w-[150px] lg:w-[155px]">
               <select
                 value={statusFilter}
                 onChange={(event) => applyStatusFilter(event.target.value)}
@@ -1163,7 +1165,7 @@ export default function AdminVehicleHireList() {
               <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#94A3B8]" strokeWidth={2} aria-hidden="true" />
             </div>
 
-            <div className="relative w-full sm:w-[158px]">
+            <div className="relative w-full sm:w-[140px] md:w-[150px] lg:w-[155px]">
               <select
                 value={businessModel}
                 onChange={(event) => {
@@ -1180,7 +1182,7 @@ export default function AdminVehicleHireList() {
               <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#94A3B8]" strokeWidth={2} aria-hidden="true" />
             </div>
 
-            <div className="relative w-full sm:w-[158px]">
+            <div className="relative w-full sm:w-[140px] md:w-[150px] lg:w-[155px]">
               <select
                 value={vehicleType}
                 onChange={(event) => {
@@ -1211,7 +1213,7 @@ export default function AdminVehicleHireList() {
             </button>
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center gap-1.5">
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
             {STATUS_CHIPS.map((chip) => (
               <StatusChip
                 key={chip.key}
@@ -1227,7 +1229,7 @@ export default function AdminVehicleHireList() {
                 type="button"
                 onClick={handleExport}
                 disabled={exporting}
-                className="inline-flex h-[36px] flex-1 items-center justify-center gap-1.5 rounded-[8px] border border-[#DCE3ED] bg-white px-3.5 text-[11.5px] font-semibold text-[#334155] transition-colors hover:border-[#CBD5E1] hover:bg-[#F8FAFD] disabled:cursor-not-allowed disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1764E8]/25 sm:flex-none"
+                className="inline-flex h-[36px] flex-1 items-center justify-center gap-1.5 rounded-[8px] border border-[#DCE3ED] bg-white px-3 text-[11px] font-semibold text-[#334155] transition-colors hover:border-[#CBD5E1] hover:bg-[#F8FAFD] disabled:cursor-not-allowed disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1764E8]/25 sm:flex-none"
               >
                 {exporting ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} aria-hidden="true" />
@@ -1240,7 +1242,7 @@ export default function AdminVehicleHireList() {
               <button
                 type="button"
                 onClick={openHirePicker}
-                className="inline-flex h-[36px] flex-1 items-center justify-center gap-1.5 rounded-[9px] bg-[#0B2B52] px-4 text-[11.5px] font-semibold text-white shadow-[0_6px_16px_-10px_rgba(11,43,82,0.7)] transition-colors hover:bg-[#123A6B] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1764E8]/40 sm:flex-none"
+                className="inline-flex h-[36px] flex-1 items-center justify-center gap-1.5 rounded-[9px] bg-[#0B2B52] px-3.5 text-[11px] font-semibold text-white shadow-[0_6px_16px_-10px_rgba(11,43,82,0.7)] transition-colors hover:bg-[#123A6B] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1764E8]/40 sm:flex-none"
               >
                 <Truck className="h-3.5 w-3.5" strokeWidth={2} aria-hidden="true" />
                 Hire Vehicle
@@ -1268,7 +1270,7 @@ export default function AdminVehicleHireList() {
             )}
           />
         ) : (
-          <div className="overflow-hidden rounded-[14px] border border-[#E7EDF5] bg-white shadow-[0_1px_2px_rgba(16,43,76,0.04)]">
+          <div className="rounded-[12px] border border-[#E7EDF5] bg-white shadow-[0_1px_2px_rgba(16,43,76,0.04)]">
             <PremiumTable
               className="bt-vh-table"
               columns={columns}
@@ -1283,7 +1285,7 @@ export default function AdminVehicleHireList() {
             />
 
             {/* ── PAGINATION FOOTER ─────────────────────────────────────── */}
-            <div className="flex flex-col gap-3 border-t border-[#EDF1F7] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-2 border-t border-[#EDF1F7] px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-[10.5px] text-[#64748B]">
                 Showing <span className="font-semibold text-[#334155]">{startRecord}</span> to{' '}
                 <span className="font-semibold text-[#334155]">{endRecord}</span> of{' '}
