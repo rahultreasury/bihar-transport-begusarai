@@ -26,7 +26,7 @@ router.get('/available-jobs', protect, async (req, res) => {
       where: { user_id: req.user.user_id },
       select: { driver_id: true },
     });
-    
+
     if (!driver) {
       return res.status(403).json({
         success: false,
@@ -163,7 +163,7 @@ router.post('/accept-job/:bookingId', protect, async (req, res) => {
     const driver = await prisma.driver.findFirst({
       where: { user_id: req.user.user_id },
     });
-    
+
     if (!driver) {
       return res.status(403).json({
         success: false,
@@ -333,7 +333,7 @@ router.get('/my-jobs', protect, async (req, res) => {
       where: { user_id: req.user.user_id },
       select: { driver_id: true },
     });
-    
+
     if (!driver) {
       return res.status(403).json({
         success: false,
@@ -496,7 +496,7 @@ router.put('/update-status/:bookingId', protect, [
     const driver = await prisma.driver.findFirst({
       where: { user_id: req.user.user_id },
     });
-    
+
     if (!driver) {
       return res.status(403).json({
         success: false,
@@ -656,7 +656,7 @@ router.get('/my-vehicles', protect, async (req, res) => {
       where: { user_id: req.user.user_id },
       select: { driver_id: true },
     });
-    
+
     if (!driver) {
       return res.status(403).json({
         success: false,
@@ -716,7 +716,7 @@ router.post('/register-vehicle', protect, [
       where: { user_id: req.user.user_id },
       select: { driver_id: true },
     });
-    
+
     if (!driver) {
       return res.status(403).json({
         success: false,
@@ -724,7 +724,7 @@ router.post('/register-vehicle', protect, [
       });
     }
 
-    const { 
+    const {
       vehicle_number, vehicle_type, vehicle_name, capacity_kg, capacity_volume,
       vehicle_make, vehicle_model, manufacturing_year, registration_date,
       insurance_number, insurance_expiry, permit_number, permit_expiry,
@@ -798,7 +798,7 @@ router.get('/stats', protect, async (req, res) => {
     const driver = await prisma.driver.findFirst({
       where: { user_id: req.user.user_id },
     });
-    
+
     if (!driver) {
       return res.status(403).json({
         success: false,

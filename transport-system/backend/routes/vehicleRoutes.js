@@ -10,7 +10,7 @@ const { lookupVehicle, lookupStatus } = require('../controllers/vehicleLookupCon
 router.get('/lookup/status', protect, adminOnly, lookupStatus);
 router.get('/lookup', protect, adminOnly, lookupVehicle);
 
-// Search vehicle by registration number
+// Search vehicle by registration number (public - redacted)
 router.get('/search/:registrationNumber', async (req, res) => {
   try {
     const { registrationNumber } = req.params;
@@ -18,24 +18,31 @@ router.get('/search/:registrationNumber', async (req, res) => {
     // First check in transport_vehicles table (our drivers' vehicles)
     const vehicle = await prisma.transportVehicle.findFirst({
       where: { vehicle_number: registrationNumber },
-      include: {
-        driver: {
-          include: {
-            user: {
-              select: {
-                first_name: true,
-                last_name: true,
-                email: true,
-                phone: true,
-              },
-            },
-          },
-        },
+      select: {
+        vehicle_id: true,
+        vehicle_number: true,
+        vehicle_type: true,
+        vehicle_name: true,
+        vehicle_make: true,
+        vehicle_model: true,
+        manufacturing_year: true,
+        registration_date: true,
+        insurance_number: true,
+        insurance_expiry: true,
+        permit_number: true,
+        permit_expiry: true,
+        pollution_certificate: true,
+        pollution_expiry: true,
+        is_verified: true,
+        current_status: true,
+        base_location: true,
       },
     });
     
-    if (vehicle && vehicle.driver) {
-      const ownerName = `${vehicle.driver.user.first_name} ${vehicle.driver.user.last_name}`;
+    if (vehicle) {
+      const today = new Date().toISOString().split('T')[0];
+      const insuranceValid = vehicle.insurance_expiry && vehicle.insurance_expiry > today;
+      const permitValid = vehicle.permit_expiry && vehicle.permit_expiry > today;
       
       return res.json({
         success: true,
@@ -56,25 +63,13 @@ router.get('/search/:registrationNumber', async (req, res) => {
           is_verified: vehicle.is_verified,
           current_status: vehicle.current_status,
           base_location: vehicle.base_location,
-          owner_name: ownerName,
-          email: vehicle.driver.user.email,
-          phone: vehicle.driver.user.phone,
-          status: (vehicle.insurance_expiry > new Date().toISOString().split('T')[0] && vehicle.permit_expiry > new Date().toISOString().split('T')[0])
-            ? 'active'
-            : (vehicle.insurance_expiry <= new Date().toISOString().split('T')[0] || vehicle.permit_expiry <= new Date().toISOString().split('T')[0])
-              ? 'expired'
-              : 'suspended',
-          owner: {
-            email: vehicle.driver.user.email,
-            phone: vehicle.driver.user.phone,
-          },
+          status: (insuranceValid && permitValid) ? 'active' : (!insuranceValid || !permitValid) ? 'expired' : 'suspended',
           registration_validity: vehicle.permit_expiry,
         },
       });
     }
     
-    // If not found in our database, return mock data for demo purposes
-    // This simulates a real vehicle registration database
+    // If not found in our database, return mock data for demo purposes (redacted)
     const mockVehicles = {
       'BR01AB1234': {
         registration_number: 'BR01AB1234',
@@ -86,9 +81,9 @@ router.get('/search/:registrationNumber', async (req, res) => {
         registration_validity: '2040-05-14',
         insurance_validity: '2025-06-15',
         pollution_validity: '2025-04-20',
-        owner_name: 'Rajesh Kumar',
+        owner_name: 'Vehicle Owner',
         status: 'active',
-        owner: { email: 'rajesh.kumar@email.com', phone: '9876543210' }
+        owner: { email: '***@***.com', phone: '**********' }
       },
       'BR01CD5678': {
         registration_number: 'BR01CD5678',
@@ -100,9 +95,9 @@ router.get('/search/:registrationNumber', async (req, res) => {
         registration_validity: '2041-03-09',
         insurance_validity: '2025-08-20',
         pollution_validity: '2025-07-15',
-        owner_name: 'Mohammad Shahnawaz',
+        owner_name: 'Vehicle Owner',
         status: 'active',
-        owner: { email: 'shahnawaz@email.com', phone: '9876543211' }
+        owner: { email: '***@***.com', phone: '**********' }
       },
       'BR01EF9012': {
         registration_number: 'BR01EF9012',
@@ -114,9 +109,9 @@ router.get('/search/:registrationNumber', async (req, res) => {
         registration_validity: '2039-11-19',
         insurance_validity: '2024-12-01',
         pollution_validity: '2024-10-15',
-        owner_name: 'Priya Sharma',
+        owner_name: 'Vehicle Owner',
         status: 'expired',
-        owner: { email: 'priya.sharma@email.com', phone: '9876543212' }
+        owner: { email: '***@***.com', phone: '**********' }
       },
       'BR01GH3456': {
         registration_number: 'BR01GH3456',
@@ -128,9 +123,9 @@ router.get('/search/:registrationNumber', async (req, res) => {
         registration_validity: '2038-08-04',
         insurance_validity: '2025-02-28',
         pollution_validity: '2025-01-20',
-        owner_name: 'Ramu Transport Co.',
+        owner_name: 'Vehicle Owner',
         status: 'active',
-        owner: { email: 'ramutransport@email.com', phone: '9876543213' }
+        owner: { email: '***@***.com', phone: '**********' }
       }
     };
     
@@ -155,56 +150,39 @@ router.get('/search/:registrationNumber', async (req, res) => {
   }
 });
 
-// Get all vehicles (admin)
+// Get all vehicles (public - redacted)
 router.get('/', async (req, res) => {
   try {
     const vehicles = await prisma.transportVehicle.findMany({
-      include: {
-        driver: {
-          include: {
-            user: {
-              select: {
-                first_name: true,
-                last_name: true,
-              },
-            },
-          },
-        },
+      select: {
+        vehicle_id: true,
+        vehicle_number: true,
+        vehicle_type: true,
+        vehicle_name: true,
+        capacity_kg: true,
+        capacity_volume: true,
+        vehicle_make: true,
+        vehicle_model: true,
+        manufacturing_year: true,
+        registration_date: true,
+        insurance_number: true,
+        insurance_expiry: true,
+        permit_number: true,
+        permit_expiry: true,
+        pollution_certificate: true,
+        pollution_expiry: true,
+        is_available: true,
+        is_verified: true,
+        current_status: true,
+        base_location: true,
+        hourly_rate: true,
+        per_km_rate: true,
+        created_at: true,
+        updated_at: true,
       },
     });
 
-    // Flatten to match original SQL response format
-    const flattened = vehicles.map((v) => ({
-      vehicle_id: v.vehicle_id,
-      driver_id: v.driver_id,
-      vehicle_number: v.vehicle_number,
-      vehicle_type: v.vehicle_type,
-      vehicle_name: v.vehicle_name,
-      capacity_kg: v.capacity_kg,
-      capacity_volume: v.capacity_volume,
-      vehicle_make: v.vehicle_make,
-      vehicle_model: v.vehicle_model,
-      manufacturing_year: v.manufacturing_year,
-      registration_date: v.registration_date,
-      insurance_number: v.insurance_number,
-      insurance_expiry: v.insurance_expiry,
-      permit_number: v.permit_number,
-      permit_expiry: v.permit_expiry,
-      pollution_certificate: v.pollution_certificate,
-      pollution_expiry: v.pollution_expiry,
-      is_available: v.is_available,
-      is_verified: v.is_verified,
-      current_status: v.current_status,
-      base_location: v.base_location,
-      hourly_rate: v.hourly_rate,
-      per_km_rate: v.per_km_rate,
-      created_at: v.created_at,
-      updated_at: v.updated_at,
-      first_name: v.driver?.user?.first_name ?? null,
-      last_name: v.driver?.user?.last_name ?? null,
-    }));
-
-    res.json({ success: true, data: flattened });
+    res.json({ success: true, data: vehicles });
   } catch (error) {
     console.error('Database error:', error);
     res.status(500).json({ success: false, message: 'Database error' });

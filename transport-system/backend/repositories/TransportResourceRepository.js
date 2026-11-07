@@ -7,6 +7,100 @@
 
 const { prisma } = require('../config/prisma');
 const bcrypt = require('bcryptjs');
+const {
+  normalizeMobile,
+  normalizeIdentifier,
+  normalizeVehicleNumber,
+} = require('../utils/resourceValidation');
+
+/** Canonical-form duplicate lookups (parameterised SQL, no interpolation). */
+async function findOwnerByMobileTx(tx, mobile) {
+  const canonical = normalizeMobile(mobile);
+  if (!canonical) return null;
+  if (typeof tx.$queryRaw === 'function') {
+    const rows = await tx.$queryRaw`
+      SELECT *
+      FROM vehicle_owners
+      WHERE deleted_at IS NULL
+        AND (
+          CASE
+            WHEN length(regexp_replace(COALESCE(mobile, ''), '[^0-9]', '', 'g')) = 12
+             AND left(regexp_replace(COALESCE(mobile, ''), '[^0-9]', '', 'g'), 2) = '91'
+              THEN substr(regexp_replace(COALESCE(mobile, ''), '[^0-9]', '', 'g'), 3)
+            WHEN length(regexp_replace(COALESCE(mobile, ''), '[^0-9]', '', 'g')) = 11
+             AND left(regexp_replace(COALESCE(mobile, ''), '[^0-9]', '', 'g'), 1) = '0'
+              THEN substr(regexp_replace(COALESCE(mobile, ''), '[^0-9]', '', 'g'), 2)
+            ELSE regexp_replace(COALESCE(mobile, ''), '[^0-9]', '', 'g')
+          END
+        ) = ${canonical}
+      ORDER BY owner_id ASC
+      LIMIT 1
+    `;
+    return rows[0] || null;
+  }
+  return tx.vehicleOwner.findFirst({ where: { mobile: canonical, deleted_at: null } });
+}
+
+async function findDriverByMobileTx(tx, mobile) {
+  const canonical = normalizeMobile(mobile);
+  if (!canonical) return null;
+  if (typeof tx.$queryRaw === 'function') {
+    const rows = await tx.$queryRaw`
+      SELECT *
+      FROM drivers
+      WHERE (
+        CASE
+          WHEN length(regexp_replace(COALESCE(mobile, ''), '[^0-9]', '', 'g')) = 12
+           AND left(regexp_replace(COALESCE(mobile, ''), '[^0-9]', '', 'g'), 2) = '91'
+            THEN substr(regexp_replace(COALESCE(mobile, ''), '[^0-9]', '', 'g'), 3)
+          WHEN length(regexp_replace(COALESCE(mobile, ''), '[^0-9]', '', 'g')) = 11
+           AND left(regexp_replace(COALESCE(mobile, ''), '[^0-9]', '', 'g'), 1) = '0'
+            THEN substr(regexp_replace(COALESCE(mobile, ''), '[^0-9]', '', 'g'), 2)
+          ELSE regexp_replace(COALESCE(mobile, ''), '[^0-9]', '', 'g')
+        END
+      ) = ${canonical}
+      ORDER BY driver_id ASC
+      LIMIT 1
+    `;
+    return rows[0] || null;
+  }
+  return tx.driver.findFirst({ where: { mobile: canonical } });
+}
+
+async function findDriverByLicenseTx(tx, licenseNumber) {
+  const canonical = normalizeIdentifier(licenseNumber);
+  if (!canonical) return null;
+  if (typeof tx.$queryRaw === 'function') {
+    const rows = await tx.$queryRaw`
+      SELECT *
+      FROM drivers
+      WHERE license_number IS NOT NULL
+        AND regexp_replace(UPPER(license_number), '[^A-Z0-9]', '', 'g') = ${canonical}
+      ORDER BY driver_id ASC
+      LIMIT 1
+    `;
+    return rows[0] || null;
+  }
+  return tx.driver.findFirst({
+    where: { license_number: { equals: canonical, mode: 'insensitive' } },
+  });
+}
+
+async function findVehicleByNumberTx(tx, vehicleNumber) {
+  const canonical = normalizeVehicleNumber(vehicleNumber);
+  if (!canonical) return null;
+  if (typeof tx.$queryRaw === 'function') {
+    const rows = await tx.$queryRaw`
+      SELECT *
+      FROM transport_vehicles
+      WHERE regexp_replace(UPPER(COALESCE(vehicle_number, '')), '[^A-Z0-9]', '', 'g') = ${canonical}
+      ORDER BY vehicle_id ASC
+      LIMIT 1
+    `;
+    return rows[0] || null;
+  }
+  return tx.transportVehicle.findFirst({ where: { vehicle_number: canonical } });
+}
 
 class TransportResourceRepository {
   /**
@@ -49,8 +143,9 @@ class TransportResourceRepository {
       // ===== 1. RESOLVE OWNER =====
       let resolvedOwnerId = null;
       if (owner) {
-        // Create new owner
-        const existing = await tx.vehicleOwner.findFirst({ where: { mobile: owner.mobile } });
+        // Create new owner. Compare canonical mobiles so a legacy formatted
+        // value ("+91 98765...") still blocks a duplicate.
+        const existing = await findOwnerByMobileTx(tx, owner.mobile);
         if (existing) {
           const err = new Error('A vehicle owner with this mobile number already exists');
           err.code = 'VEHICLE_OWNER_ALREADY_EXISTS';
@@ -114,11 +209,7 @@ class TransportResourceRepository {
 
         if (driver.is_self_owner) {
           // Self-owner: resolve/create DRIVER_OWNER by mobile
-          const normalised = String(driver.mobile || '').replace(/\D/g, '');
-          let selfOwner = await tx.vehicleOwner.findFirst({
-            where: { mobile: { contains: normalised } },
-            select: { owner_id: true, owner_type: true, status: true, is_active: true, deleted_at: true },
-          });
+          let selfOwner = await findOwnerByMobileTx(tx, driver.mobile);
 
           if (selfOwner) {
             // Reuse existing owner (any type) — do NOT flip owner_type
@@ -164,7 +255,7 @@ class TransportResourceRepository {
           driverOwnerId = resolvedOwnerId;
         } else {
           // Check if driver already exists and has an owner
-          const existingDriverForOwner = await tx.driver.findFirst({ where: { mobile: driver.mobile } });
+          const existingDriverForOwner = await findDriverByMobileTx(tx, driver.mobile);
           if (existingDriverForOwner && existingDriverForOwner.transport_owner_id) {
             driverOwnerId = existingDriverForOwner.transport_owner_id;
           } else {
@@ -174,8 +265,8 @@ class TransportResourceRepository {
           }
         }
 
-        // Check driver mobile uniqueness
-        const existingDriver = await tx.driver.findFirst({ where: { mobile: driver.mobile } });
+        // Check driver mobile uniqueness (canonical form, legacy-compatible)
+        const existingDriver = await findDriverByMobileTx(tx, driver.mobile);
         if (existingDriver && !driverOwnerId && existingDriver.transport_owner_id) {
           driverOwnerId = existingDriver.transport_owner_id;
         }
@@ -196,59 +287,75 @@ class TransportResourceRepository {
           result.driver_id = existingDriver.driver_id;
           result.driver_code = existingDriver.driver_code;
         } else {
-        // Create User if not exists
-        let user = await tx.user.findUnique({ where: { phone: driver.mobile } });
-        if (!user) {
-          const defaultPassword = 'driver123';
-          const password_hash = await bcrypt.hash(defaultPassword, 10);
-          user = await tx.user.create({
+          // A licence number identifies one driver. Reject a second row.
+          if (driver.license_number) {
+            const existingLicense = await findDriverByLicenseTx(tx, driver.license_number);
+            if (existingLicense) {
+              const err = new Error('A driver with this licence number already exists');
+              err.code = 'DRIVER_LICENSE_EXISTS';
+              err.data = {
+                driver_id: existingLicense.driver_id,
+                driver_name: existingLicense.driver_name,
+                driver_code: existingLicense.driver_code,
+              };
+              throw err;
+            }
+          }
+
+          // Create User if not exists
+          let user = await tx.user.findUnique({ where: { phone: driver.mobile } });
+          if (!user) {
+            const defaultPassword = 'driver123';
+            const password_hash = await bcrypt.hash(defaultPassword, 10);
+            user = await tx.user.create({
+              data: {
+                first_name: driver.driver_name.split(' ')[0] || driver.driver_name,
+                last_name: driver.driver_name.split(' ').slice(1).join(' ') || '',
+                email: `${driver.mobile}@driver.bihar-transport.com`,
+                phone: driver.mobile,
+                password_hash,
+                role: 'driver',
+              },
+            });
+          }
+
+          // Generate driver code
+          const driverCode = await this._generateDriverCodeTx(tx);
+
+          // Create Driver
+          const createdDriver = await tx.driver.create({
             data: {
-              first_name: driver.driver_name.split(' ')[0] || driver.driver_name,
-              last_name: driver.driver_name.split(' ').slice(1).join(' ') || '',
-              email: `${driver.mobile}@driver.bihar-transport.com`,
-              phone: driver.mobile,
-              password_hash,
-              role: 'driver',
+              driver_code: driverCode,
+              user_id: user.user_id,
+              driver_name: driver.driver_name,
+              mobile: driver.mobile,
+              alternate_mobile: driver.alternate_mobile || null,
+              license_number: driver.license_number || null,
+              license_expiry: driver.license_expiry || null,
+              license_class: driver.license_class || null,
+              city: driver.city || null,
+              state: driver.state || 'Bihar',
+              address: driver.address || null,
+              transport_owner_id: driverOwnerId,
+              status: 'available',
+              is_available: true,
+              is_verified: false,
+              profile_image: driver.profile_image || null,
             },
           });
-        }
 
-        // Generate driver code
-        const driverCode = await this._generateDriverCodeTx(tx);
+          // Timeline event
+          await tx.driverTimeline.create({
+            data: {
+              driver_id: createdDriver.driver_id,
+              event_type: 'driver_created',
+              description: `Driver ${driver.driver_name} registered with code ${driverCode}`,
+            },
+          });
 
-        // Create Driver
-        const createdDriver = await tx.driver.create({
-          data: {
-            driver_code: driverCode,
-            user_id: user.user_id,
-            driver_name: driver.driver_name,
-            mobile: driver.mobile,
-            alternate_mobile: driver.alternate_mobile || null,
-            license_number: driver.license_number || null,
-            license_expiry: driver.license_expiry || null,
-            city: driver.city || null,
-            state: driver.state || 'Bihar',
-            address: driver.address || null,
-            transport_owner_id: driverOwnerId,
-            status: 'available',
-            is_available: true,
-            is_verified: false,
-            profile_image: driver.profile_image || null,
-          },
-        });
-
-        // Timeline event
-        await tx.driverTimeline.create({
-          data: {
-            driver_id: createdDriver.driver_id,
-            event_type: 'driver_created',
-            description: `Driver ${driver.driver_name} registered with code ${driverCode}`,
-          },
-        });
-
-        resolvedDriverId = createdDriver.driver_id;
-        result.driver_id = createdDriver.driver_id;
-        result.driver_code = createdDriver.driver_code;
+          resolvedDriverId = createdDriver.driver_id;
+          result.driver_id = createdDriver.driver_id;
+          result.driver_code = createdDriver.driver_code;
         }
       } else if (driver_context_id) {
         // Use pre-selected driver
@@ -308,8 +415,9 @@ class TransportResourceRepository {
         // later through the vehicle assignment workflow. Both driver_id and
         // owner_id are nullable on TransportVehicle, so this is schema-supported.
 
-        // Check vehicle_number uniqueness
-        const existingVeh = await tx.transportVehicle.findFirst({ where: { vehicle_number: vehicle.vehicle_number } });
+        // Check vehicle_number uniqueness on the canonical form so
+        // "br-09 ab 1234" and "BR09AB1234" collide.
+        const existingVeh = await findVehicleByNumberTx(tx, vehicle.vehicle_number);
         if (existingVeh) {
           if (vehicleOwnerId && existingVeh.owner_id && existingVeh.owner_id !== vehicleOwnerId) {
             const err = new Error('Vehicle belongs to a different owner');
@@ -330,12 +438,12 @@ class TransportResourceRepository {
           vehicle_number: vehicle.vehicle_number,
           vehicle_type: vehicle.vehicle_type,
           vehicle_name: vehicle.vehicle_name,
-          capacity_kg: vehicle.capacity_kg ? parseFloat(vehicle.capacity_kg) : null,
-          capacity_volume: vehicle.capacity_volume ? parseFloat(vehicle.capacity_volume) : null,
+          capacity_kg: vehicle.capacity_kg !== undefined ? vehicle.capacity_kg : null,
+          capacity_volume: vehicle.capacity_volume !== undefined ? vehicle.capacity_volume : null,
           body_type: vehicle.body_type || null,
           vehicle_make: vehicle.vehicle_make || null,
           vehicle_model: vehicle.vehicle_model || null,
-          manufacturing_year: vehicle.manufacturing_year ? parseInt(vehicle.manufacturing_year) : null,
+          manufacturing_year: vehicle.manufacturing_year !== undefined ? vehicle.manufacturing_year : null,
           registration_date: vehicle.registration_date || null,
           insurance_number: vehicle.insurance_number || null,
           insurance_expiry: vehicle.insurance_expiry || null,
@@ -343,14 +451,20 @@ class TransportResourceRepository {
           permit_expiry: vehicle.permit_expiry || null,
           pollution_certificate: vehicle.pollution_certificate || null,
           pollution_expiry: vehicle.pollution_expiry || null,
+          tax_number: vehicle.tax_number || null,
+          tax_expiry: vehicle.tax_expiry || null,
+          fitness_number: vehicle.fitness_number || null,
+          fitness_expiry: vehicle.fitness_expiry || null,
+          national_permit_number: vehicle.national_permit_number || null,
+          national_permit_expiry: vehicle.national_permit_expiry || null,
           base_location: vehicle.base_location || null,
-          hourly_rate: vehicle.hourly_rate ? parseFloat(vehicle.hourly_rate) : null,
-          per_km_rate: vehicle.per_km_rate ? parseFloat(vehicle.per_km_rate) : null,
+          hourly_rate: vehicle.hourly_rate !== undefined ? vehicle.hourly_rate : null,
+          per_km_rate: vehicle.per_km_rate !== undefined ? vehicle.per_km_rate : null,
           owner_id: vehicleOwnerId,
-          partner_id: vehicle.partner_id ? parseInt(vehicle.partner_id) : null,
+          partner_id: vehicle.partner_id ? parseInt(vehicle.partner_id, 10) : null,
           driver_id: vehicleDriverId,
           current_status: vehicle.current_status || 'available',
-          is_available: vehicle.current_status === 'available',
+          is_available: (vehicle.current_status || 'available') === 'available',
           is_verified: false,
         };
 
@@ -374,11 +488,21 @@ class TransportResourceRepository {
         // If driver assigned, update driver.current_vehicle_id and vehicle.driver_id
         if (vehicleDriverId) {
           // Clear any existing vehicle assignment for this driver
-          const existingVehicle = await tx.transportVehicle.findFirst({ where: { driver_id: vehicleDriverId, vehicle_id: { not: vehicleToUse.vehicle_id } } });
+          const existingVehicle = await tx.transportVehicle.findFirst({
+            where: { driver_id: vehicleDriverId, vehicle_id: { not: vehicleToUse.vehicle_id } },
+          });
           if (existingVehicle) {
             await tx.transportVehicle.update({
               where: { vehicle_id: existingVehicle.vehicle_id },
-              data: { driver_id: null },
+              data: { driver_id: null, is_available: true, current_status: 'available' },
+            });
+            await tx.vehicleAssignment.updateMany({
+              where: {
+                vehicle_id: existingVehicle.vehicle_id,
+                driver_id: vehicleDriverId,
+                status: 'active',
+              },
+              data: { unassigned_at: new Date(), status: 'inactive' },
             });
           }
           await tx.driver.update({
@@ -388,7 +512,14 @@ class TransportResourceRepository {
           if (!existingVeh || existingVeh.driver_id !== vehicleDriverId) {
             await tx.transportVehicle.update({
               where: { vehicle_id: vehicleToUse.vehicle_id },
-              data: { driver_id: vehicleDriverId },
+              data: { driver_id: vehicleDriverId, is_available: false },
+            });
+            await tx.vehicleAssignment.create({
+              data: {
+                vehicle_id: vehicleToUse.vehicle_id,
+                driver_id: vehicleDriverId,
+                status: 'active',
+              },
             });
           }
         }

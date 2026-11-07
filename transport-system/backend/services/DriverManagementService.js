@@ -9,46 +9,23 @@ const DriverRepository = require('../repositories/DriverRepository');
 const prismaModule = require('../config/prisma');
 const driverOwnerGuard = require('./driverOwnerGuard');
 const selfOwner = require('./selfOwner');
+const {
+  normalizeMobile,
+  isValidMobile,
+  normalizeIdentifier,
+  normalizeName,
+  normalizeDateOnly,
+  isValidDateOnly,
+  normalizeEnum,
+  validationError,
+  conflictError,
+} = require('../utils/resourceValidation');
 
 // Lazy prisma accessor — keeps the binding fresh so tests can swap
 // `config/prisma.prisma` for a stub without reloading this module.
 function db() { return prismaModule.prisma; }
 
-// ==================================================================
-// VEHICLE FIELD HELPERS (TEMPORARY MVP SOLUTION)
-// ------------------------------------------------------------------
-// Vehicle fields currently live directly on the Driver model for the
-// MVP. All vehicle-specific normalization / validation / uniqueness
-// logic is isolated here so it can be lifted into a dedicated Vehicle
-// entity + DriverAssignment relation in a future release without
-// touching the rest of the driver module.
-// ==================================================================
-
-/**
- * Normalize an Indian vehicle number for storage.
- * - Trims surrounding whitespace
- * - Collapses internal whitespace
- * - Converts to uppercase
- * e.g. "  br09  ab1234 " → "BR09AB1234"
- */
-function normalizeVehicleNumber(value) {
-  if (value == null) return null;
-  const normalized = String(value).trim().replace(/\s+/g, ' ').toUpperCase();
-  return normalized || null;
-}
-
-/**
- * Validate an Indian vehicle registration number format.
- * Supports the standard format: <2 letter state><2 digit rto><optional
- * 1-letter series><4 digits>, e.g. BR09AB1234, BR09A1234, BR01A1234.
- * Returns true when valid.
- */
-function isValidIndianVehicleNumber(value) {
-  if (!value) return false;
-  const normalized = String(value).trim().toUpperCase().replace(/\s+/g, '');
-  // Examples: BR09AB1234, BR09A1234, DL01C1234, MH12AB1234
-  return /^[A-Z]{2}\d{2}[A-Z]{1,2}\d{4}$/.test(normalized);
-}
+const DRIVER_STATUSES = ['available', 'on_trip', 'inactive'];
 
 class DriverManagementService {
   constructor() {
@@ -61,18 +38,41 @@ class DriverManagementService {
    * Throws DriverAlreadyExistsError if mobile is already registered.
    */
 async registerDriver(data) {
-    const {
-      driver_name,
-      mobile,
-      alternate_mobile,
-      license_number,
-      city,
-      state,
-      address,
-      profile_image,
-      transport_owner_id,
-      is_self_owner = false,
-    } = data;
+    const driver_name = normalizeName(data.driver_name);
+    const mobile = normalizeMobile(data.mobile);
+    const alternate_mobile = normalizeMobile(data.alternate_mobile);
+    const license_number = normalizeIdentifier(data.license_number);
+    const license_expiry = normalizeDateOnly(data.license_expiry);
+    const license_class = normalizeName(data.license_class);
+    const city = normalizeName(data.city);
+    const state = normalizeName(data.state) || 'Bihar';
+    const address = normalizeName(data.address);
+    const profile_image = data.profile_image || null;
+    const transport_owner_id = data.transport_owner_id;
+    const is_self_owner = data.is_self_owner === true ||
+      data.is_self_owner === 'true' ||
+      data.is_self_owner === 1 ||
+      data.is_self_owner === '1';
+
+    // ---- Layered validation (frontend → service → database) ----
+    if (!driver_name) {
+      throw validationError('Driver name is required');
+    }
+    if (!isValidMobile(mobile)) {
+      throw validationError('Enter a valid 10-digit mobile number');
+    }
+    if (alternate_mobile && !isValidMobile(alternate_mobile)) {
+      throw validationError('Enter a valid 10-digit alternate mobile number');
+    }
+    if (alternate_mobile && alternate_mobile === mobile) {
+      throw validationError('Alternate mobile number must be different from the primary mobile number');
+    }
+    if (!license_number) {
+      throw validationError('Driving licence number is required');
+    }
+    if (!isValidDateOnly(data.license_expiry)) {
+      throw validationError('Licence expiry must be a valid date (YYYY-MM-DD)');
+    }
 
     // ===== Phase 2 — Driver <-> Transport Owner required =====
     // Defense-in-depth: even if the route validator allows a request
@@ -84,22 +84,31 @@ async registerDriver(data) {
     //   who IS ALSO the Transport Owner of their vehicle. We MUST still
     //   create / link a VehicleOwner — just with owner_type = DRIVER_OWNER.
     //   The Driver's transport_owner_id points back to that same owner.
-    driverOwnerGuard.assertCreateHasOwner(data);
+    driverOwnerGuard.assertCreateHasOwner({ ...data, is_self_owner });
 
     // Pre-flight: Driver with this mobile must not already exist
     // (checked outside the txn for a clean 409 path).
     const existingDriver = await this.repo.findByMobile(mobile);
     if (existingDriver) {
-      const err = new Error('Driver already exists');
-      err.code = 'DRIVER_ALREADY_EXISTS';
-      err.data = {
+      throw conflictError('DRIVER_ALREADY_EXISTS', 'Driver already exists', {
         driver_id: existingDriver.driver_id,
         driver_name: existingDriver.driver_name,
         driver_code: existingDriver.driver_code,
         status: existingDriver.status,
         mobile: existingDriver.mobile,
-      };
-      throw err;
+      });
+    }
+
+    // A driving licence identifies one person. Reject a second driver row
+    // carrying the same canonical licence number.
+    const existingLicense = await this.repo.findByLicenseNumber(license_number);
+    if (existingLicense) {
+      throw conflictError('DRIVER_LICENSE_EXISTS', 'A driver with this licence number already exists', {
+        driver_id: existingLicense.driver_id,
+        driver_name: existingLicense.driver_name,
+        driver_code: existingLicense.driver_code,
+        license_number: existingLicense.license_number,
+      });
     }
 
     // Phase 2.2 — the entire Self-Owner path (owner lookup + optional
@@ -107,6 +116,27 @@ async registerDriver(data) {
     // database transaction so a partial Self-Owner registration can
     // never leave broken data.
     const driver = await db().$transaction(async (tx) => {
+      // Concurrency-safe duplicate re-check inside the transaction. The
+      // pre-flight above gives a clean 409 for the common case; this second
+      // check closes the window between the pre-flight read and the insert.
+      const duplicateMobile = await this.repo.findByMobile(mobile, tx);
+      if (duplicateMobile) {
+        throw conflictError('DRIVER_ALREADY_EXISTS', 'Driver already exists', {
+          driver_id: duplicateMobile.driver_id,
+          driver_name: duplicateMobile.driver_name,
+          driver_code: duplicateMobile.driver_code,
+          mobile: duplicateMobile.mobile,
+        });
+      }
+      const duplicateLicense = await this.repo.findByLicenseNumber(license_number, null, tx);
+      if (duplicateLicense) {
+        throw conflictError('DRIVER_LICENSE_EXISTS', 'A driver with this licence number already exists', {
+          driver_id: duplicateLicense.driver_id,
+          driver_name: duplicateLicense.driver_name,
+          driver_code: duplicateLicense.driver_code,
+        });
+      }
+
       // ---- 1. Resolve the Transport Owner. ----
       let resolvedOwnerId = null;
       let selfOwnerCreated = false;
@@ -159,7 +189,7 @@ async registerDriver(data) {
       }
 
       // ---- 3. Generate driver code + create Driver row. ----
-      const driverCode = await this.repo.generateDriverCode();
+      const driverCode = await this.repo.generateDriverCode(tx);
       const createdDriver = await tx.driver.create({
         data: {
           driver_code: driverCode,
@@ -168,6 +198,8 @@ async registerDriver(data) {
           mobile,
           alternate_mobile: alternate_mobile || null,
           license_number: license_number || null,
+          license_expiry: license_expiry || null,
+          license_class: license_class || null,
           city: city || null,
           state: state || 'Bihar',
           address: address || null,
@@ -232,7 +264,7 @@ async registerDriver(data) {
     // Use the same lookup logic as selfOwner.findExistingOwnerByMobile
     // but routed through the transaction client so the read participates
     // in the same isolation window.
-    const normalised = String(mobile || '').replace(/\D/g, '');
+    const normalised = normalizeMobile(mobile);
     const existing = await tx.vehicleOwner.findFirst({
       where: {
         mobile: { contains: normalised },
@@ -241,6 +273,12 @@ async registerDriver(data) {
     });
 
     if (existing) {
+      if (existing.status && existing.status !== 'active') {
+        throw conflictError('OWNER_INACTIVE', 'The Transport Owner linked to this mobile number is not active.');
+      }
+      if (existing.is_active === false) {
+        throw conflictError('OWNER_INACTIVE', 'The Transport Owner linked to this mobile number is not active.');
+      }
       // REUSE without touching owner_type. The Owner Type reflects
       // business classification; we never silently flip it.
       return { owner_id: existing.owner_id, created: false };
@@ -249,10 +287,9 @@ async registerDriver(data) {
     // No existing owner → create a fresh one inside the same txn.
     const VehicleOwnerRepository = require('../repositories/VehicleOwnerRepository');
     const ownerRepo = new VehicleOwnerRepository();
-    // generateOwnerCode reads the last owner_code via prisma (outside
-    // the tx). For a brand-new Self-Owner this is acceptable; if a
-    // race occurs the UNIQUE constraint on owner_code would surface it.
-    const ownerCode = await ownerRepo.generateOwnerCode();
+    // Generate the code through the transaction client so two concurrent
+    // Self-Owner registrations cannot both read the same seed.
+    const ownerCode = await ownerRepo.generateOwnerCode(tx);
     const created = await tx.vehicleOwner.create({
       data: {
         owner_code: ownerCode,
@@ -309,49 +346,148 @@ async registerDriver(data) {
    * Update driver information.
    */
   async updateDriver(driverId, data) {
-    const allowedFields = [
-      'driver_name', 'mobile', 'alternate_mobile', 'city',
-      'state', 'address',
-      'status', 'profile_image',
-      'license_number',
-      'transport_owner_id',
-    ];
+    const numericDriverId = Number(driverId);
+    if (!Number.isInteger(numericDriverId) || numericDriverId <= 0) {
+      throw validationError('Invalid driver ID');
+    }
 
     // ===== Phase 2 — never allow removing the owner =====
     // If the caller sent an explicit null/empty transport_owner_id, reject.
     driverOwnerGuard.assertUpdateDoesNotRemoveOwner(data);
 
+    const current = await this.repo.findStatus(numericDriverId);
+    if (!current) {
+      throw conflictError('DRIVER_NOT_FOUND', 'Driver not found');
+    }
+
     const updateData = {};
-    for (const key of allowedFields) {
-      if (data[key] !== undefined) {
-        updateData[key] = data[key];
+
+    if (data.driver_name !== undefined) {
+      const value = normalizeName(data.driver_name);
+      if (!value) throw validationError('Driver name cannot be empty');
+      updateData.driver_name = value;
+    }
+
+    if (data.mobile !== undefined) {
+      const value = normalizeMobile(data.mobile);
+      if (!isValidMobile(value)) {
+        throw validationError('Enter a valid 10-digit mobile number');
+      }
+      updateData.mobile = value;
+    }
+
+    if (data.alternate_mobile !== undefined) {
+      const value = normalizeMobile(data.alternate_mobile);
+      if (value && !isValidMobile(value)) {
+        throw validationError('Enter a valid 10-digit alternate mobile number');
+      }
+      updateData.alternate_mobile = value;
+    }
+
+    if (data.license_number !== undefined) {
+      const value = normalizeIdentifier(data.license_number);
+      if (!value) throw validationError('Driving licence number cannot be empty');
+      updateData.license_number = value;
+    }
+
+    if (data.license_expiry !== undefined) {
+      if (!isValidDateOnly(data.license_expiry)) {
+        throw validationError('Licence expiry must be a valid date (YYYY-MM-DD)');
+      }
+      updateData.license_expiry = normalizeDateOnly(data.license_expiry);
+    }
+
+    if (data.license_class !== undefined) {
+      updateData.license_class = normalizeName(data.license_class);
+    }
+
+    for (const field of ['city', 'state', 'address', 'profile_image']) {
+      if (data[field] !== undefined) {
+        updateData[field] = field === 'state'
+          ? (normalizeName(data[field]) || 'Bihar')
+          : (data[field] === null ? null : normalizeName(data[field]));
       }
     }
 
-    // If transport_owner_id is being CHANGED, verify the new owner is active.
-    if (updateData.transport_owner_id !== undefined &&
-        updateData.transport_owner_id !== null) {
-      await driverOwnerGuard.resolveActiveOwner(updateData.transport_owner_id);
-      updateData.transport_owner_id = parseInt(updateData.transport_owner_id, 10);
+    if (data.status !== undefined) {
+      const status = normalizeEnum(data.status, DRIVER_STATUSES, null);
+      if (!status) {
+        throw validationError(`Invalid status. Must be one of: ${DRIVER_STATUSES.join(', ')}`);
+      }
+      updateData.status = status;
+    }
+
+    if (data.transport_owner_id !== undefined && data.transport_owner_id !== null) {
+      const ownerId = Number(data.transport_owner_id);
+      if (!Number.isInteger(ownerId) || ownerId <= 0) {
+        throw validationError('Transport Owner id must be a positive integer.');
+      }
+      await driverOwnerGuard.resolveActiveOwner(ownerId);
+      updateData.transport_owner_id = ownerId;
     }
 
     if (Object.keys(updateData).length === 0) {
-      throw new Error('No valid fields provided for update');
+      throw validationError('No valid fields provided for update');
     }
 
-    // If status is changing, also update is_available
-    if (updateData.status === 'available') updateData.is_available = true;
-    else if (updateData.status === 'on_trip') updateData.is_available = false;
-    else if (updateData.status === 'inactive') updateData.is_available = false;
+    // Alternate mobile must not equal the primary mobile after the update.
+    if (updateData.alternate_mobile && updateData.alternate_mobile === updateData.mobile) {
+      throw validationError('Alternate mobile number must be different from the primary mobile number');
+    }
 
-    const driver = await this.repo.update(driverId, updateData);
+    // Duplicate checks exclude the row being edited.
+    if (updateData.mobile !== undefined) {
+      const existing = await this.repo.findByMobile(updateData.mobile);
+      if (existing && Number(existing.driver_id) !== numericDriverId) {
+        throw conflictError('DRIVER_ALREADY_EXISTS', 'A driver with this mobile number already exists', {
+          driver_id: existing.driver_id,
+          driver_name: existing.driver_name,
+          driver_code: existing.driver_code,
+        });
+      }
+    }
+
+    if (updateData.license_number !== undefined) {
+      const existing = await this.repo.findByLicenseNumber(updateData.license_number, numericDriverId);
+      if (existing) {
+        throw conflictError('DRIVER_LICENSE_EXISTS', 'A driver with this licence number already exists', {
+          driver_id: existing.driver_id,
+          driver_name: existing.driver_name,
+          driver_code: existing.driver_code,
+        });
+      }
+    }
+
+    // A driver with an operational active trip cannot be manually marked
+    // available: the trip still holds the resource. The dashboard/list
+    // filters already exclude these drivers from "available", so allowing
+    // the write would create a visibly inconsistent record.
+    if (updateData.status === 'available') {
+      const hasActiveTrip = await this.repo.hasOperationalActiveTrips(numericDriverId);
+      if (hasActiveTrip) {
+        throw conflictError(
+          'DRIVER_HAS_ACTIVE_TRIP',
+          'This driver has an active trip and cannot be marked available until the trip is completed or cancelled.'
+        );
+      }
+    }
+
+    // Keep the legacy availability flag in lock-step with status.
+    if (updateData.status === 'available') updateData.is_available = true;
+    else if (updateData.status === 'on_trip' || updateData.status === 'inactive') {
+      updateData.is_available = false;
+    }
+
+    updateData.updated_at = new Date();
+
+    const driver = await this.repo.update(numericDriverId, updateData);
 
     // Record timeline for status change
-    if (data.status) {
+    if (updateData.status) {
       await this.repo.createTimelineEvent({
-        driver_id: driverId,
+        driver_id: numericDriverId,
         event_type: 'status_changed',
-        description: `Status changed to ${data.status}`,
+        description: `Status changed to ${updateData.status}`,
       });
     }
 
@@ -495,19 +631,43 @@ async registerDriver(data) {
    * Toggle driver status.
    */
   async toggleStatus(driverId) {
-    const driver = await this.repo.findStatus(driverId);
+    const numericDriverId = Number(driverId);
+    if (!Number.isInteger(numericDriverId) || numericDriverId <= 0) {
+      throw validationError('Invalid driver ID');
+    }
+    const driver = await this.repo.findStatus(numericDriverId);
 
-    if (!driver) throw new Error('Driver not found');
+    if (!driver) {
+      throw conflictError('DRIVER_NOT_FOUND', 'Driver not found');
+    }
+
+    if (driver.status === 'on_trip') {
+      throw conflictError(
+        'DRIVER_HAS_ACTIVE_TRIP',
+        'This driver is on a trip. Complete or cancel the trip before changing availability.'
+      );
+    }
 
     const newStatus = driver.status === 'available' ? 'inactive' : 'available';
 
-    const updated = await this.repo.update(driverId, {
+    if (newStatus === 'available') {
+      const hasActiveTrip = await this.repo.hasOperationalActiveTrips(numericDriverId);
+      if (hasActiveTrip) {
+        throw conflictError(
+          'DRIVER_HAS_ACTIVE_TRIP',
+          'This driver has an active trip and cannot be marked available until the trip is completed or cancelled.'
+        );
+      }
+    }
+
+    const updated = await this.repo.update(numericDriverId, {
       status: newStatus,
       is_available: newStatus === 'available',
+      updated_at: new Date(),
     });
 
     await this.repo.createTimelineEvent({
-      driver_id: driverId,
+      driver_id: numericDriverId,
       event_type: 'status_changed',
       description: `Status changed from ${driver.status} to ${newStatus}`,
     });
@@ -577,7 +737,7 @@ async registerDriver(data) {
   async getAvailableVehicles(driverId) {
     const driver = await this.repo.findById(driverId);
     if (!driver) {
-      throw new Error('Driver not found');
+      throw conflictError('DRIVER_NOT_FOUND', 'Driver not found');
     }
 
     const ownerId = driver.transport_owner_id;
@@ -586,11 +746,16 @@ async registerDriver(data) {
       return [];
     }
 
+    const { getOperationalActiveTripWhere } = require('../utils/operationalTripStatus');
+
     const vehicles = await db().transportVehicle.findMany({
       where: {
         owner_id: ownerId,
         is_available: true,
         current_status: 'available',
+        // Never offer a vehicle that is already engaged on an active trip,
+        // even if its cached status flag was not synchronised.
+        trips: { none: getOperationalActiveTripWhere() },
         OR: [
           { driver_id: null },
           { driver_id: driverId },
@@ -614,31 +779,98 @@ async registerDriver(data) {
    * @returns {Promise<Object>}
    */
   async assignVehicle(driverId, vehicleId, assignedBy = null) {
-    const driver = await this.repo.findById(driverId);
-    if (!driver) {
-      throw new Error('Driver not found');
+    const numericDriverId = Number(driverId);
+    const numericVehicleId = Number(vehicleId);
+    if (!Number.isInteger(numericDriverId) || numericDriverId <= 0) {
+      throw validationError('Invalid driver ID');
     }
-
-    const vehicle = await db().transportVehicle.findUnique({
-      where: { vehicle_id: vehicleId },
-    });
-    if (!vehicle) {
-      throw new Error('Vehicle not found');
-    }
-
-    // Validate that the vehicle belongs to the driver's transport owner
-    if (driver.transport_owner_id && vehicle.owner_id !== driver.transport_owner_id) {
-      throw new Error('This vehicle does not belong to the driver\'s transport owner');
-    }
-
-    // If driver has no transport owner, only allow assignment to truly unassigned vehicles
-    if (!driver.transport_owner_id && vehicle.driver_id !== null) {
-      throw new Error('This vehicle is already assigned to another driver');
+    if (!Number.isInteger(numericVehicleId) || numericVehicleId <= 0) {
+      throw validationError('Invalid vehicle ID');
     }
 
     const result = await db().$transaction(async (tx) => {
+      // Serialise concurrent assignments of the same driver/vehicle pair.
+      // The row locks are acquired in a fixed order (vehicle, then driver)
+      // so two concurrent requests cannot deadlock each other.
+      if (typeof tx.$queryRaw === 'function') {
+        await tx.$queryRaw`SELECT vehicle_id FROM transport_vehicles WHERE vehicle_id = ${numericVehicleId} FOR UPDATE`;
+        await tx.$queryRaw`SELECT driver_id FROM drivers WHERE driver_id = ${numericDriverId} FOR UPDATE`;
+      }
+
+      const driver = await tx.driver.findUnique({
+        where: { driver_id: numericDriverId },
+      });
+      if (!driver) {
+        throw conflictError('DRIVER_NOT_FOUND', 'Driver not found');
+      }
+
+      const vehicle = await tx.transportVehicle.findUnique({
+        where: { vehicle_id: numericVehicleId },
+      });
+      if (!vehicle) {
+        throw conflictError('VEHICLE_NOT_FOUND', 'Vehicle not found');
+      }
+
+      // Idempotent: the pair is already linked. Do not create a duplicate
+      // active assignment-history row.
+      if (
+        Number(driver.current_vehicle_id) === numericVehicleId &&
+        Number(vehicle.driver_id) === numericDriverId
+      ) {
+        return { driver, vehicle };
+      }
+
+      // Validate that the vehicle belongs to the driver's transport owner
+      if (driver.transport_owner_id && vehicle.owner_id !== driver.transport_owner_id) {
+        throw conflictError(
+          'VEHICLE_OWNER_MISMATCH',
+          'This vehicle does not belong to the driver\'s transport owner'
+        );
+      }
+
+      // If driver has no transport owner, only allow assignment to truly
+      // unassigned vehicles.
+      if (!driver.transport_owner_id && vehicle.driver_id !== null) {
+        throw conflictError(
+          'VEHICLE_ALREADY_ASSIGNED',
+          'This vehicle is already assigned to another driver'
+        );
+      }
+
+      // Never silently steal a vehicle from another driver. The old code
+      // overwrote vehicle.driver_id and left the previous driver pointing at
+      // a vehicle they no longer had — the exact stale-assignment bug.
+      if (vehicle.driver_id && Number(vehicle.driver_id) !== numericDriverId) {
+        throw conflictError(
+          'VEHICLE_ALREADY_ASSIGNED',
+          'This vehicle is already assigned to another driver'
+        );
+      }
+
+      // A driver on an operational trip cannot be moved to a different
+      // vehicle mid-trip.
+      if (typeof tx.trip?.findFirst === 'function') {
+        const hasActiveTrip = await this.repo.hasOperationalActiveTrips(numericDriverId, tx);
+        if (hasActiveTrip && Number(driver.current_vehicle_id) !== numericVehicleId) {
+          throw conflictError(
+            'DRIVER_HAS_ACTIVE_TRIP',
+            'This driver has an active trip and cannot be assigned a different vehicle until the trip is completed or cancelled.'
+          );
+        }
+      }
+
+      // A vehicle flagged unavailable/on-trip/maintenance must not be
+      // assigned through the direct API. Legacy rows with a null status are
+      // allowed (they predate the status column).
+      if (['on_trip', 'maintenance', 'inactive'].includes(vehicle.current_status)) {
+        throw conflictError(
+          'VEHICLE_NOT_ASSIGNABLE',
+          `This vehicle is currently ${vehicle.current_status.replace(/_/g, ' ')} and cannot be assigned.`
+        );
+      }
+
       // Unassign previous vehicle if driver had one
-      if (driver.current_vehicle_id && driver.current_vehicle_id !== vehicleId) {
+      if (driver.current_vehicle_id && Number(driver.current_vehicle_id) !== numericVehicleId) {
         await tx.transportVehicle.update({
           where: { vehicle_id: driver.current_vehicle_id },
           data: {
@@ -652,7 +884,7 @@ async registerDriver(data) {
         await tx.vehicleAssignment.updateMany({
           where: {
             vehicle_id: driver.current_vehicle_id,
-            driver_id: driverId,
+            driver_id: numericDriverId,
             status: 'active',
           },
           data: {
@@ -664,8 +896,8 @@ async registerDriver(data) {
 
       // Assign new vehicle to driver
       const updatedDriver = await tx.driver.update({
-        where: { driver_id: driverId },
-        data: { current_vehicle_id: vehicleId },
+        where: { driver_id: numericDriverId },
+        data: { current_vehicle_id: numericVehicleId },
       });
 
       // Update vehicle to mark as assigned
@@ -673,19 +905,32 @@ async registerDriver(data) {
       // assigned is not necessarily "on_trip". 'on_trip' is set by the
       // trip service when a trip actually starts.
       const updatedVehicle = await tx.transportVehicle.update({
-        where: { vehicle_id: vehicleId },
+        where: { vehicle_id: numericVehicleId },
         data: {
-          driver_id: driverId,
+          driver_id: numericDriverId,
           is_available: false,
           current_status: 'available',
         },
       });
 
-      // Create assignment history record
+      // Close any stale active history rows for this vehicle from a
+      // previous driver, then create the new active record.
+      await tx.vehicleAssignment.updateMany({
+        where: {
+          vehicle_id: numericVehicleId,
+          status: 'active',
+          driver_id: { not: numericDriverId },
+        },
+        data: {
+          unassigned_at: new Date(),
+          status: 'inactive',
+        },
+      });
+
       await tx.vehicleAssignment.create({
         data: {
-          vehicle_id: vehicleId,
-          driver_id: driverId,
+          vehicle_id: numericVehicleId,
+          driver_id: numericDriverId,
           assigned_by: assignedBy,
           status: 'active',
         },

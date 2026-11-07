@@ -250,11 +250,11 @@ updateDriver: (id, data) => api.put(`/admin/drivers/${id}`, data),
   toggleDriverStatus: (id, status) => api.patch(`/admin/drivers/${id}/status`, { status }),
   getDriverTrips: (id, params) => api.get(`/admin/drivers/${id}/trips`, { params }),
   getDriverTimeline: (id) => api.get(`/admin/drivers/${id}/timeline`),
-  
+
   // Driver Transactions
   recordDriverTransaction: (id, data) => api.post(`/admin/drivers/${id}/transactions`, data),
   getDriverTransactions: (id, params) => api.get(`/admin/drivers/${id}/transactions`, { params }),
-  
+
 // Driver Vehicle Assignment
   getAvailableVehicles: (driverId) => api.get(`/admin/drivers/${driverId}/vehicles/available`),
   assignVehicleToDriver: (driverId, vehicleId) => api.post(`/admin/drivers/${driverId}/assign-vehicle`, { vehicle_id: vehicleId }),

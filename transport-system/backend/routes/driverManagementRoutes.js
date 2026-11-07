@@ -29,6 +29,73 @@ const handleValidation = (req, res, next) => {
   next();
 };
 
+/**
+ * Central error → HTTP mapping for the driver-management endpoints.
+ * Every branch maps a structured domain code; nothing returns 200 after a
+ * failed write and no database detail is leaked to the caller.
+ */
+const handleDriverError = (res, error, fallbackMessage = 'Server error') => {
+  console.error('Driver route error:', error.code || error.name, error.message);
+
+  if (error.code === 'VALIDATION_ERROR') {
+    return res.status(400).json({ success: false, message: error.message, errorCode: error.code });
+  }
+
+  if (['DRIVER_NOT_FOUND', 'VEHICLE_NOT_FOUND'].includes(error.code)) {
+    return res.status(404).json({ success: false, message: error.message, errorCode: error.code });
+  }
+
+  if (['OWNER_REQUIRED', 'OWNER_INVALID', 'OWNER_NOT_FOUND', 'OWNER_INACTIVE'].includes(error.code)) {
+    return res.status(400).json({ success: false, message: error.message, errorCode: error.code });
+  }
+
+  if ([
+    'DRIVER_ALREADY_EXISTS',
+    'DRIVER_LICENSE_EXISTS',
+    'VEHICLE_ALREADY_EXISTS',
+    'DRIVER_HAS_ACTIVE_TRIP',
+    'VEHICLE_OWNER_MISMATCH',
+    'VEHICLE_ALREADY_ASSIGNED',
+    'VEHICLE_NOT_ASSIGNABLE',
+    'DRIVER_INACTIVE',
+    'DRIVER_PARTNER_MISMATCH',
+  ].includes(error.code)) {
+    return res.status(409).json({
+      success: false,
+      message: error.message || 'Conflict',
+      errorCode: error.code,
+      ...(error.data ? { data: error.data } : {}),
+    });
+  }
+
+  if (error.code === 'P2002') {
+    // Prisma P2002 is a unique-constraint violation. Only a `mobile` /
+    // `license_number` target is a genuine duplicate-driver signal; an
+    // owner_code/driver_code collision is an internal generation issue.
+    const target = Array.isArray(error.meta?.target) ? error.meta.target : [];
+    if (target.includes('mobile')) {
+      return res.status(409).json({
+        success: false,
+        message: 'A driver with this mobile number already exists',
+        errorCode: 'DRIVER_ALREADY_EXISTS',
+      });
+    }
+    if (target.includes('license_number')) {
+      return res.status(409).json({
+        success: false,
+        message: 'A driver with this licence number already exists',
+        errorCode: 'DRIVER_LICENSE_EXISTS',
+      });
+    }
+    return res.status(500).json({
+      success: false,
+      message: 'Could not complete the operation due to a conflicting unique value. Please try again.',
+    });
+  }
+
+  return res.status(500).json({ success: false, message: error.message || fallbackMessage });
+};
+
 // ============================
 // DASHBOARD STATS
 // ============================
@@ -61,8 +128,7 @@ router.get('/:driverId/vehicles/available', protect, adminCheck, async (req, res
     const vehicles = await driverService.getAvailableVehicles(driverId);
     res.json({ success: true, data: vehicles });
   } catch (error) {
-    console.error('Get available vehicles error:', error);
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
+    return handleDriverError(res, error);
   }
 });
 
@@ -168,48 +234,7 @@ router.post('/', protect, adminCheck, [
       data: { driver_id: driver.driver_id, driver_code: driver.driver_code, driver_name: driver.driver_name },
     });
   } catch (error) {
-    console.error('Register driver error:', error);
-    if (error.code === 'DRIVER_ALREADY_EXISTS') {
-      return res.status(409).json({
-        success: false,
-        message: 'Driver already exists',
-        data: error.data,
-      });
-    }
-    if (error.code === 'VEHICLE_ALREADY_EXISTS') {
-      return res.status(409).json({
-        success: false,
-        message: 'Vehicle number already registered.',
-        data: error.data,
-      });
-    }
-    if (error.code === 'P2002') {
-      // Prisma P2002 is a unique-constraint violation. The constraint that
-      // failed is carried in error.meta.target (an array of column names).
-      // Only the `mobile` constraint is a genuine duplicate-driver signal;
-      // any other unique field (e.g. driver_code) is an internal
-      // code-generation collision and must NOT be misreported to the user
-      // as a duplicate mobile.
-      const target = Array.isArray(error.meta?.target) ? error.meta.target : [];
-      if (target.includes('mobile')) {
-        return res.status(409).json({ success: false, message: 'A driver with this mobile number already exists' });
-      }
-      return res.status(500).json({
-        success: false,
-        message: 'Could not complete registration due to a conflicting unique value. Please try again.',
-      });
-    }
-    if (error.code === 'OWNER_REQUIRED' ||
-        error.code === 'OWNER_INVALID'  ||
-        error.code === 'OWNER_NOT_FOUND' ||
-        error.code === 'OWNER_INACTIVE') {
-      return res.status(400).json({
-        success: false,
-        message: error.message,
-        errorCode: error.code,
-      });
-    }
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
+    return handleDriverError(res, error);
   }
 });
 
@@ -241,31 +266,7 @@ router.put('/:id', protect, adminCheck, [
     const driver = await driverService.updateDriver(driverId, req.body);
     res.json({ success: true, message: 'Driver updated successfully', data: driver });
   } catch (error) {
-    console.error('Update driver error:', error);
-    if (error.code === 'VEHICLE_ALREADY_EXISTS') {
-      return res.status(409).json({
-        success: false,
-        message: 'Vehicle number already registered.',
-        data: error.data,
-      });
-    }
-    if (error.code === 'P2002') {
-      return res.status(409).json({
-        success: false,
-        message: 'Vehicle number already registered.',
-      });
-    }
-    if (error.code === 'OWNER_REQUIRED' ||
-        error.code === 'OWNER_INVALID'  ||
-        error.code === 'OWNER_NOT_FOUND' ||
-        error.code === 'OWNER_INACTIVE') {
-      return res.status(400).json({
-        success: false,
-        message: error.message,
-        errorCode: error.code,
-      });
-    }
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
+    return handleDriverError(res, error);
   }
 });
 
@@ -345,8 +346,7 @@ router.patch('/:id/status', protect, adminCheck, async (req, res) => {
 
     res.json({ success: true, message: 'Driver status updated', data: { driver_id: driverId, status: driver.status } });
   } catch (error) {
-    console.error('Toggle status error:', error);
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
+    return handleDriverError(res, error);
   }
 });
 
@@ -423,8 +423,7 @@ router.post('/:id/assign-vehicle', protect, adminCheck, [
     const result = await driverService.assignVehicle(driverId, req.body.vehicle_id, req.user?.user_id || null);
     res.json({ success: true, message: 'Vehicle assigned successfully', data: result });
   } catch (error) {
-    console.error('Assign vehicle error:', error);
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
+    return handleDriverError(res, error);
   }
 });
 

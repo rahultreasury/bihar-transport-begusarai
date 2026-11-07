@@ -109,7 +109,7 @@ test('Assignment from Vehicle Hire style updates trip', async () => {
   memory.owners.set(1, { owner_id: 1, owner_name: 'O1' });
   memory.enquiries.set(1, { enquiry_id: 1, pickup_date: '2026-10-01', pickup_time: '10:00', weight: 1000, weight_unit: 'KG' });
   memory.trips.set(5, { trip_id: 5, enquiry_id: 1, status: 'PENDING', trip_date: new Date('2026-10-01') });
-  
+
   const availability = new EnquiryAssignmentService({ prisma });
   const service = new TripVehicleAssignmentService({ prisma, availability });
   const res = await service.assign({ tripId: 5 }, { vehicle_id: 10, driver_id: 20 }, { userId: 1 });

@@ -108,18 +108,24 @@ let seedCounter = 0;
 const digitsFor = (label) => {
   seedCounter += 1;
   // Include process.pid and timestamp to avoid collisions in parallel test runs
-  const uniquePart = `${process.pid}-${Date.now().toString(36)}-${seedCounter}`;
-  return String(1000 + seedCounter + label.length * 7).padStart(4, '0').slice(-4) + uniquePart.slice(-6);
+  // Use base-10 only (no letters) so generated mobile/vehicle numbers stay numeric
+  const uniquePart = `${process.pid}${Date.now()}${seedCounter}`;
+  // Return only digits, exactly 10 characters for mobile compatibility
+  return uniquePart.slice(-10);
 };
 
 /**
- * Generate a collision-resistant vehicle number.
- * Uses the existing digitsFor which includes pid + timestamp + counter.
- * Format: P7 + digitsFor (up to 20 chars for vehicle_number column)
+ * Generate a collision-resistant vehicle number in valid Indian format.
+ * Format: BR + 2-digit RTO + 1-2 letter series + 4 digits (e.g., BR01AB1234)
  */
 function generateVehicleNumber(label) {
   const d = digitsFor(label);
-  return `P7${d}`.slice(0, 20);
+  // Use first 2 digits for RTO (01-99), next 2 for series letters (A-Z), last 4 for number
+  const rto = String(Number(d.slice(0, 2)) % 99 + 1).padStart(2, '0');
+  const seriesNum = Number(d.slice(2, 4)) % 676; // 26*26 = 676 combinations
+  const series = String.fromCharCode(65 + Math.floor(seriesNum / 26)) + String.fromCharCode(65 + (seriesNum % 26));
+  const num = d.slice(4, 8).padStart(4, '0');
+  return `BR${rto}${series}${num}`;
 }
 
 /** Build one owner → vehicle → driver → trip chain (plus an optional booking). */
@@ -129,7 +135,7 @@ async function seedTrip({ freight = 50000, driverPayment = 40000, suffix, withBo
   const d3 = digitsFor(suffix);
 
   const owner = await prisma.vehicleOwner.create({
-    data: { owner_name: `P7 Owner ${suffix}`, mobile: `97${d1}`.slice(0, 10), owner_type: 'TRANSPORT_COMPANY' },
+    data: { owner_name: `P7 Owner ${suffix}`, mobile: "6" + digitsFor(suffix).slice(1), owner_type: 'TRANSPORT_COMPANY' },
   });
   created.owners.push(owner.owner_id);
 
